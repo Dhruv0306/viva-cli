@@ -1,0 +1,12 @@
+*.patch
+
+# VS Code settings
+.vscode/
+
+# Python cache files
+__pycache__/
+
+# Environment files
+.env
+!.env.example
+.env.*
