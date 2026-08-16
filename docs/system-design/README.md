@@ -23,6 +23,11 @@ history of what was tried and rejected along the way.
 - **[04-open-questions.md](04-open-questions.md)** — product/design
   questions not yet resolved, as distinct from decisions already made in
   Part 1.
+- **[05-repo-lifecycle-and-language-coverage.md](05-repo-lifecycle-and-language-coverage.md)**
+  — tree-sitter fallback chunking for unsupported/unparseable files, Chroma
+  collection keying and staleness, resume-vs-changed-repo behavior, and the
+  concrete NFR7 retention policy. Added in response to external design
+  review.
 
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
