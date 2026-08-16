@@ -30,7 +30,7 @@ A locally-run tool that takes a GitHub repository URL, builds a grounded underst
 
 ### 2.5 Viva Session
 - FR16: Run a single timed session per repository, duration configurable via environment variable (default 30 minutes).
-- FR17: The user-facing timer must reflect answering time only — LLM generation/evaluation latency must not consume the user's allotted time.
+- FR17: The user-facing timer must reflect answering time only — LLM generation/evaluation latency must not consume the user's allotted time. It must be displayed as a live, continuously updating countdown during `IN_PROGRESS`, not hidden or shown only periodically.
 - FR18: Persist every question, answer, and timestamp immediately as it occurs (not buffered only in memory).
 - FR19: Support resuming an interrupted session from the last persisted state.
 - FR20: Gracefully end the session on time expiry, always preserving and evaluating the in-flight answer if one was in progress.

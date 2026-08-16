@@ -235,8 +235,10 @@ deprioritized for structure-dependent question categories. Full detail:
 - Config via `.env`: `VIVA_DURATION_MINUTES`, `MAX_QUESTIONS`,
   `TOP_K_RETRIEVAL`, `MAX_FILES` (default 500), `TEST_FILE_QUOTA_PCT`
   (default 10), `MAX_FOLLOWUP_DEPTH` (default 1), `SESSION_RETENTION_DAYS`
-  (default TBD — see `docs/system-design/04-open-questions.md`), `LLM_MODEL`,
-  `EMBEDDING_MODEL`, `TEMPERATURE`.
+  (default 7), `LLM_MODEL`, `EMBEDDING_MODEL`, `TEMPERATURE`.
 - Cloned repository code is never executed — static parsing only (NFR6).
 - Cloned repos and per-session indices follow a defined cleanup/retention
   policy rather than accumulating unbounded (NFR7, §8.2).
+- Timer is a live, continuously updating countdown during `IN_PROGRESS`
+  (FR17) — never hidden or periodic-only, since it already excludes LLM
+  latency and so reflects genuine remaining answer time.
