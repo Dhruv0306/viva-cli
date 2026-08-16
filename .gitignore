@@ -5,8 +5,18 @@
 
 # Python cache files
 __pycache__/
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
 
 # Environment files
 .env
-!.env.example
 .env.*
+!.env.example
+
+# Runtime data (NFR7 — never accumulate on disk unbounded; this is a local
+# dev-time backstop, not the actual retention mechanism)
+data/

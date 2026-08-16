@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Design discussion
+    url: https://github.com/Dhruv0306/viva-cli/discussions
+    about: For open-ended design discussion that isn't yet a concrete proposal, use Discussions instead of an issue.

@@ -1,0 +1,22 @@
+# <type>: <imperative summary, <=72 chars>
+#
+# Types: feat | fix | docs | design | test | refactor | chore | build
+#   feat     - new user-facing behavior
+#   fix      - bug fix
+#   docs     - README/docs/*.md changes only
+#   design   - docs/design.md, docs/requirements.md, docs/system-design/*
+#              changes that alter or extend the design itself (not just
+#              wording), kept distinct from "docs" so design-shape changes
+#              are easy to find in history
+#   test     - test-only changes (no behavior change)
+#   refactor - code change that neither fixes a bug nor adds a feature
+#   chore    - tooling, CI, dependency bumps
+#   build    - packaging (pyproject.toml, requirements.txt)
+#
+# Why this change? (one or two sentences — the "what" is in the diff, this
+# is for the "why". Reference the FR/NFR or docs/plan.md phase if relevant.)
+
+# What was tested? (brief — full detail belongs in the PR description, but
+# a one-liner here helps `git log`/`git blame` readers later.)
+
+# Related issue/PR, if any:
