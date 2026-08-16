@@ -78,6 +78,19 @@ Two-pass filtering, ordered:
 The Project Profile always records what was excluded/sampled, and the
 Question Generator is not permitted to target excluded files.
 
+## 3.1 Hierarchical Reduce for Large Repos
+
+The map-reduce Project Profile generation (§2, FR7) is a flat reduce for
+the common case: per-file summaries → per-module summaries → one
+project-level summary. If per-module summaries alone would overflow the
+final reduce step's usable context (repos with many modules), this
+recurses: module summaries are batched (default `MAP_REDUCE_BATCH_SIZE=8`,
+following existing module/directory boundaries) and reduced a level at a
+time until they fit. The Project Profile schema (§6) is unaffected —
+per-module detail is always available at full granularity regardless of how
+many reduce levels the top-level `architecture_summary` needed. Full
+detail: `docs/system-design/06-cli-contract-and-profile-scaling.md` §6.2.
+
 ## 4. Structured Output Strategy
 
 1. Grammar/schema-constrained decoding at the inference layer (not
@@ -227,6 +240,11 @@ deprioritized for structure-dependent question categories. Full detail:
   implementation. Nothing in the pipeline should import Ollama directly.
 - CLI and future web UI both sit on top of the same Orchestrator — no
   pipeline logic lives in the interface layer.
+- CLI command contract (`start`/`resume`/`report`/`list`/`cleanup`, flags,
+  exit codes) is fully specified in
+  `docs/system-design/06-cli-contract-and-profile-scaling.md` §6.1 — the
+  Orchestrator's public interface should be designed against that contract
+  directly rather than the CLI layer inventing its own argument handling.
 
 ## 11. Non-Functional Notes
 
@@ -235,7 +253,10 @@ deprioritized for structure-dependent question categories. Full detail:
 - Config via `.env`: `VIVA_DURATION_MINUTES`, `MAX_QUESTIONS`,
   `TOP_K_RETRIEVAL`, `MAX_FILES` (default 500), `TEST_FILE_QUOTA_PCT`
   (default 10), `MAX_FOLLOWUP_DEPTH` (default 1), `SESSION_RETENTION_DAYS`
-  (default 7), `LLM_MODEL`, `EMBEDDING_MODEL`, `TEMPERATURE`.
+  (default 7), `MAP_REDUCE_BATCH_SIZE` (default 8),
+  `MAX_REDUCE_CONTEXT_TOKENS` (computed as a fraction of `LLM_MODEL`'s
+  context window, not hardcoded), `LLM_MODEL`, `EMBEDDING_MODEL`,
+  `TEMPERATURE`.
 - Cloned repository code is never executed — static parsing only (NFR6).
 - Cloned repos and per-session indices follow a defined cleanup/retention
   policy rather than accumulating unbounded (NFR7, §8.2).

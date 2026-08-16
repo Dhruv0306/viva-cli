@@ -14,7 +14,7 @@ A locally-run tool that takes a GitHub repository URL, builds a grounded underst
 ### 2.2 Project Analysis
 - FR5: Detect the primary technology stack(s) from manifest files and file-extension distribution.
 - FR6: Extract structured code units (functions, classes, signatures, docstrings) via AST parsing (tree-sitter) for a defined language allowlist. Files outside the allowlist, or files that fail to parse, must fall back to line-window chunking rather than being dropped from analysis (see design.md §Language Coverage & Fallback).
-- FR7: Produce a map-reduce style Project Profile: per-module summaries reduced into one project-level summary, including detected architecture pattern, entry points, and module responsibilities.
+- FR7: Produce a map-reduce style Project Profile: per-module summaries reduced into one project-level summary, including detected architecture pattern, entry points, and module responsibilities. For repos where per-module summaries exceed the reduce step's usable context, this must fall back to recursive/hierarchical reduction rather than truncating or failing (see design.md §Hierarchical Reduce).
 - FR8: Project Profile must be stored separately from the retrieval index and be injectable into any LLM call as always-available context (not retrieved on demand).
 
 ### 2.3 Indexing / RAG
@@ -43,8 +43,9 @@ A locally-run tool that takes a GitHub repository URL, builds a grounded underst
 
 ### 2.7 Reporting
 - FR25: Produce a final report aggregating per-question evaluations into overall strengths, overall weaknesses, and topics to revisit.
-- FR26: Report output format: Markdown by default; must be viewable without additional tooling.
-- FR27: Any evaluation left unfinished at session end must complete before the report is generated, not be dropped.
+- FR26: Report output format: Markdown by default, with JSON as a selectable alternative for downstream tooling (`viva report --format json`).
+- FR27: Any evaluation left unfinished at session end must complete before the report is generated, not be dropped. Reporting on a session that isn't yet `COMPLETE` must be refused by default; an explicit override may show a partial report.
+- FR27a: `viva resume` and `viva report` require a way to discover valid session IDs; provide a `viva list` command enumerating sessions with id, repo, status, and timestamps.
 
 ### 2.8 Configuration
 - FR28: All tunable parameters (viva duration, max questions, file cap, top-k retrieval, model names, temperature) must be environment-file configurable, not hardcoded.

@@ -28,6 +28,11 @@ history of what was tried and rejected along the way.
   collection keying and staleness, resume-vs-changed-repo behavior, and the
   concrete NFR7 retention policy. Added in response to external design
   review.
+- **[06-cli-contract-and-profile-scaling.md](06-cli-contract-and-profile-scaling.md)**
+  — the full `viva` CLI command contract (args, flags, exit codes,
+  including the previously-undocumented `viva list`), and the recursive
+  hierarchical-reduce fallback for Project Profile generation on repos
+  with many modules. Added in response to a second external design review.
 
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

@@ -13,7 +13,12 @@ Each phase is independently testable and produces a working, demoable slice.
   rather than discovering problems with them in Phase 6/7.
 - **Exit criteria:** one schema-validated evaluation produced by the local
   model end-to-end, and a timer that demonstrably excludes LLM latency from
-  the user-facing clock.
+  the user-facing clock. This must include manual review of the free-text
+  critique's groundedness (does it cite real code, not invented claims),
+  not just JSON schema conformance — schema-valid-but-hallucinated output
+  is a Phase 0 failure, not a pass. If `qwen2.5-coder:7b` can't reliably
+  clear this bar, that's the point of finding out now, in Phase 0, not
+  after Phase 3–7 are built around it.
 
 ## Phase 1 — Scaffold
 - Repo structure, `.env` loader, config validation.
@@ -27,8 +32,14 @@ Each phase is independently testable and produces a working, demoable slice.
 
 ## Phase 3 — Analysis
 - tree-sitter extraction (FR6).
-- Map-reduce Project Profile generation (FR7).
-- **Exit criteria:** manually review Project Profile quality on test repos before moving on — everything downstream depends on this.
+- Map-reduce Project Profile generation (FR7), including the hierarchical
+  reduce fallback (`docs/system-design/06-cli-contract-and-profile-scaling.md`
+  §6.2) for repos where per-module summaries themselves overflow the
+  reduce-step context.
+- **Exit criteria:** manually review Project Profile quality on test repos
+  before moving on — everything downstream depends on this. Must include at
+  least one test repo with enough modules to force the hierarchical reduce
+  path, not only small repos where a single flat reduce suffices.
 
 ## Phase 4 — RAG Indexing
 - Chunking, embedding, vector store population (FR9–FR11).
@@ -40,7 +51,12 @@ Each phase is independently testable and produces a working, demoable slice.
 
 ## Phase 6 — Session Loop
 - CLI, timer, state machine, persistence — no evaluation yet.
-- **Exit criteria:** a full timed viva runs end-to-end with correct timing behavior (FR16–FR20).
+- Implement `viva start`, `viva resume`, and `viva list` per the CLI
+  contract (`docs/system-design/06-cli-contract-and-profile-scaling.md` §6.1).
+- **Exit criteria:** a full timed viva runs end-to-end with correct timing
+  behavior (FR16–FR20), and `viva list`/`viva resume` behave per the
+  contract, including the error case of resuming an already-`COMPLETE`
+  session.
 
 ## Phase 7 — Evaluation
 - Grounded, structured per-question evaluation (FR21–FR24).
@@ -48,7 +64,10 @@ Each phase is independently testable and produces a working, demoable slice.
 
 ## Phase 8 — Reporting
 - Aggregation and Markdown report generation (FR25–FR27).
-- **Exit criteria:** report reviewed for usefulness/actionability, not just structural completeness.
+- Implement `viva report` per the CLI contract, including both output
+  formats and the partial-report error case
+  (`docs/system-design/06-cli-contract-and-profile-scaling.md` §6.1).
+- **Exit criteria:** report reviewed for usefulness/actionability, not just structural completeness. `viva report --format json` validated against a schema, not just the Markdown path.
 
 ## Phase 9 — Polish
 - Error handling for bad URLs, model timeouts, huge repos.
