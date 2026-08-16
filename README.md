@@ -14,7 +14,7 @@ Explaining your own project out loud — to an interviewer, a thesis committee, 
 
 - 🔗 **Just a GitHub URL** — clone, filter, and analyze up to 500 files per repo, with representative sampling across modules for larger projects
 - 🧠 **Grounded RAG pipeline** — AST-based code chunking (tree-sitter), local embeddings, project-level architecture summary via map-reduce analysis
-- ⏱️ **Timed viva** — configurable duration (default 30 min); the clock only counts your answering time, never LLM thinking time
+- ⏱️ **Timed viva** — configurable duration (default 30 min), shown as a live countdown; the clock only counts your answering time, never LLM thinking time
 - 🔁 **Adaptive follow-ups** — weak answers get probed further, bounded by configurable depth
 - ✅ **Grounded evaluation** — every "you missed this" or "this was wrong" verdict cites the specific file/function it's based on; ungrounded criticism is discarded, not shown
 - 📄 **Structured per-question feedback** — summary, what you did well, what you missed, what you got wrong, and how to improve, for every question
@@ -69,7 +69,7 @@ TOP_K_RETRIEVAL=5
 MAX_FILES=500
 TEST_FILE_QUOTA_PCT=10
 MAX_FOLLOWUP_DEPTH=1
-SESSION_RETENTION_DAYS=       # TBD — see docs/system-design/04-open-questions.md
+SESSION_RETENTION_DAYS=7
 GITHUB_TOKEN=
 TEMPERATURE=0.3
 ```
