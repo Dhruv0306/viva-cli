@@ -70,6 +70,7 @@ MAX_FILES=500
 TEST_FILE_QUOTA_PCT=10
 MAX_FOLLOWUP_DEPTH=1
 SESSION_RETENTION_DAYS=7
+MAP_REDUCE_BATCH_SIZE=8
 GITHUB_TOKEN=
 TEMPERATURE=0.3
 ```
@@ -77,7 +78,13 @@ TEMPERATURE=0.3
 ## Usage
 
 ```bash
-viva start https://github.com/<owner>/<repo>
+viva start https://github.com/<owner>/<repo> [--branch main] [--duration 30] [--session-name my-project]
+```
+
+List past/resumable sessions (session IDs aren't shown anywhere else after the initial run):
+
+```bash
+viva list [--status in_progress|complete|...]
 ```
 
 Resume an interrupted session:
@@ -89,8 +96,10 @@ viva resume <session-id>
 View a past report:
 
 ```bash
-viva report <session-id>
+viva report <session-id> [--format md|json] [--output report.md] [--allow-partial]
 ```
+
+Full CLI contract, including exit codes: [`docs/system-design/06-cli-contract-and-profile-scaling.md`](docs/system-design/06-cli-contract-and-profile-scaling.md) §6.1.
 
 ## Project status
 
