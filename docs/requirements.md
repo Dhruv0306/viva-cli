@@ -13,7 +13,7 @@ A locally-run tool that takes a GitHub repository URL, builds a grounded underst
 
 ### 2.2 Project Analysis
 - FR5: Detect the primary technology stack(s) from manifest files and file-extension distribution.
-- FR6: Extract structured code units (functions, classes, signatures, docstrings) via AST parsing (tree-sitter), not naive line-based chunking.
+- FR6: Extract structured code units (functions, classes, signatures, docstrings) via AST parsing (tree-sitter) for a defined language allowlist. Files outside the allowlist, or files that fail to parse, must fall back to line-window chunking rather than being dropped from analysis (see design.md §Language Coverage & Fallback).
 - FR7: Produce a map-reduce style Project Profile: per-module summaries reduced into one project-level summary, including detected architecture pattern, entry points, and module responsibilities.
 - FR8: Project Profile must be stored separately from the retrieval index and be injectable into any LLM call as always-available context (not retrieved on demand).
 
@@ -25,7 +25,7 @@ A locally-run tool that takes a GitHub repository URL, builds a grounded underst
 ### 2.4 Question Generation
 - FR12: Build a question/coverage plan from the Project Profile spanning multiple categories: architecture/design decisions, specific implementation detail, technology-choice rationale, error handling/edge cases, and testing strategy.
 - FR13: Generate each question just-in-time, grounded in retrieved chunk(s) relevant to its category/target module — never generate a question ungrounded in actual retrieved code.
-- FR14: Support adaptive follow-up questions based on the strength of the previous answer, bounded by a configurable max follow-up depth per topic.
+- FR14: Support adaptive follow-up questions based on the strength of the previous answer, bounded by a configurable max follow-up depth per topic (default 1, via `MAX_FOLLOWUP_DEPTH`).
 - FR15: Track asked topics/files to avoid duplicate questioning and to enforce category coverage across the session.
 
 ### 2.5 Viva Session
@@ -57,7 +57,7 @@ A locally-run tool that takes a GitHub repository URL, builds a grounded underst
 - NFR4 (Determinism of grounding): Every LLM-generated question and evaluation must be traceable to specific source chunks/files used to produce it.
 - NFR5 (Extensibility): LLM backend and vector store must sit behind thin interfaces so they can be swapped without touching pipeline logic.
 - NFR6 (Security): Cloned repository code must never be executed as part of analysis — static parsing (tree-sitter) only.
-- NFR7 (Data hygiene): Cloned repositories and generated indices must have a defined retention/cleanup policy — not accumulate unbounded on disk across sessions.
+- NFR7 (Data hygiene): Cloned repository source must be deleted immediately once indexing completes. SQLite session records, the Project Profile, and vector-store collections must expire on a configurable retention window (`SESSION_RETENTION_DAYS`) or be removable on demand (`viva cleanup`) — none of this may accumulate unbounded on disk across sessions.
 - NFR8 (Observability): Each pipeline stage must log enough to diagnose failures (e.g. which file caused a parse error, which LLM call failed schema validation) without requiring a full re-run to reproduce.
 - NFR9 (Usability): Session must clearly communicate to the user when it's in a non-interactive stage (analyzing, indexing) vs. waiting on their input, so the fixed viva clock doesn't appear to include idle system time.
 

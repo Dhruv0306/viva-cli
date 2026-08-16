@@ -180,9 +180,33 @@ answer_text, asked_at, answered_at, eval_status, eval_json
 - **SQLite** — sessions, questions, answers, evaluations. Single writer
   (Orchestrator), crash-safe, queryable for reporting.
 - **Local vector store (Chroma)** — code chunks + metadata, one collection
-  per session keyed by repo hash (enables reuse without re-indexing an
-  unchanged repo).
+  per repo+commit, keyed `{repo_slug}-{commit_sha}` (enables reuse without
+  re-indexing an unchanged repo, and makes a new commit produce a fresh
+  collection automatically rather than requiring manual invalidation).
 - **Flat JSON** — Project Profile per session, loaded whole.
+
+Full detail on keying, staleness, and resume behavior:
+`docs/system-design/05-repo-lifecycle-and-language-coverage.md` §5.2–5.3.
+
+## 8.1 Language Coverage & Fallback Chunking
+
+Tree-sitter (§6, FR6) covers an explicit language allowlist. Files outside
+it, or files that fail to parse, fall back to line-window chunking (60
+lines, 15-line overlap) rather than being dropped — every chunk carries a
+`parse_method: "ast" | "line_window"` tag, and `line_window` chunks are
+deprioritized for structure-dependent question categories. Full detail:
+`docs/system-design/05-repo-lifecycle-and-language-coverage.md` §5.1.
+
+## 8.2 Data Lifecycle (NFR7)
+
+| Data | Lifetime |
+|---|---|
+| Raw cloned repo source | Deleted immediately after `INDEXING` completes |
+| SQLite records + Project Profile | Kept until `SESSION_RETENTION_DAYS` expires, or indefinitely if unset |
+| Chroma collections | Same retention window; reusable within it by repo+commit key (§8) |
+
+`viva cleanup` (Phase 9) enforces this on demand. Full rationale:
+`docs/system-design/05-repo-lifecycle-and-language-coverage.md` §5.4.
 
 ## 9. Failure Handling
 
@@ -210,7 +234,9 @@ answer_text, asked_at, answered_at, eval_status, eval_json
   beyond SQLite defaults.
 - Config via `.env`: `VIVA_DURATION_MINUTES`, `MAX_QUESTIONS`,
   `TOP_K_RETRIEVAL`, `MAX_FILES` (default 500), `TEST_FILE_QUOTA_PCT`
-  (default 10), `LLM_MODEL`, `EMBEDDING_MODEL`, `TEMPERATURE`.
+  (default 10), `MAX_FOLLOWUP_DEPTH` (default 1), `SESSION_RETENTION_DAYS`
+  (default TBD — see `docs/system-design/04-open-questions.md`), `LLM_MODEL`,
+  `EMBEDDING_MODEL`, `TEMPERATURE`.
 - Cloned repository code is never executed — static parsing only (NFR6).
 - Cloned repos and per-session indices follow a defined cleanup/retention
-  policy rather than accumulating unbounded (NFR7).
+  policy rather than accumulating unbounded (NFR7, §8.2).
