@@ -1,0 +1,92 @@
+import json
+from unittest.mock import MagicMock
+
+import pytest
+
+from viva.llm_client import OllamaClient
+
+
+def _chat_response(content: str) -> dict:
+    return {"message": {"content": content}}
+
+
+@pytest.fixture
+def client(monkeypatch):
+    c = OllamaClient(model="test-model", temperature=0.3, host="http://localhost:11434")
+    c._client = MagicMock()  # replace the real ollama.Client
+    return c
+
+
+def test_valid_first_attempt(client):
+    valid = json.dumps({"classification": "correct", "summary": "Good answer."})
+    client._client.chat.return_value = _chat_response(valid)
+
+    call_result = client.evaluate_answer("Q?", "context", "answer")
+
+    assert call_result.result.classification == "correct"
+    assert call_result.attempts == 1
+    assert client._client.chat.call_count == 1
+
+
+def test_repair_loop_recovers_on_second_attempt(client):
+    malformed = "not json at all"
+    valid = json.dumps({"classification": "partial", "summary": "Missed X.", "cited_file": "a.py:1"})
+    client._client.chat.side_effect = [_chat_response(malformed), _chat_response(valid)]
+
+    call_result = client.evaluate_answer("Q?", "context", "answer")
+
+    assert call_result.result.classification == "partial"
+    assert call_result.attempts == 2
+    assert client._client.chat.call_count == 2
+    # second call should include the repair instruction referencing the error
+    second_call_messages = client._client.chat.call_args_list[1].kwargs["messages"]
+    assert any("failed schema validation" in m["content"] for m in second_call_messages)
+
+
+def test_falls_back_to_needs_review_after_two_failures(client):
+    client._client.chat.side_effect = [
+        _chat_response("garbage"),
+        _chat_response("still garbage"),
+    ]
+
+    call_result = client.evaluate_answer("Q?", "context", "answer")
+
+    assert call_result.result.needs_review is True
+    assert call_result.result.classification == "not_attempted"
+    assert client._client.chat.call_count == 2
+
+
+def test_ungrounded_incorrect_verdict_is_downgraded(client):
+    """FR22: an 'incorrect' classification with no citation must be flagged
+    needs_review, not surfaced as ungrounded criticism -- enforced at the
+    application layer even if the model doesn't follow the system prompt."""
+    ungrounded = json.dumps({"classification": "incorrect", "summary": "Wrong."})
+    client._client.chat.return_value = _chat_response(ungrounded)
+
+    call_result = client.evaluate_answer("Q?", "context", "answer")
+
+    assert call_result.result.needs_review is True
+
+
+def test_grounded_incorrect_verdict_passes_through(client):
+    grounded = json.dumps(
+        {"classification": "incorrect", "summary": "Wrong.", "cited_file": "src/x.py:10"}
+    )
+    client._client.chat.return_value = _chat_response(grounded)
+
+    call_result = client.evaluate_answer("Q?", "context", "answer")
+
+    assert call_result.result.needs_review is False
+
+
+def test_prompt_uses_labeled_sections(client):
+    valid = json.dumps({"classification": "correct", "summary": "ok"})
+    client._client.chat.return_value = _chat_response(valid)
+
+    client.evaluate_answer("What does X do?", "def x(): ...", "It does X")
+
+    first_call_messages = client._client.chat.call_args_list[0].kwargs["messages"]
+    user_prompt = first_call_messages[1]["content"]
+    assert "[QUESTION]" in user_prompt
+    assert "[GROUND_TRUTH_CODE_CONTEXT]" in user_prompt
+    assert "[USER_ANSWER]" in user_prompt

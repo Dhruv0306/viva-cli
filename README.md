@@ -105,6 +105,16 @@ Full CLI contract, including exit codes: [`docs/system-design/06-cli-contract-an
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
+**Phase 0 (walking skeleton) is implemented.** There's no real `viva start` yet — only a throwaway harness that exercises the two riskiest assumptions end-to-end (local-model structured-output reliability, and a timer that excludes LLM latency):
+
+```bash
+pip install -e ".[dev]"
+cp .env.example .env   # then set LLM_MODEL to a model you've pulled
+viva demo
+```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for full dev setup and how to run the test suite.
+
 ## Documentation
 
 | Doc | What's in it |
