@@ -23,7 +23,20 @@ Each phase is independently testable and produces a working, demoable slice.
 ## Phase 1 — Scaffold
 - Repo structure, `.env` loader, config validation.
 - Confirm a basic Ollama call works end-to-end.
-- **Exit criteria:** `python -m viva --version`-style smoke test passes; config loads and validates required env vars.
+- Small `LLM_MODEL` pressure-test (see `docs/system-design/04-open-questions.md`
+  item 5): run the same fixed set of 3-5 sample answers, N=4-5 repetitions
+  each, against candidate models (at least `qwen2.5-coder:7b` and
+  `qwen3.5:latest`), and record classification stability and citation-
+  compliance rate per model. Motivated by Phase 0 manual testing, which
+  found a within-model classification/rationale inconsistency on
+  `qwen2.5-coder:7b` and a between-model gap in citation compliance —
+  small enough sample sizes (n=1-2 per model) that this needs to be
+  confirmed properly before `LLM_MODEL`'s default is finalized in
+  `.env.example`.
+- **Exit criteria:** `python -m viva --version`-style smoke test passes;
+  config loads and validates required env vars; pressure-test results are
+  recorded (doesn't have to change the default model, but the choice must
+  be evidence-based, not carried over from Phase 0's placeholder default).
 
 ## Phase 2 — Ingestion
 - Clone + walk + hard-exclusion filtering (FR2).
