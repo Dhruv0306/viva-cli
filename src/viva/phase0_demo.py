@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.syntax import Syntax
 
 from viva.llm_client import LLMClient
 from viva.schemas import EvaluationResult
@@ -37,9 +38,8 @@ HARDCODED_QUESTION = (
     "in it?"
 )
 
-GROUND_TRUTH_CONTEXT = '''\
-File: src/viva/timer.py
-
+CODE_SNIPPET_FILE = "src/viva/timer.py"
+CODE_SNIPPET = '''\
     @contextmanager
     def excluding(self) -> Iterator[None]:
         """Wrap any LLM call (generation or evaluation) in this block.
@@ -59,6 +59,12 @@ File: src/viva/timer.py
             raise TimerNotStartedError("AnswerTimer.start() was not called")
         return (time.monotonic() - self._start) - self._excluded_seconds
 '''
+
+# What's sent to the LLM as grounding context. Kept as one labeled string
+# (rather than passing CODE_SNIPPET alone) so the evaluator prompt's
+# [GROUND_TRUTH_CODE_CONTEXT] section always carries its file provenance,
+# matching how real RAG-retrieved chunks will be labeled from Phase 4 on.
+GROUND_TRUTH_CONTEXT = f"File: {CODE_SNIPPET_FILE}\n\n{CODE_SNIPPET}"
 
 
 @dataclass
@@ -96,6 +102,13 @@ def run_demo(llm_client: LLMClient, duration_seconds: float, console: Console) -
     timer = AnswerTimer(duration_seconds=duration_seconds)
 
     console.print(Panel(HARDCODED_QUESTION, title="Question", border_style="cyan"))
+    console.print(
+        Panel(
+            Syntax(CODE_SNIPPET, "python", line_numbers=False, word_wrap=True),
+            title=CODE_SNIPPET_FILE,
+            border_style="blue",
+        )
+    )
     minutes, seconds = divmod(int(duration_seconds), 60)
     console.print(f"[dim]You have {minutes:02d}:{seconds:02d} to answer.[/dim]")
 

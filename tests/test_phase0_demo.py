@@ -45,6 +45,21 @@ def test_run_demo_end_to_end_excludes_llm_latency():
     assert report.answer_time_seconds < 0.1
 
 
+def test_run_demo_displays_the_code_snippet_it_grounds_on():
+    """Regression test: the question text references 'the excluding()
+    context manager below', so the snippet must actually be printed to the
+    console -- not just sent silently to the LLM as grounding context."""
+    fake_client = FakeSlowLLMClient(sleep_seconds=0.01)
+    console = Console(record=True)
+
+    with patch.object(Console, "input", return_value="some answer"):
+        run_demo(llm_client=fake_client, duration_seconds=60, console=console)
+
+    rendered = console.export_text()
+    assert "def excluding(self)" in rendered
+    assert "src/viva/timer.py" in rendered
+
+
 def test_run_demo_report_contains_grounded_citation():
     fake_client = FakeSlowLLMClient(sleep_seconds=0.01)
     console = Console(record=True)
