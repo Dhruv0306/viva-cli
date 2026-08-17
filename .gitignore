@@ -20,3 +20,6 @@ venv/
 # Runtime data (NFR7 — never accumulate on disk unbounded; this is a local
 # dev-time backstop, not the actual retention mechanism)
 data/
+
+# Claude-specific files
+claude/*
