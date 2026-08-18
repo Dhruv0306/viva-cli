@@ -1,9 +1,22 @@
 """Environment-file configuration loading (FR28).
 
-Phase 0 scope: only the handful of settings the walking skeleton actually
-touches (LLM model, temperature, Ollama host, viva duration) are validated
-here. Full validation of every tunable in README.md's configuration table
-is Phase 1 work (docs/plan.md).
+Phase 0 scope was only the handful of settings the walking skeleton actually
+touched (LLM model, temperature, Ollama host, viva duration). Phase 1 (see
+docs/plan.md) extends validation to every tunable in `.env.example` /
+README.md's configuration table, so a bad value fails fast at startup rather
+than surfacing as a confusing error deep in a later phase's pipeline code.
+
+Two fields are deliberately *not* strictly validated here:
+
+- `MAX_REDUCE_CONTEXT_TOKENS` is left unset in `.env.example` on purpose --
+  it's computed as a fraction of `LLM_MODEL`'s context window at runtime by
+  Phase 3 (docs/system-design/06-cli-contract-and-profile-scaling.md §6.2),
+  not hardcoded. Config only checks it's a positive int *if* the user has
+  set it; `None` is a valid, expected value.
+- `GITHUB_TOKEN` is optional (public repos don't need one) and is not
+  format-validated -- GitHub's token formats change over time, and the
+  first real use of it (Phase 2 ingestion) will surface an invalid token
+  clearly enough via the GitHub API's own error.
 """
 from __future__ import annotations
 
@@ -17,13 +30,67 @@ class ConfigError(RuntimeError):
     """Raised when required configuration is missing or invalid."""
 
 
+def _get_positive_int(name: str, default: str) -> int:
+    raw = os.getenv(name, default)
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
+    if value <= 0:
+        raise ConfigError(f"{name} must be positive, got {value}")
+    return value
+
+
+def _get_non_negative_int(name: str, default: str) -> int:
+    raw = os.getenv(name, default)
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
+    if value < 0:
+        raise ConfigError(f"{name} must be zero or positive, got {value}")
+    return value
+
+
+def _get_optional_positive_int(name: str) -> int | None:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer if set, got {raw!r}") from exc
+    if value <= 0:
+        raise ConfigError(f"{name} must be positive if set, got {value}")
+    return value
+
+
 @dataclass(frozen=True)
 class Config:
+    # --- LLM / Embeddings (Ollama) ---
     llm_model: str
     embedding_model: str
     temperature: float
     ollama_host: str
+
+    # --- Session ---
     viva_duration_minutes: int
+    max_questions: int
+    max_followup_depth: int
+    session_retention_days: int
+
+    # --- Ingestion / Sampling ---
+    max_files: int
+    test_file_quota_pct: int
+    github_token: str | None
+
+    # --- Analysis ---
+    map_reduce_batch_size: int
+    max_reduce_context_tokens: int | None
+
+    # --- RAG ---
+    vector_db_path: str
+    top_k_retrieval: int
 
     @classmethod
     def load(cls, env_file: str | None = ".env") -> "Config":
@@ -59,15 +126,31 @@ class Config:
                 f"TEMPERATURE must be between 0.0 and 2.0, got {temperature}"
             )
 
-        duration_raw = os.getenv("VIVA_DURATION_MINUTES", "30")
-        try:
-            viva_duration_minutes = int(duration_raw)
-        except ValueError as exc:
+        viva_duration_minutes = _get_positive_int("VIVA_DURATION_MINUTES", "30")
+        max_questions = _get_positive_int("MAX_QUESTIONS", "8")
+        # 0 is a legitimate choice here (no follow-ups at all), so this is
+        # non-negative rather than strictly positive like the others.
+        max_followup_depth = _get_non_negative_int("MAX_FOLLOWUP_DEPTH", "1")
+        session_retention_days = _get_positive_int("SESSION_RETENTION_DAYS", "7")
+
+        max_files = _get_positive_int("MAX_FILES", "500")
+
+        test_file_quota_pct = _get_non_negative_int("TEST_FILE_QUOTA_PCT", "10")
+        if test_file_quota_pct > 100:
             raise ConfigError(
-                f"VIVA_DURATION_MINUTES must be an integer, got {duration_raw!r}"
-            ) from exc
-        if viva_duration_minutes <= 0:
-            raise ConfigError("VIVA_DURATION_MINUTES must be positive")
+                f"TEST_FILE_QUOTA_PCT must be between 0 and 100, got {test_file_quota_pct}"
+            )
+
+        github_token = os.getenv("GITHUB_TOKEN", "").strip() or None
+
+        map_reduce_batch_size = _get_positive_int("MAP_REDUCE_BATCH_SIZE", "8")
+        max_reduce_context_tokens = _get_optional_positive_int("MAX_REDUCE_CONTEXT_TOKENS")
+
+        vector_db_path = os.getenv("VECTOR_DB_PATH", "./data/chroma").strip()
+        if not vector_db_path:
+            raise ConfigError("VECTOR_DB_PATH must not be empty if set")
+
+        top_k_retrieval = _get_positive_int("TOP_K_RETRIEVAL", "5")
 
         return cls(
             llm_model=llm_model,
@@ -75,4 +158,14 @@ class Config:
             temperature=temperature,
             ollama_host=ollama_host,
             viva_duration_minutes=viva_duration_minutes,
+            max_questions=max_questions,
+            max_followup_depth=max_followup_depth,
+            session_retention_days=session_retention_days,
+            max_files=max_files,
+            test_file_quota_pct=test_file_quota_pct,
+            github_token=github_token,
+            map_reduce_batch_size=map_reduce_batch_size,
+            max_reduce_context_tokens=max_reduce_context_tokens,
+            vector_db_path=vector_db_path,
+            top_k_retrieval=top_k_retrieval,
         )

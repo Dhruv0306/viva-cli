@@ -105,7 +105,14 @@ Full CLI contract, including exit codes: [`docs/system-design/06-cli-contract-an
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phase 0 (walking skeleton) is implemented.** There's no real `viva start` yet — only a throwaway harness that exercises the two riskiest assumptions end-to-end (local-model structured-output reliability, and a timer that excludes LLM latency):
+**Phase 0 (walking skeleton) and Phase 1 (scaffold) are implemented.** Config
+now validates every tunable, and an `LLM_MODEL` pressure-test harness
+(`scripts/pressure_test_llm_model.py`) is in place — see
+[`docs/system-design/07-llm-model-pressure-test-results.md`](docs/system-design/07-llm-model-pressure-test-results.md)
+for results once run locally. There's still no real `viva start` yet — only
+a throwaway harness that exercises the two riskiest assumptions end-to-end
+(local-model structured-output reliability, and a timer that excludes LLM
+latency):
 
 ```bash
 pip install -e ".[dev]"

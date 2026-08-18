@@ -1,0 +1,37 @@
+[
+  {
+    "id": "correct-1",
+    "question": "Why does AnswerTimer use time.monotonic() instead of time.time()?",
+    "ground_truth_context": "class AnswerTimer:\n    def __init__(self, duration_seconds: float) -> None:\n        if duration_seconds <= 0:\n            raise ValueError(\"duration_seconds must be positive\")\n        self.duration_seconds = duration_seconds\n        self._start: float | None = None\n        self._excluded_seconds: float = 0.0\n\n    def start(self) -> None:\n        self._start = time.monotonic()\n        self._excluded_seconds = 0.0\n\n    def elapsed(self) -> float:\n        if self._start is None:\n            raise TimerNotStartedError(\"AnswerTimer.start() was not called\")\n        return (time.monotonic() - self._start) - self._excluded_seconds",
+    "user_answer": "time.monotonic() always moves forward and isn't affected by the system clock being changed (like NTP sync or the user changing their timezone), which matters because time.time() could jump backward mid-session and produce a negative or wrong elapsed duration.",
+    "expected_classification": "correct"
+  },
+  {
+    "id": "correct-2",
+    "question": "What happens if the EvaluationResult JSON fails schema validation on both attempts?",
+    "ground_truth_context": "        # Both attempts failed schema validation: repair loop exhausted.\n        # Never block the session on one bad parse (design.md 4/9).\n        fallback = EvaluationResult(\n            classification=\"not_attempted\",\n            summary=\"Automated evaluation could not be produced reliably for this answer.\",\n            cited_file=None,\n            needs_review=True,\n        )\n        duration = time.monotonic() - start\n        return LLMCallResult(result=fallback, duration_seconds=duration, attempts=attempts)",
+    "user_answer": "It falls back to a hardcoded EvaluationResult with classification 'not_attempted' and needs_review set to True, instead of raising an exception, so a single bad parse never blocks the session.",
+    "expected_classification": "correct"
+  },
+  {
+    "id": "partial-1",
+    "question": "How does the EVALUATOR_SYSTEM_PROMPT prevent ungrounded criticism?",
+    "ground_truth_context": "If you classify as \"partial\" or \"incorrect\", you MUST cite the specific \\\nfile/function from the code context that grounds your verdict in \\\n`cited_file` (e.g. \"src/payments/handler.py:42\"). If you cannot point to a \\\nspecific citation, classify as \"correct\" or \"not_attempted\" instead -- \\\nnever produce an ungrounded criticism.\n\n# Enforced again at the application layer in llm_client.OllamaClient.evaluate_answer:\nif parsed.classification in (\"partial\", \"incorrect\") and not parsed.cited_file:\n    parsed = parsed.model_copy(update={\"needs_review\": True})",
+    "user_answer": "The system prompt tells the model to cite a file when it marks something wrong.",
+    "expected_classification": "partial"
+  },
+  {
+    "id": "incorrect-1",
+    "question": "Which component is responsible for excluding LLM latency from the user-facing timer?",
+    "ground_truth_context": "    @contextmanager\n    def excluding(self) -> Iterator[None]:\n        \"\"\"Wrap any LLM call (generation or evaluation) in this block.\n\n        Time spent inside is subtracted from `elapsed()`, so it never counts\n        against the user's answering time.\n        \"\"\"\n        exclusion_start = time.monotonic()\n        try:\n            yield\n        finally:\n            self._excluded_seconds += time.monotonic() - exclusion_start",
+    "user_answer": "The OllamaClient itself pauses the timer internally before making a request.",
+    "expected_classification": "incorrect"
+  },
+  {
+    "id": "blank-1",
+    "question": "What does the `attempts` field on LLMCallResult represent?",
+    "ground_truth_context": "@dataclass(frozen=True)\nclass LLMCallResult:\n    \"\"\"Wraps a structured LLM result with the latency it took to produce.\"\"\"\n    result: EvaluationResult\n    duration_seconds: float\n    attempts: int",
+    "user_answer": "I don't know.",
+    "expected_classification": "not_attempted"
+  }
+]
