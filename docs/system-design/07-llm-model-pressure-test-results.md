@@ -10,8 +10,9 @@ N=10 repetitions per sample per model.
 |---|---|---|
 | `qwen2.5-coder:7b` | 100% | 0% |
 | `qwen3.5:latest` | 90% | 80% |
-| `deepseek-r1:latest` | 96% | 100% |
+| `deepseek-r1:latest` | 92% | 100% |
 | `llama3:latest` | 100% | 70% |
+| `nemotron-mini:latest` | 100% | 0% |
 
 ## `qwen2.5-coder:7b`
 
@@ -29,7 +30,7 @@ N=10 repetitions per sample per model.
 |---|---|---|---|---|
 | correct-1 | correct | correct, correct, correct, correct, correct, correct, correct, correct, correct, correct | 100% | n/a |
 | correct-2 | correct | correct, correct, correct, correct, correct, correct, correct, correct, correct, correct | 100% | n/a |
-| partial-1 | partial | partial, correct, partial, correct, correct, partial, correct, correct, partial, partial | 50% | 4/5 |
+| partial-1 | partial | correct, partial, correct, correct, partial, partial, partial, correct, correct, partial | 50% | 4/5 |
 | incorrect-1 | incorrect | not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted | 100% | n/a |
 | blank-1 | not_attempted | not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted | 100% | n/a |
 
@@ -37,10 +38,10 @@ N=10 repetitions per sample per model.
 
 | Sample | Expected | Classifications | Stability | Citations |
 |---|---|---|---|---|
-| correct-1 | correct | correct, correct, not_attempted, correct, correct, not_attempted, correct, correct, correct, correct | 80% | n/a |
+| correct-1 | correct | correct, correct, not_attempted, not_attempted, correct, correct, correct, correct, correct, correct | 80% | n/a |
 | correct-2 | correct | correct, correct, correct, correct, correct, correct, correct, correct, correct, correct | 100% | n/a |
 | partial-1 | partial | correct, correct, correct, correct, correct, correct, correct, correct, correct, correct | 100% | n/a |
-| incorrect-1 | incorrect | incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect | 100% | 10/10 |
+| incorrect-1 | incorrect | incorrect, incorrect, incorrect, incorrect, not_attempted, partial, incorrect, incorrect, incorrect, incorrect | 80% | 9/9 |
 | blank-1 | not_attempted | not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted | 100% | n/a |
 
 ## `llama3:latest`
@@ -51,6 +52,16 @@ N=10 repetitions per sample per model.
 | correct-2 | correct | correct, correct, correct, correct, correct, correct, correct, correct, correct, correct | 100% | n/a |
 | partial-1 | partial | correct, correct, correct, correct, correct, correct, correct, correct, correct, correct | 100% | n/a |
 | incorrect-1 | incorrect | incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect | 100% | 7/10 |
+| blank-1 | not_attempted | not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted | 100% | n/a |
+
+## `nemotron-mini:latest`
+
+| Sample | Expected | Classifications | Stability | Citations |
+|---|---|---|---|---|
+| correct-1 | correct | correct, correct, correct, correct, correct, correct, correct, correct, correct, correct | 100% | n/a |
+| correct-2 | correct | correct, correct, correct, correct, correct, correct, correct, correct, correct, correct | 100% | n/a |
+| partial-1 | partial | correct, correct, correct, correct, correct, correct, correct, correct, correct, correct | 100% | n/a |
+| incorrect-1 | incorrect | incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect, incorrect | 100% | 0/10 |
 | blank-1 | not_attempted | not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted, not_attempted | 100% | n/a |
 
 ## Recommendation
