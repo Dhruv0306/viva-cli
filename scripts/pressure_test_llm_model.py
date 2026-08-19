@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -98,15 +99,38 @@ def load_samples(path: Path = DEFAULT_SAMPLES_PATH) -> list[dict]:
 def run_repetitions(
     client: LLMClient, sample: dict, repetitions: int
 ) -> list[EvaluationResult]:
-    """Call evaluate_answer `repetitions` times for one sample, same inputs."""
+    """Call evaluate_answer `repetitions` times for one sample, same inputs.
+
+    Prints per-repetition progress to stderr (with elapsed time) so a slow
+    or hung call is visible in real time rather than showing nothing until
+    the whole sample finishes. A single call that errors (e.g. a timeout)
+    is recorded as a `not_attempted`/`needs_review` result rather than
+    aborting the run -- results collected so far for other samples/models
+    are worth more than a clean crash.
+    """
     results = []
-    for _ in range(repetitions):
-        call_result = client.evaluate_answer(
-            question=sample["question"],
-            ground_truth_context=sample["ground_truth_context"],
-            user_answer=sample["user_answer"],
+    for i in range(1, repetitions + 1):
+        rep_start = time.monotonic()
+        try:
+            call_result = client.evaluate_answer(
+                question=sample["question"],
+                ground_truth_context=sample["ground_truth_context"],
+                user_answer=sample["user_answer"],
+            )
+            result = call_result.result
+        except Exception as exc:  # noqa: BLE001 - deliberately broad: keep the run alive
+            result = EvaluationResult(
+                classification="not_attempted",
+                summary=f"Call failed: {exc}",
+                cited_file=None,
+                needs_review=True,
+            )
+        elapsed = time.monotonic() - rep_start
+        print(
+            f"    rep {i}/{repetitions}: {result.classification} ({elapsed:.1f}s)",
+            file=sys.stderr,
         )
-        results.append(call_result.result)
+        results.append(result)
     return results
 
 
@@ -204,6 +228,14 @@ def main() -> None:
     parser.add_argument("--ollama-host", default="http://localhost:11434")
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="Per-call timeout in seconds. A hung/very slow model surfaces "
+        "as a 'Call failed' not_attempted result instead of hanging the "
+        "whole run forever.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -217,7 +249,9 @@ def main() -> None:
     all_model_stats: list[ModelStats] = []
     for model in models:
         print(f"== {model} ==", file=sys.stderr)
-        client = OllamaClient(model=model, temperature=args.temperature, host=args.ollama_host)
+        client = OllamaClient(
+            model=model, temperature=args.temperature, host=args.ollama_host, timeout=args.timeout
+        )
         results_by_sample_id: dict[str, list[EvaluationResult]] = {}
         for sample in samples:
             print(f"  sample {sample['id']!r} x{args.repetitions}...", file=sys.stderr)

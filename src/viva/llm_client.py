@@ -72,10 +72,19 @@ class LLMClient(abc.ABC):
 
 
 class OllamaClient(LLMClient):
-    def __init__(self, model: str, temperature: float, host: str) -> None:
+    def __init__(
+        self, model: str, temperature: float, host: str, timeout: float | None = 120.0
+    ) -> None:
         self._model = model
         self._temperature = temperature
-        self._client = ollama.Client(host=host)
+        # No timeout previously meant a single slow/stuck generation could
+        # hang the whole process indefinitely with no error and no signal
+        # to the caller (surfaced by the pressure-test harness hanging on
+        # a larger candidate model). 120s is generous for a single
+        # evaluate_answer call on commodity 7B-14B hardware; callers that
+        # need something different (e.g. a slower box, a much bigger model)
+        # can override it.
+        self._client = ollama.Client(host=host, timeout=timeout)
 
     def evaluate_answer(
         self, question: str, ground_truth_context: str, user_answer: str
