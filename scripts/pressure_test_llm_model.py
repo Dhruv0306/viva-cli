@@ -10,7 +10,7 @@ classification call --
   2. Between-model citation compliance: some models omit `cited_file` on a
      partial/incorrect verdict far more often than others.
 
-This script turns that into an actual n=4-5 measurement: it runs a fixed set
+This script turns that into an actual n=4-10 measurement: it runs a fixed set
 of hand-written sample answers (tests/fixtures/pressure_test_samples.json),
 repeated N times each, against every candidate model, using the *real*
 `OllamaClient.evaluate_answer` from Phase 0 -- no new evaluation code, this
@@ -22,11 +22,14 @@ Requires a local Ollama with every `--model` already pulled:
 
     ollama pull qwen2.5-coder:7b
     ollama pull qwen3.5:latest
+    ollama pull deepseek-r1:latest
+    ollama pull llama3:latest
+    ollama pull nemotron-mini:latest
 
 Usage:
 
     python scripts/pressure_test_llm_model.py
-    python scripts/pressure_test_llm_model.py --model qwen2.5-coder:7b --model qwen3.5:latest --repetitions 5
+    python scripts/pressure_test_llm_model.py --model qwen2.5-coder:7b --model qwen3.5:latest --repetitions 10
     python scripts/pressure_test_llm_model.py --output docs/system-design/07-llm-model-pressure-test-results.md
 
 The classification-stability and citation-compliance calculation
@@ -56,8 +59,8 @@ from viva.schemas import EvaluationResult  # noqa: E402
 DEFAULT_SAMPLES_PATH = (
     Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "pressure_test_samples.json"
 )
-DEFAULT_MODELS = ["qwen2.5-coder:7b", "qwen3.5:latest"]
-DEFAULT_REPETITIONS = 5
+DEFAULT_MODELS = ["qwen2.5-coder:7b", "qwen3.5:latest", "deepseek-r1:latest", "llama3:latest", "nemotron-mini:latest"]
+DEFAULT_REPETITIONS = 10
 
 
 @dataclass(frozen=True)
@@ -226,11 +229,11 @@ def main() -> None:
     parser.add_argument("--repetitions", type=int, default=DEFAULT_REPETITIONS)
     parser.add_argument("--samples", type=Path, default=DEFAULT_SAMPLES_PATH)
     parser.add_argument("--ollama-host", default="http://localhost:11434")
-    parser.add_argument("--temperature", type=float, default=0.3)
+    parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument(
         "--timeout",
         type=float,
-        default=120.0,
+        default=180.0,
         help="Per-call timeout in seconds. A hung/very slow model surfaces "
         "as a 'Call failed' not_attempted result instead of hanging the "
         "whole run forever.",
@@ -248,7 +251,7 @@ def main() -> None:
 
     all_model_stats: list[ModelStats] = []
     for model in models:
-        print(f"== {model} ==", file=sys.stderr)
+        print(f"\n== {model} ==\n", file=sys.stderr)
         client = OllamaClient(
             model=model, temperature=args.temperature, host=args.ollama_host, timeout=args.timeout
         )
