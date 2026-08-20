@@ -59,7 +59,7 @@ from viva.schemas import EvaluationResult  # noqa: E402
 DEFAULT_SAMPLES_PATH = (
     Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "pressure_test_samples.json"
 )
-DEFAULT_MODELS = ["qwen2.5-coder:7b", "qwen3.5:latest", "deepseek-r1:latest", "llama3:latest", "nemotron-mini:latest"]
+DEFAULT_MODELS = ["qwen2.5-coder:7b", "qwen3.5:latest", "deepseek-r1:latest", "llama3:latest", "nemotron-mini:latest", "gemma4:e4b", "mistral-nemo:12b"]
 DEFAULT_REPETITIONS = 10
 
 
