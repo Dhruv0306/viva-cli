@@ -51,7 +51,7 @@ cp .env.example .env
 Pull the models used by default:
 
 ```bash
-ollama pull qwen2.5-coder:7b
+ollama pull gemma4:e4b
 ollama pull nomic-embed-text
 ```
 
@@ -61,7 +61,7 @@ All tunables live in `.env`:
 
 ```ini
 VIVA_DURATION_MINUTES=30
-LLM_MODEL=qwen2.5-coder:7b
+LLM_MODEL=gemma4:e4b
 EMBEDDING_MODEL=nomic-embed-text
 VECTOR_DB_PATH=./data/chroma
 MAX_QUESTIONS=8

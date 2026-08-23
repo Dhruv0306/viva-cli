@@ -209,6 +209,23 @@ def test_compute_model_stats_totals_needs_review_and_call_errors():
     assert stats.total_call_error_runs == 1
 
 
+def test_mean_accuracy_rate_penalizes_total_failure_sample_instead_of_excluding_it():
+    # This is the exact qwen3.5:latest bug: one sample where every call
+    # errors must drag the mean down (accuracy_rate=None -> counted as 0),
+    # not be silently dropped from the denominator and inflate the mean.
+    ok_sample = {**SAMPLE, "id": "ok", "expected_classification": "correct"}
+    failed_sample = {**SAMPLE, "id": "failed", "expected_classification": "incorrect"}
+    outcomes_by_id = {
+        "ok": [_outcome("correct")] * 4,  # 100% accuracy
+        "failed": [_error_outcome()] * 4,  # every call errored -> accuracy_rate is None
+    }
+    stats = compute_model_stats("test-model", [ok_sample, failed_sample], outcomes_by_id)
+    assert stats.sample_stats[1].accuracy_rate is None
+    # Correct: (100% + 0%) / 2 = 50%. Buggy old behavior would have
+    # excluded the None and reported 100%.
+    assert stats.mean_accuracy_rate == pytest.approx(0.5)
+
+
 def test_citation_compliance_rate_is_none_when_no_eligible_verdicts():
     sample_a = {**SAMPLE, "id": "a"}
     outcomes_by_id = {"a": [_outcome("correct"), _outcome("not_attempted")]}

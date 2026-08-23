@@ -146,13 +146,22 @@ class ModelStats:
 
     @property
     def mean_accuracy_rate(self) -> float:
-        # Note: this is a coarse, evenly-weighted average across the 5
-        # samples, not weighted by how many valid runs each sample had --
-        # good enough for a directional pressure-test comparison, not a
-        # substitute for a larger, properly-weighted accuracy benchmark.
-        rates = [s.accuracy_rate for s in self.sample_stats if s.accuracy_rate is not None]
-        if not rates:
+        # A sample where every call errored has accuracy_rate=None -- that
+        # must NOT be excluded from the average, or a model that totally
+        # fails to respond to one whole question gets that failure erased
+        # instead of penalized (this inflated qwen3.5:latest's headline
+        # accuracy from a true 72% to a reported 90% after its incorrect-1
+        # sample errored out on every single call). Treat it as 0% for
+        # that sample, consistent with how mean_stability_rate already
+        # treats a fully-errored sample as 0% rather than skipping it.
+        #
+        # Still a coarse, evenly-weighted average across the 5 samples, not
+        # weighted by how many valid runs each sample had -- good enough
+        # for a directional pressure-test comparison, not a substitute for
+        # a larger, properly-weighted accuracy benchmark.
+        if not self.sample_stats:
             return 0.0
+        rates = [s.accuracy_rate if s.accuracy_rate is not None else 0.0 for s in self.sample_stats]
         return sum(rates) / len(rates)
 
 
