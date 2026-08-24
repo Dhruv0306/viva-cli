@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from viva.ingest.filters import (
     MAX_FILE_SIZE_BYTES,
     walk_and_hard_exclude,
@@ -118,7 +120,14 @@ def test_excludes_binary_files_by_content_sniff(tmp_path: Path) -> None:
 def test_unreadable_file_counts_as_excluded_binary(tmp_path: Path) -> None:
     good = _write(tmp_path, "app.py", b"x = 1\n")
     broken_link = tmp_path / "broken_link.py"
-    broken_link.symlink_to(tmp_path / "does_not_exist.py")
+    try:
+        broken_link.symlink_to(tmp_path / "does_not_exist.py")
+    except OSError:
+        # Creating symlinks without elevated privileges/Developer Mode
+        # fails on Windows by default (WinError 1314) -- this is an
+        # environment permission limit, not something the filter logic
+        # can be exercised around, so skip rather than fail here.
+        pytest.skip("symlink creation not permitted in this environment")
 
     outcome = walk_and_hard_exclude(tmp_path)
 
