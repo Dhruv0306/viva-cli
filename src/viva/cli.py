@@ -14,6 +14,8 @@ from rich.console import Console
 
 from viva import __version__
 from viva.config import Config, ConfigError
+from viva.ingest import ingest_repo
+from viva.ingest.clone import CloneError
 from viva.llm_client import OllamaClient
 from viva.phase0_demo import run_demo
 
@@ -79,6 +81,43 @@ def demo(
             "pulled? See README.md 'Installation'.[/dim]"
         )
         raise typer.Exit(code=1)
+
+
+@app.command()
+def ingest(
+    repo_url: str = typer.Argument(..., help="GitHub repo URL to clone and sample, e.g. https://github.com/owner/repo"),
+    branch: str = typer.Option(None, "--branch", help="Branch to clone (defaults to the repo's default branch)."),
+) -> None:
+    """Clone a repo and run Phase 2 ingestion (hard exclusion, priority
+    sampling, stack detection) without doing anything else.
+
+    This is a Phase 2 smoke-test command, not the real `viva start` --
+    see docs/system-design/06-cli-contract-and-profile-scaling.md §6.1 for
+    the eventual command contract. Useful for manually verifying ingestion
+    behavior against a real repo (docs/plan.md Phase 2 exit criteria).
+    """
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    console.print(f"Cloning [bold]{repo_url}[/bold]...")
+    try:
+        result = ingest_repo(repo_url, config, branch=branch)
+    except CloneError as exc:
+        console.print(f"[red]Clone failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+
+    console.print(f"[green]Cloned[/green] {result.repo_slug} @ {result.commit_sha} (branch: {result.branch})")
+    console.print(f"Local path: {result.local_path}")
+    console.print(f"Detected stack: {', '.join(result.detected_stack) or '(none detected)'}")
+    console.print(f"Files: {result.files_analyzed}/{result.files_total} analyzed")
+    console.print(f"Sampling note: {result.sampling_note}")
+    if result.excluded_notable:
+        console.print("Exclusion summary:")
+        for note in result.excluded_notable:
+            console.print(f"  - {note}")
 
 
 if __name__ == "__main__":

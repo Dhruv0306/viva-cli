@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.6,<3.0",
     "python-dotenv>=1.0,<2.0",
     "ollama>=0.3.0,<1.0",
+    "GitPython>=3.1,<4.0",
 ]
 
 [project.optional-dependencies]
@@ -31,3 +32,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The golden-repo fixtures under tests/fixtures/golden_repos/ contain
+# their own test_*.py files (they're small real-looking projects used as
+# ingest test data) -- these must not be collected as viva-cli's own
+# tests, since they import from an "app" package that doesn't exist in
+# this project's environment.
+norecursedirs = ["tests/fixtures/golden_repos"]
