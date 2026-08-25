@@ -36,7 +36,16 @@ class FakeSlowLLMClient(LLMClient):
 
 
 def test_run_demo_end_to_end_excludes_llm_latency():
-    fake_client = FakeSlowLLMClient(sleep_seconds=0.2)
+    # sleep_seconds is deliberately higher than the >= 0.2 assertion below
+    # needs -- this test predates Phase 3 and isn't part of its scope, but
+    # was flaky on Windows: a strict time.sleep(0.2)/assert >= 0.2 with
+    # zero slack is fragile against Windows' coarser timer/sleep
+    # resolution, which can occasionally measure a hair under 0.2s for a
+    # requested 0.2s sleep. 50ms of headroom comfortably absorbs that
+    # without weakening what the assertion is actually checking (that
+    # LLM latency is excluded from the answer clock, not that it's
+    # precisely 0.2s).
+    fake_client = FakeSlowLLMClient(sleep_seconds=0.25)
     console = Console(record=True)
 
     with patch.object(Console, "input", return_value="It avoids wall-clock jumps."):
