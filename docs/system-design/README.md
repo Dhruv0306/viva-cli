@@ -33,6 +33,11 @@ history of what was tried and rejected along the way.
   including the previously-undocumented `viva list`), and the recursive
   hierarchical-reduce fallback for Project Profile generation on repos
   with many modules. Added in response to a second external design review.
+- **[08-phase-3-analyzer-design.md](08-phase-3-analyzer-design.md)** — the
+  Phase 3 Analyzer implementation design: tree-sitter dependency choice,
+  the query-per-language extraction mechanism, the `ProjectProfile`
+  unification decision, and the golden-repo fixture strategy for the
+  hierarchical-reduce path.
 
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
