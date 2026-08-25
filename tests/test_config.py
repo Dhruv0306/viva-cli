@@ -19,6 +19,8 @@ def _clean_env(monkeypatch):
         "GITHUB_TOKEN",
         "MAP_REDUCE_BATCH_SIZE",
         "MAX_REDUCE_CONTEXT_TOKENS",
+        "LINE_WINDOW_SIZE",
+        "LINE_WINDOW_OVERLAP",
         "VECTOR_DB_PATH",
         "TOP_K_RETRIEVAL",
     ):
@@ -45,6 +47,8 @@ def test_defaults_applied(monkeypatch):
     assert config.github_token is None
     assert config.map_reduce_batch_size == 8
     assert config.max_reduce_context_tokens is None
+    assert config.line_window_size == 60
+    assert config.line_window_overlap == 15
     assert config.vector_db_path == "./data/chroma"
     assert config.top_k_retrieval == 5
 
@@ -142,6 +146,23 @@ def test_max_reduce_context_tokens_invalid_raises(monkeypatch):
     monkeypatch.setenv("MAX_REDUCE_CONTEXT_TOKENS", "-100")
     with pytest.raises(ConfigError, match="MAX_REDUCE_CONTEXT_TOKENS"):
         Config.load(env_file=None)
+
+
+def test_line_window_overlap_equal_to_size_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("LINE_WINDOW_SIZE", "60")
+    monkeypatch.setenv("LINE_WINDOW_OVERLAP", "60")
+    with pytest.raises(ConfigError, match="LINE_WINDOW_OVERLAP"):
+        Config.load(env_file=None)
+
+
+def test_line_window_overlap_zero_allowed(monkeypatch):
+    # 0 is a legitimate value (non-overlapping windows) -- unlike
+    # LINE_WINDOW_SIZE, this must not raise.
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("LINE_WINDOW_OVERLAP", "0")
+    config = Config.load(env_file=None)
+    assert config.line_window_overlap == 0
 
 
 def test_invalid_top_k_retrieval_raises(monkeypatch):

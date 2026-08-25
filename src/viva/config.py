@@ -87,6 +87,8 @@ class Config:
     # --- Analysis ---
     map_reduce_batch_size: int
     max_reduce_context_tokens: int | None
+    line_window_size: int
+    line_window_overlap: int
 
     # --- RAG ---
     vector_db_path: str
@@ -146,6 +148,14 @@ class Config:
         map_reduce_batch_size = _get_positive_int("MAP_REDUCE_BATCH_SIZE", "8")
         max_reduce_context_tokens = _get_optional_positive_int("MAX_REDUCE_CONTEXT_TOKENS")
 
+        line_window_size = _get_positive_int("LINE_WINDOW_SIZE", "60")
+        line_window_overlap = _get_non_negative_int("LINE_WINDOW_OVERLAP", "15")
+        if line_window_overlap >= line_window_size:
+            raise ConfigError(
+                "LINE_WINDOW_OVERLAP must be smaller than LINE_WINDOW_SIZE, got "
+                f"overlap={line_window_overlap} size={line_window_size}"
+            )
+
         vector_db_path = os.getenv("VECTOR_DB_PATH", "./data/chroma").strip()
         if not vector_db_path:
             raise ConfigError("VECTOR_DB_PATH must not be empty if set")
@@ -166,6 +176,8 @@ class Config:
             github_token=github_token,
             map_reduce_batch_size=map_reduce_batch_size,
             max_reduce_context_tokens=max_reduce_context_tokens,
+            line_window_size=line_window_size,
+            line_window_overlap=line_window_overlap,
             vector_db_path=vector_db_path,
             top_k_retrieval=top_k_retrieval,
         )
