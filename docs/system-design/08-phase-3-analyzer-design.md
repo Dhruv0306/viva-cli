@@ -160,3 +160,45 @@ used together for different purposes:
   one local model at a time on typical hardware, so concurrency here
   wouldn't reduce wall-clock time and isn't called for by Phase 3's
   scope.
+
+## 8.6 `modules[]` schema: scoped down from the original draft
+
+`docs/design.md` §6's original draft specified each `modules[]` entry as
+`{"path": "src/auth", "role": "authentication", "key_files": [...],
+"summary": "..."}`. The Phase 3 implementation ships
+`{"module": "auth", "summary": "...", "file_count": 4}` instead — this
+was noticed only while writing this doc, after the rest of the
+implementation was already built and tested, not decided up front the
+way the rest of this document's choices were. Flagging it explicitly
+here rather than letting the schema doc silently drift out of sync with
+the code, per the project's "docs must stay in lockstep" principle.
+
+**What was dropped and why it's an acceptable v1 scope cut:**
+- **`path` → `module`:** `SampledFile.module` (Phase 2's directory-
+  stratified sampling grouping) is already a top-level-directory name,
+  not a full nested path — using it directly avoids inventing a second,
+  redundant notion of "module boundary" in the Analyzer that would need
+  to agree with Sampling's. A real nested `path` would need the Analyzer
+  to compute its own module boundaries independently of Phase 2's, which
+  duplicates logic for no clear benefit at this stage.
+- **`role` (a short classification like "authentication"):** dropped
+  because assigning it well needs either its own LLM call per module
+  (extra cost, extra prompt to get right) or a keyword-heuristic that
+  would likely be wrong often enough to be misleading in a profile
+  that's meant to be trustworthy context for every later phase. Worth
+  revisiting once there's a concrete downstream consumer (e.g.
+  QuestionGen category-to-module targeting) that would actually use it.
+- **`key_files` (representative files per module):** dropped for v1;
+  the closest existing building block is Phase 2's `always_include`
+  sampling tier, but that tier mixes manifests/READMEs/entry points with
+  genuinely representative source files, so it isn't a clean fit without
+  its own selection logic.
+
+**What adding these back would take**, if a later phase needs them:
+`role` would need either a small additional LLM call in `reduce_module()`
+(cheap: one short classification call per module, same call pattern as
+`summarize_file`) or a keyword-matching heuristic against the module's
+file summaries. `key_files` could be derived cheaply and deterministically
+from each module's `FileSummary` list — e.g. the files with the most
+`CodeUnit`s, or the ones tagged `always_include` by Phase 2 — without
+needing another LLM call at all.

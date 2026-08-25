@@ -132,12 +132,19 @@ detail: `docs/system-design/06-cli-contract-and-profile-scaling.md` §6.2.
   "architecture_summary": "...",
   "entry_points": ["src/main.py"],
   "modules": [
-    {"path": "src/auth", "role": "authentication", "key_files": ["..."], "summary": "..."}
+    {"module": "auth", "summary": "...", "file_count": 4}
   ],
   "test_coverage_present": true,
   "excluded_notable": ["large generated migration files"]
 }
 ```
+`modules[].module` is the top-level directory name (matching `SampledFile.module`'s
+directory-stratified grouping, §3 / FR2's sampling boundaries) -- not a full nested
+path. The original design draft called for `path`/`role`/`key_files` per module; the
+Phase 3 implementation deliberately scoped this down to `module`/`summary`/`file_count`
+for v1 (no per-module role classification or representative-file list yet) -- see
+`docs/system-design/08-phase-3-analyzer-design.md` §8.6 for the rationale and what
+adding `role`/`key_files` back would take.
 
 **Question Plan Item**
 ```json
