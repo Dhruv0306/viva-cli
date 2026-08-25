@@ -15,11 +15,15 @@ approximation (NFR8 transparency).
 """
 from __future__ import annotations
 
+import logging
+
 from tree_sitter import Node, Query, QueryCursor
 from tree_sitter_language_pack import get_language, get_parser
 
 from viva.analyzer.languages import load_query_source, resolve_language
 from viva.analyzer.models import CodeUnit, FileAnalysis
+
+logger = logging.getLogger(__name__)
 
 _BODY_EXCERPT_MAX_CHARS = 800
 
@@ -42,19 +46,29 @@ def analyze_file(
     language_key, query_stem = resolved
     try:
         units = _extract_ast_units(content, language_key, query_stem)
-    except Exception:
+    except Exception as exc:
         # Any parse/query failure (malformed source, grammar edge case,
-        # encoding surprise) falls back rather than aborting the whole
-        # analysis run over one file -- design.md §4/§9's "never a hard
-        # failure" principle applies here too, not just to LLM calls.
+        # encoding surprise, a missing platform binary for this
+        # language) falls back rather than aborting the whole analysis
+        # run over one file -- design.md §4/§9's "never a hard failure"
+        # principle applies here too, not just to LLM calls. Logged at
+        # WARNING with the full traceback rather than swallowed silently
+        # -- a systemic cause (e.g. every language failing the same way)
+        # is invisible in `analysis_stats` alone and needs to actually
+        # surface somewhere.
+        logger.warning(
+            "AST extraction failed for %s (language=%s), falling back to line-window: %s",
+            path, language_key, exc, exc_info=True,
+        )
         return _line_window_fallback(
-            path, module, content, language_key, line_window_size, line_window_overlap
+            path, module, content, language_key, line_window_size, line_window_overlap, parse_error=str(exc)
         )
 
     if not units:
         # Parsed fine, but nothing matched the query (e.g. a file that's
         # all top-level statements, no functions/classes) -- line-window
-        # still gives the Map step something to summarize.
+        # still gives the Map step something to summarize. Not a parse
+        # error, so `parse_error` stays unset.
         return _line_window_fallback(
             path, module, content, language_key, line_window_size, line_window_overlap
         )
@@ -156,10 +170,14 @@ def _line_window_fallback(
     language_key: str | None,
     window_size: int,
     overlap: int,
+    parse_error: str | None = None,
 ) -> FileAnalysis:
     lines = content.splitlines()
     if not lines:
-        return FileAnalysis(path=path, module=module, language=language_key, parse_method="line_window", raw_windows=[])
+        return FileAnalysis(
+            path=path, module=module, language=language_key, parse_method="line_window",
+            raw_windows=[], parse_error=parse_error,
+        )
 
     step = max(window_size - overlap, 1)
     windows = []
@@ -177,4 +195,5 @@ def _line_window_fallback(
         language=language_key,
         parse_method="line_window",
         raw_windows=windows,
+        parse_error=parse_error,
     )

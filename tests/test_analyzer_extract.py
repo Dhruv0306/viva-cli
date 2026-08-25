@@ -87,6 +87,45 @@ def test_empty_file_produces_no_windows():
     assert result.raw_windows == []
 
 
+def test_parse_failure_sets_parse_error_and_is_logged(monkeypatch, caplog):
+    # Force _extract_ast_units to raise for an in-allowlist language, to
+    # exercise the "real parse failure" path distinctly from "unsupported
+    # extension" and "parsed fine but no units" -- all three fall back to
+    # line_window, but only this one should set parse_error and log a
+    # warning (this is exactly the signal that was missing when Windows
+    # AST extraction silently fell back for every language at once).
+    import viva.analyzer.extract as extract_module
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated grammar binary load failure")
+
+    monkeypatch.setattr(extract_module, "_extract_ast_units", _boom)
+
+    with caplog.at_level("WARNING"):
+        result = extract_module.analyze_file(
+            "src/x.py", "def f(): pass", module="src", line_window_size=WINDOW, line_window_overlap=OVERLAP
+        )
+
+    assert result.parse_method == "line_window"
+    assert result.parse_error == "simulated grammar binary load failure"
+    assert any("AST extraction failed" in r.message for r in caplog.records)
+
+
+def test_no_units_found_does_not_set_parse_error():
+    # Valid parse, just nothing the query matches -- distinct from an
+    # actual failure, so parse_error must stay None.
+    result = analyze_file("src/constants.py", "X = 1\n", module="src", line_window_size=WINDOW, line_window_overlap=OVERLAP)
+
+    assert result.parse_method == "line_window"
+    assert result.parse_error is None
+
+
+def test_unsupported_extension_does_not_set_parse_error():
+    result = analyze_file("data/config.yaml", "a: 1\n", module="data", line_window_size=WINDOW, line_window_overlap=OVERLAP)
+
+    assert result.parse_error is None
+
+
 def test_line_window_respects_size_and_overlap():
     # 100 lines, window 60, overlap 15 -> step 45 -> windows at [0:60], [45:100]
     content = "\n".join(f"line {i}" for i in range(100))

@@ -51,6 +51,13 @@ class FileAnalysis:
     parse_method: ParseMethod
     units: list[CodeUnit] = field(default_factory=list)
     raw_windows: list[str] = field(default_factory=list)
+    # Set only when `parse_method == "line_window"` *because* an
+    # in-allowlist language raised during AST extraction (as opposed to
+    # parsing fine but matching no units, or the extension simply being
+    # outside the allowlist) -- lets AnalysisStats distinguish a real
+    # parse failure from an expected fallback, and lets callers log the
+    # actual cause instead of a silent fallback (see extract.py).
+    parse_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,13 +93,13 @@ class AnalysisStats:
     line_window_fallback: int = 0
     parse_failures_by_language: dict[str, int] = field(default_factory=dict)
 
-    def record(self, analysis: FileAnalysis, parse_failed: bool = False) -> None:
+    def record(self, analysis: FileAnalysis) -> None:
         self.files_analyzed += 1
         if analysis.parse_method == "ast":
             self.ast_parsed += 1
         else:
             self.line_window_fallback += 1
-        if parse_failed and analysis.language:
+        if analysis.parse_error and analysis.language:
             self.parse_failures_by_language[analysis.language] = (
                 self.parse_failures_by_language.get(analysis.language, 0) + 1
             )

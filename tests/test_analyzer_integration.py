@@ -90,6 +90,32 @@ def test_analyze_repo_stats_reflect_ast_vs_line_window_split(tmp_path, mocker):
     # the remaining 5 real .py files parse via AST.
     assert stats.ast_parsed == 5
     assert stats.line_window_fallback == 6
+    # None of these fallbacks are real parse failures (unsupported
+    # extensions / no matching units, not exceptions), so the
+    # per-language failure count must stay empty -- this is the field
+    # that was silently never populated before parse_error was added.
+    assert stats.parse_failures_by_language == {}
+
+
+def test_analyze_repo_stats_count_real_parse_failures_by_language(tmp_path, mocker):
+    mocker.patch.object(ingest_pkg, "clone_repo", _stub_clone_from_fixture("py_small"))
+    ingest_result = ingest_repo("https://github.com/fixture/py-small", _config(), work_dir=tmp_path / "clone")
+
+    import viva.analyzer.extract as extract_module
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated failure")
+
+    mocker.patch.object(extract_module, "_extract_ast_units", _boom)
+
+    result = analyze_repo(ingest_result, _config(max_reduce_context_tokens=100_000), _FakeLLMClient())
+
+    assert result.analysis_stats.ast_parsed == 0
+    # All 9 .py files (including near-empty __init__.py files, which
+    # still attempt AST extraction before falling back) raise via the
+    # mocked _extract_ast_units -- README.md/pyproject.toml aren't
+    # python at all, so they're unaffected.
+    assert result.analysis_stats.parse_failures_by_language.get("python", 0) == 9
 
 
 def test_analyze_repo_js_fixture_detects_index_entry_point(tmp_path, mocker):
