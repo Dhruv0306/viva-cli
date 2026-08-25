@@ -28,6 +28,12 @@ class FakeSlowLLMClient(LLMClient):
         )
         return LLMCallResult(result=result, duration_seconds=duration, attempts=1)
 
+    def summarize_file(self, path, language, content_excerpt, target_tokens):
+        raise NotImplementedError  # not exercised by the Phase 0 demo
+
+    def reduce(self, label, summaries, target_tokens):
+        raise NotImplementedError  # not exercised by the Phase 0 demo
+
 
 def test_run_demo_end_to_end_excludes_llm_latency():
     fake_client = FakeSlowLLMClient(sleep_seconds=0.2)

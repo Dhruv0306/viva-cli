@@ -90,3 +90,48 @@ def test_prompt_uses_labeled_sections(client):
     assert "[QUESTION]" in user_prompt
     assert "[GROUND_TRUTH_CODE_CONTEXT]" in user_prompt
     assert "[USER_ANSWER]" in user_prompt
+
+
+def test_summarize_file_returns_stripped_text(client):
+    client._client.chat.return_value = _chat_response("  A file that adds two numbers.  \n")
+
+    summary = client.summarize_file(
+        path="src/foo.py", language="python", content_excerpt="def foo(a, b): ...", target_tokens=150
+    )
+
+    assert summary == "A file that adds two numbers."
+    call_kwargs = client._client.chat.call_args.kwargs
+    assert call_kwargs["options"]["num_predict"] == int(150 * 1.5)
+    messages = call_kwargs["messages"]
+    assert "src/foo.py" in messages[1]["content"]
+    assert "python" in messages[1]["content"]
+
+
+def test_reduce_combines_summaries_into_one_prompt(client):
+    client._client.chat.return_value = _chat_response("Combined summary.")
+
+    result = client.reduce("Module: src", ["Summary A.", "Summary B."], target_tokens=200)
+
+    assert result == "Combined summary."
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "Module: src" in user_prompt
+    assert "Summary A." in user_prompt
+    assert "Summary B." in user_prompt
+
+
+def test_get_context_window_parses_family_namespaced_key(client):
+    client._client.show.return_value = {"model_info": {"gemma3.context_length": 8192, "other.key": "x"}}
+
+    assert client.get_context_window() == 8192
+
+
+def test_get_context_window_returns_none_on_missing_info(client):
+    client._client.show.return_value = {}
+
+    assert client.get_context_window() is None
+
+
+def test_get_context_window_returns_none_on_error(client):
+    client._client.show.side_effect = RuntimeError("model not found")
+
+    assert client.get_context_window() is None
