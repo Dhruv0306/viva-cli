@@ -103,18 +103,19 @@ viva report <session-id> [--format md|json] [--output report.md] [--allow-partia
 
 Full CLI contract, including exit codes: [`docs/system-design/06-cli-contract-and-profile-scaling.md`](docs/system-design/06-cli-contract-and-profile-scaling.md) §6.1.
 
-Two Phase 2/3 smoke-test commands also exist for manually exercising ingestion and analysis against a real repo ahead of the real `viva start`:
+Three Phase 2/3/4 smoke-test commands also exist for manually exercising ingestion, analysis, and indexing against a real repo ahead of the real `viva start`:
 
 ```bash
 viva ingest https://github.com/<owner>/<repo> [--branch main]
 viva analyze https://github.com/<owner>/<repo> [--branch main] [--output project_profile.json]
+viva index https://github.com/<owner>/<repo> [--branch main] [--query "how is auth handled?"]
 ```
 
 ## Project status
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-3 (walking skeleton through Analysis) are implemented.** Config
+**Phases 0-4 (walking skeleton through RAG Indexing) are implemented.** Config
 now validates every tunable, and an `LLM_MODEL` pressure-test harness
 (`scripts/pressure_test_llm_model.py`) is in place — see
 [`docs/system-design/07-llm-model-pressure-test-results.md`](docs/system-design/07-llm-model-pressure-test-results.md)
@@ -122,6 +123,10 @@ for results once run locally. Phase 3 added tree-sitter AST extraction and
 map-reduce Project Profile generation, including the hierarchical-reduce
 fallback for repos with many modules — see
 [`docs/system-design/08-phase-3-analyzer-design.md`](docs/system-design/08-phase-3-analyzer-design.md).
+Phase 4 added function/class-granularity chunking, local Ollama
+embedding, and a Chroma-backed vector store keyed per commit (with reuse
+for unchanged commits) — see
+[`docs/system-design/09-phase-4-indexing-design.md`](docs/system-design/09-phase-4-indexing-design.md).
 There's still no real `viva start` yet — only a throwaway harness that
 exercises the two riskiest assumptions end-to-end (local-model
 structured-output reliability, and a timer that excludes LLM latency):

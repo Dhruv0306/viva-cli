@@ -38,6 +38,11 @@ history of what was tried and rejected along the way.
   the query-per-language extraction mechanism, the `ProjectProfile`
   unification decision, and the golden-repo fixture strategy for the
   hierarchical-reduce path.
+- **[09-phase-4-indexing-design.md](09-phase-4-indexing-design.md)** — the
+  Phase 4 Indexer/RAG implementation design: why chunk text is re-extracted
+  at `INDEXING` rather than threaded from `ANALYZING`, the chunk/metadata
+  schema, the `EmbeddingClient` interface, and Chroma collection keying
+  and reuse.
 
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
