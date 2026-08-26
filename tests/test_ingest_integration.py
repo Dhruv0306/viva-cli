@@ -41,6 +41,8 @@ def _make_config(max_files: int = 500, test_file_quota_pct: int = 10) -> Config:
         github_token=None,
         map_reduce_batch_size=8,
         max_reduce_context_tokens=None,
+        line_window_size=60,
+        line_window_overlap=15,
         vector_db_path="./data/chroma",
         top_k_retrieval=5,
     )
