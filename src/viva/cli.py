@@ -19,6 +19,9 @@ from rich.console import Console
 from viva import __version__
 from viva.analyzer import analyze_repo
 from viva.config import Config, ConfigError
+from viva.embedding_client import OllamaEmbeddingClient
+from viva.indexer import index_repo
+from viva.indexer.store import VectorStore
 from viva.ingest import ingest_repo
 from viva.ingest.clone import CloneError
 from viva.llm_client import OllamaClient
@@ -192,6 +195,103 @@ def analyze(
     output_path = Path(output)
     output_path.write_text(json.dumps(_profile_to_dict(profile), indent=2, default=str))
     console.print(f"\nWrote Project Profile to [bold]{output_path}[/bold]")
+
+
+@app.command()
+def index(
+    repo_url: str = typer.Argument(..., help="GitHub repo URL to clone, ingest, analyze, and index, e.g. https://github.com/owner/repo"),
+    branch: str = typer.Option(None, "--branch", help="Branch to clone (defaults to the repo's default branch)."),
+    query: str = typer.Option(
+        None, "--query", help="After indexing, run one sample retrieval query against the resulting collection."
+    ),
+) -> None:
+    """Clone, ingest, analyze, and run Phase 4 indexing (function/class-
+    granularity chunking, local embedding, Chroma vector store) against a
+    repo.
+
+    This is a Phase 4 smoke-test command for manually reviewing retrieval
+    quality (docs/plan.md Phase 4 exit criteria: "manual retrieval
+    queries return relevant, correctly-scoped chunks"), not the real
+    `viva start` -- see
+    docs/system-design/06-cli-contract-and-profile-scaling.md §6.1 for
+    the eventual command contract. Runs one embedding call per file plus
+    the map-reduce analysis calls, so expect this to take at least as
+    long as `viva analyze` alone on anything but a small repo -- unless
+    the exact commit was already indexed, in which case indexing is
+    skipped entirely (see docs/system-design/09-phase-4-indexing-design.md
+    §9.4).
+    """
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    console.print(f"Cloning [bold]{repo_url}[/bold]...")
+    try:
+        ingest_result = ingest_repo(repo_url, config, branch=branch)
+    except CloneError as exc:
+        console.print(f"[red]Clone failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+
+    console.print(
+        f"[green]Ingested[/green] {ingest_result.files_analyzed}/{ingest_result.files_total} files "
+        f"(stack: {', '.join(ingest_result.detected_stack) or '(none detected)'})"
+    )
+
+    console.print("Analyzing (this runs one LLM call per file, plus reduce calls)...")
+    llm_client = OllamaClient(model=config.llm_model, temperature=config.temperature, host=config.ollama_host)
+    try:
+        analysis_result = analyze_repo(ingest_result, config, llm_client)
+    except Exception as exc:  # noqa: BLE001 - Phase 4 smoke-test command, not prod error handling
+        console.print(f"[red]Analysis failed:[/red] {exc}")
+        console.print(
+            "[dim]Is Ollama running, and has the configured LLM_MODEL been "
+            "pulled? See README.md 'Installation'.[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    profile = ProjectProfile.build(ingest_result, analysis_result)
+
+    console.print("Indexing (chunking + one embedding call per file)...")
+    embedding_client = OllamaEmbeddingClient(model=config.embedding_model, host=config.ollama_host)
+    try:
+        index_result = index_repo(profile, config, embedding_client)
+    except Exception as exc:  # noqa: BLE001 - Phase 4 smoke-test command, not prod error handling
+        console.print(f"[red]Indexing failed:[/red] {exc}")
+        console.print(
+            "[dim]Is Ollama running, and has the configured EMBEDDING_MODEL "
+            "been pulled? See README.md 'Installation'.[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    console.print(f"\n[bold]Collection:[/bold] {index_result.collection_name}")
+    if index_result.stats.reused_existing_collection:
+        console.print(
+            "[yellow]Reused existing collection[/yellow] for this exact commit -- skipped re-embedding."
+        )
+    else:
+        console.print(
+            f"[bold]Chunks indexed:[/bold] {index_result.stats.chunks_built} "
+            f"(from {index_result.stats.files_processed} files)"
+        )
+
+    if query:
+        console.print(f"\n[bold]Retrieval query:[/bold] {query!r}")
+        [query_embedding] = embedding_client.embed([query])
+        store = VectorStore(config.vector_db_path)
+        results = store.query(index_result.collection_name, query_embedding, n_results=config.top_k_retrieval)
+        if not results:
+            console.print("[dim](no results)[/dim]")
+        for rank, r in enumerate(results, start=1):
+            meta = r["metadata"]
+            label = meta["symbol_name"] or meta["kind"]
+            console.print(
+                f"  {rank}. {meta['filepath']}:{meta['start_line']}-{meta['end_line']} "
+                f"({label}, {meta['parse_method']}) [distance={r['distance']:.4f}]"
+            )
+            preview = r["text"].strip().splitlines()[0][:100]
+            console.print(f"     {preview}")
 
 
 def _profile_to_dict(profile: ProjectProfile) -> dict:
