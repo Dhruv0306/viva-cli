@@ -28,10 +28,18 @@ _ENTRY_POINT_BASENAMES: set[str] = {
     "main.go",
     "main.rs",
     "main.java",
-    "application.java",
     "program.cs",
     "startup.cs",
 }
+
+# Suffix matches, for conventions where the entry-point class is named
+# after the project rather than a fixed literal filename. Found via a
+# real repo run: a Spring Boot project's entry point is near-universally
+# named <ProjectName>Application.java (e.g. UrlShortenerApplication.java),
+# which no exact-basename match can catch -- "application.java" alone
+# (an exact match) only fires for the literal filename "Application.java",
+# which almost no real Spring Boot project actually uses.
+_ENTRY_POINT_SUFFIXES: tuple[str, ...] = ("application.java",)
 
 
 def detect_entry_points(sampled_files: list[SampledFile], detected_stack: list[str]) -> list[str]:
@@ -44,7 +52,9 @@ def detect_entry_points(sampled_files: list[SampledFile], detected_stack: list[s
     """
     del detected_stack  # see docstring: not needed for matching itself
 
-    matches = {
-        f.path for f in sampled_files if Path(f.path).name.lower() in _ENTRY_POINT_BASENAMES
-    }
+    matches = set()
+    for f in sampled_files:
+        name = Path(f.path).name.lower()
+        if name in _ENTRY_POINT_BASENAMES or name.endswith(_ENTRY_POINT_SUFFIXES):
+            matches.add(f.path)
     return sorted(matches)
