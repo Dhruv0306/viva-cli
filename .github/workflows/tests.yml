@@ -1,0 +1,50 @@
+name: Tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    name: pytest (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Don't cancel the whole matrix if one leg fails -- Windows-specific
+      # regressions (see Phase 2's symlink-creation bug, only ever caught
+      # by real Windows testing) need their own signal, not to be hidden
+      # behind an unrelated Ubuntu failure or vice versa.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install viva-cli (dev)
+        run: pip install -e ".[dev]"
+
+      - name: Run pytest
+        # -q for concise output; the one network-marked integration test
+        # (tests/test_ingest_integration.py) carries a hard
+        # @pytest.mark.skip and is meant to be run manually, so no extra
+        # skip/deselect flags are needed here.
+        #
+        # Note: this needs outbound internet access at *test* time, not
+        # just at install time -- tree-sitter-language-pack (Phase 3, FR6)
+        # fetches some grammar binaries from a download manifest on first
+        # use per language, rather than bundling every grammar in the
+        # wheel itself. GitHub-hosted runners have unrestricted internet
+        # access by default, so this isn't a problem here, but if this
+        # workflow is ever moved to a self-hosted runner or the repo
+        # later enables egress restrictions, that's the first thing to
+        # check if analyzer tests start failing only in CI.
+        run: pytest -q
