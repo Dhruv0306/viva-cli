@@ -18,6 +18,7 @@ of that strategy are Phase 7 scope once the full Evaluation Record exists.
 from __future__ import annotations
 
 import abc
+import logging
 import time
 from dataclasses import dataclass
 
@@ -25,6 +26,8 @@ import ollama
 from pydantic import ValidationError
 
 from viva.schemas import EvaluationResult
+
+logger = logging.getLogger(__name__)
 
 SUMMARIZE_FILE_SYSTEM_PROMPT = """You are summarizing one source file for a \
 codebase-understanding tool. Ground the summary ONLY in the provided \
@@ -250,15 +253,45 @@ class OllamaClient(LLMClient):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            # Disable extended thinking explicitly for reasoning-capable
+            # models. Discovered against a real Ollama run: summarize_file/
+            # reduce cap num_predict (evaluate_answer doesn't -- see below),
+            # and a thinking model spends that budget on hidden <think>
+            # reasoning before ever emitting visible content, coming back
+            # empty. evaluate_answer never hit this because it sets no
+            # num_predict cap at all, giving a thinking model room to
+            # finish reasoning before the budget runs out -- but doing
+            # that here too would make the Map step (one call per sampled
+            # file, potentially hundreds per repo) unpredictably slow for
+            # no summarization-quality benefit. think=False is a no-op for
+            # non-reasoning models, so this is safe either way.
+            think=False,
             options={
                 "temperature": self._temperature,
-                # Generous headroom over the target so the model isn't cut
-                # off mid-sentence; target length is enforced by the
-                # prompt itself, not hard truncation.
-                "num_predict": max(int(target_tokens * 1.5), 64),
+                # 3x the target with a 128-token floor -- generous enough
+                # that even a model which doesn't fully respect think=False
+                # (or pads before settling into the answer) still has room
+                # to produce real content instead of getting cut off.
+                "num_predict": max(int(target_tokens * 3), 128),
             },
         )
-        return response["message"]["content"].strip()
+        content = response["message"]["content"].strip()
+        if not content:
+            # Never let a blank LLM response propagate silently into a
+            # blank Project Profile field -- that's exactly what produced
+            # confusing cascading output before this fix (a reduce() call
+            # over several empty summaries got a "please provide the
+            # summaries" response from the model, since there was nothing
+            # in them to synthesize).
+            logger.warning(
+                "Empty content from model '%s' for a summarize/reduce call "
+                "(target_tokens=%d) despite think=False and num_predict=%d -- "
+                "the model may not respect think=False, or generation was "
+                "cut off before any visible content.",
+                self._model, target_tokens, max(int(target_tokens * 3), 128),
+            )
+            return "(summary unavailable: the LLM returned no content for this call)"
+        return content
 
     @staticmethod
     def _build_prompt(question: str, ground_truth_context: str, user_answer: str) -> str:

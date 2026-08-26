@@ -101,10 +101,28 @@ def test_summarize_file_returns_stripped_text(client):
 
     assert summary == "A file that adds two numbers."
     call_kwargs = client._client.chat.call_args.kwargs
-    assert call_kwargs["options"]["num_predict"] == int(150 * 1.5)
+    assert call_kwargs["options"]["num_predict"] == int(150 * 3)
+    assert call_kwargs["think"] is False
     messages = call_kwargs["messages"]
     assert "src/foo.py" in messages[1]["content"]
     assert "python" in messages[1]["content"]
+
+
+def test_summarize_file_empty_response_returns_placeholder_not_blank(client, caplog):
+    # A thinking-capable model can exhaust num_predict on hidden reasoning
+    # and return empty visible content -- must never propagate a blank
+    # string silently into the Project Profile (that's what produced the
+    # "please provide the summaries" cascade against a real model).
+    client._client.chat.return_value = _chat_response("")
+
+    with caplog.at_level("WARNING"):
+        summary = client.summarize_file(
+            path="src/foo.py", language="python", content_excerpt="def foo(): ...", target_tokens=150
+        )
+
+    assert summary != ""
+    assert "unavailable" in summary
+    assert any("Empty content" in r.message for r in caplog.records)
 
 
 def test_reduce_combines_summaries_into_one_prompt(client):
@@ -113,7 +131,9 @@ def test_reduce_combines_summaries_into_one_prompt(client):
     result = client.reduce("Module: src", ["Summary A.", "Summary B."], target_tokens=200)
 
     assert result == "Combined summary."
-    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    call_kwargs = client._client.chat.call_args.kwargs
+    assert call_kwargs["think"] is False
+    user_prompt = call_kwargs["messages"][1]["content"]
     assert "Module: src" in user_prompt
     assert "Summary A." in user_prompt
     assert "Summary B." in user_prompt

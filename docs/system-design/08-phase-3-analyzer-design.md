@@ -161,6 +161,42 @@ used together for different purposes:
   wouldn't reduce wall-clock time and isn't called for by Phase 3's
   scope.
 
+## 8.7 Real-model finding: thinking models need `think=False`, not just a bigger `num_predict`
+
+Running `viva analyze` against a real Ollama model surfaced almost every
+file/module summary coming back as an **empty string**, with one reduce
+call producing a visibly confused response ("Please provide the
+summaries you would like me to synthesize...") -- which only makes sense
+if the individual summaries it was asked to combine were themselves
+empty.
+
+Root cause: `summarize_file`/`reduce` cap `num_predict` (`evaluate_answer`
+doesn't -- it lets generation run unbounded until the model finishes).
+A reasoning/"thinking"-capable model spends that capped budget on hidden
+`<think>...</think>` reasoning before ever emitting visible `content`,
+so generation gets cut off mid-thought and the visible content comes
+back empty. `evaluate_answer` never hit this because nothing bounds how
+long it can think before answering.
+
+Fix: pass `think=False` explicitly on every `summarize_file`/`reduce`
+call (the installed `ollama` client — 0.6.2 at the time of this fix —
+exposes `think: bool | "low" | "medium" | "high"` on `Client.chat()`).
+This is a no-op for non-reasoning models, so it's safe regardless of
+which model is configured. `num_predict`'s multiplier was also bumped
+from 1.5x to 3x the target length as defense-in-depth, in case a given
+model doesn't fully respect `think=False`. As a second line of defense,
+an empty response after `.strip()` no longer propagates silently -- it's
+logged at `WARNING` with the model name and generation params, and a
+placeholder string is returned instead of `""`, so a summarization
+failure is visible in the profile output rather than silently producing
+a blank `architecture_summary`/`modules[].summary`.
+
+`evaluate_answer` was deliberately left unbounded rather than also
+getting `think=False` -- it already works correctly (verified via the
+Phase 1 pressure-test harness), and changing working, tested behavior to
+fix an unrelated bug elsewhere isn't the right move without its own
+verification pass.
+
 ## 8.6 `modules[]` schema: scoped down from the original draft
 
 `docs/design.md` §6's original draft specified each `modules[]` entry as
