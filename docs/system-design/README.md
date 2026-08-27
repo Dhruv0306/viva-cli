@@ -43,6 +43,12 @@ history of what was tried and rejected along the way.
   at `INDEXING` rather than threaded from `ANALYZING`, the chunk/metadata
   schema, the `EmbeddingClient` interface, and Chroma collection keying
   and reuse.
+- **[10-phase-5-questiongen-design.md](10-phase-5-questiongen-design.md)**
+  — the Phase 5 QuestionGen implementation design: the FR12 coverage-plan
+  distribution algorithm, the FR13 just-in-time grounded generation flow,
+  the query-reformulation + test-path-filter resolution of open question
+  #6, and the explicit Phase 5/6 boundary around FR14/FR15 (follow-ups and
+  live duplicate tracking are session-state concepts owned by Phase 6).
 
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

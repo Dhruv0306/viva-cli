@@ -1,0 +1,150 @@
+# System Design Reference — Part 10: Phase 5 QuestionGen Design
+
+> Part of the full system-design reference. See `README.md` in this folder
+> for the complete set of parts.
+
+## 10.1 Scope
+
+FR12–FR13: build a category-based coverage plan from the Project Profile,
+then generate each question just-in-time, grounded in retrieved chunks.
+FR14 (adaptive follow-ups) and FR15 (live duplicate-avoidance tracking)
+are explicitly **not** implemented in this phase — see §10.3.
+
+New package: `src/viva/questiongen/` (`models.py`, `planner.py`,
+`retrieval.py`, `__init__.py`), mirroring `indexer/`'s shape. Public
+entrypoints: `build_coverage_plan()` and `generate_question()` (plus
+`generate_all()` for the smoke-test CLI command) — per `design.md`'s
+component rule, these are the seams the Phase 6 Orchestrator will call.
+
+## 10.2 Coverage Plan (FR12)
+
+Five fixed categories: `architecture`, `implementation_detail`,
+`tech_choice_rationale`, `error_handling`, `testing_strategy`.
+
+Distribution, bounded by `config.max_questions` (existing tunable,
+default 8):
+
+1. **Pass 1** — one slot guaranteed per category. Module-scoped
+   categories use the largest module by `file_count`; `architecture`
+   never takes a `target_module` (see §10.4).
+2. **Pass 2** — remaining slots distributed across the module-scoped
+   categories, biggest modules first, until `max_questions` is hit or
+   every (category, module) pair has been used.
+
+A small repo with too few modules to fill every slot produces a
+*shorter* plan rather than padding with duplicate (category, module)
+pairs — `build_coverage_plan()` never fabricates coverage that isn't
+there.
+
+Follow-ups (FR14) are not part of this plan — see §10.3.
+
+## 10.3 What Phase 6 Owns Instead
+
+FR14 (adaptive follow-up depth) and FR15 (live duplicate/coverage
+tracking across a session) are both **live-session** concepts: they need
+to know what's already been asked and how the previous answer scored,
+which requires session state that doesn't exist until Phase 6's
+`IN_PROGRESS` state machine and SQLite persistence land.
+
+Rather than inventing a session-shaped concept early, this phase's
+contract to Phase 6 is intentionally narrow:
+
+- `build_coverage_plan(profile, config) -> list[QuestionPlanItem]` — call
+  once at `PLANNING`.
+- `generate_question(plan_item, ...) -> GeneratedQuestion | None` — call
+  once per plan item, live, during `IN_PROGRESS`.
+
+`QuestionPlanItem.is_followup_of` is already part of the data contract
+(§10.5) so Phase 6 can construct follow-up plan items using the exact
+same shape once it has the session context (previous question id, and a
+`generate_followup_question()`-style call that conditions on the prior
+answer) to do so meaningfully. That call is Phase 6 scope, not built
+here — this phase has nothing to condition a follow-up on.
+
+## 10.4 Retrieval Quality (resolving open question #6)
+
+`04-open-questions.md` item 6 found that embedding a bare
+category/module string (e.g. `"cli"` against `pallets/click`) collided
+lexically with unrelated test-fixture chunks rather than semantically
+matching real implementation code. Two mitigations, per the earlier
+design discussion:
+
+1. **Query reformulation (primary fix).** `retrieval.build_query()`
+   never embeds a bare category/module name — it expands the category
+   into a template phrase and appends the target module's own
+   `ModuleSummary.summary` text as `Context: ...`. This carries real
+   domain vocabulary into the query instead of a short, collision-prone
+   string. Deterministic, no extra LLM call.
+2. **Test-path post-filter (belt-and-suspenders).** Even a well-formed
+   query can surface test chunks ahead of implementation chunks for a
+   thin module. `retrieval._is_test_path()` — a heuristic mirroring
+   `ingest/sampling.py`'s `_is_test_file()`, adapted to operate on the
+   `filepath` string Chroma's metadata carries rather than a `Path`
+   (see module docstring for why this isn't a direct cross-component
+   import) — deprioritizes/excludes test-path chunks for every category
+   except `testing_strategy`, where test chunks are exactly what should
+   be preferred. Over-fetches (`n_results = top_k * 3`) before filtering
+   so the exclusion doesn't starve the final result set, and falls back
+   to the unfiltered candidates if filtering would leave zero results
+   (a thin module where the only close matches are tests must still
+   produce *a* grounded question, not none at all).
+
+**Resolution of open question #6:** addressed in Phase 5 via (a) from
+the open-questions doc's candidate list (query reformulation), plus a
+lightweight version of (b) (reranking) as a low-cost complement, rather
+than (c) (alternate `EMBEDDING_MODEL` pressure-test) or (d) (accepting
+the noise). If this combination still surfaces test-fixture-sourced
+questions for `implementation_detail`/`tech_choice_rationale`/
+`error_handling` categories on a real repo, (c) is the next candidate to
+revisit — not blocking this phase.
+
+## 10.5 Data Contracts
+
+```python
+@dataclass(frozen=True)
+class QuestionPlanItem:
+    id: str
+    category: QuestionCategory  # architecture | implementation_detail |
+                                 # tech_choice_rationale | error_handling |
+                                 # testing_strategy
+    target_module: str | None   # None for `architecture`
+    status: Literal["pending", "generated", "skipped_no_grounding"] = "pending"
+    is_followup_of: str | None = None  # unused until Phase 6
+
+@dataclass(frozen=True)
+class GeneratedQuestion:
+    plan_item: QuestionPlanItem
+    question_text: str
+    grounding_chunk_ids: list[str]
+```
+
+Matches the "Question Plan Item" shape already specified in `design.md`
+§6 — this is where it becomes real code.
+
+## 10.6 LLM Call Shape
+
+`generate_question()` is **free text, not schema-validated** — one call
+per question (FR13's "just-in-time" framing implies one question at a
+time, not a batch-of-N-questions call), same rationale
+`llm_client.py` already gives for `summarize_file`/`reduce`: nothing
+downstream parses this as structured data. The 3-layer structured-output
+reliability strategy stays reserved for machine-consumed output
+(`evaluate_answer`), where a malformed response would actually break a
+downstream parser.
+
+Grounding (FR13) is enforced by construction, not by asking the model to
+self-report it: the caller always supplies real retrieved chunk text as
+`[CODE_CONTEXT]`, and a plan item with zero retrieved chunks is skipped
+(`status="skipped_no_grounding"`) rather than generating a question with
+empty/fabricated context.
+
+## 10.7 CLI Smoke-Test Command
+
+`viva questiongen <repo_url>` — same precedent as `viva analyze`/`viva
+index`: clone → ingest → analyze → index → build the coverage plan →
+generate every question in it → print `id [category / module]`,
+question text, and grounding chunk ids. This is what the Phase 5 exit
+criteria ("generated questions manually reviewed against test repos for
+grounding accuracy and category coverage") needs a command to *do*. Not
+the real `viva start` — same caveat as every prior phase's smoke-test
+command.
