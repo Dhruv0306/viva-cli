@@ -138,7 +138,85 @@ self-report it: the caller always supplies real retrieved chunk text as
 (`status="skipped_no_grounding"`) rather than generating a question with
 empty/fabricated context.
 
-## 10.7 CLI Smoke-Test Command
+## 10.7 Real-Repo Bug: Non-Source Modules Winning Module Selection
+
+Found via a real `viva questiongen https://github.com/pallets/click` run
+on Windows + Ollama (not caught by the automated suite — the checked-in
+golden repos don't have a `tests/`/`docs/` directory that outsizes the
+real source directory, so the failure mode never triggered against
+them). Same category of miss as three of Phase 3's bugs: real-repo
+testing is what surfaced it, matching the project's established "real
+Windows testing is non-negotiable" principle.
+
+**Symptom:** every generated question — regardless of category —
+grounded in `docs/*.md` or `tests/*.py` chunks, never in `click/core.py`
+or `click/parser.py`, click's actual implementation.
+
+**Root cause:** `ModuleSummary.module` is literally the top-level
+directory name (`ingest/sampling.py::_top_level_module`) — established
+back in Phase 2/3, where it never mattered whether `"tests"` or
+`"docs"` counted as a "module" the same as real source code. Phase 5's
+planner was the first consumer to treat "biggest module by
+`file_count`" as if it always meant "richest source-code module." For
+click specifically, `tests/` (45 files) and `docs/` (38 files) both
+outsize the actual `click/` package (25 files), so every module-scoped
+category's Pass 1 target became `tests` or `docs`. The `where={"module":
+target_module}` retrieval filter then locked grounding to that
+directory *before* `retrieval.py`'s test-path post-filter ever got a
+chance to help — the filter was correctly excluding test-path chunks
+from a query that had already been restricted to nothing but test-path
+chunks.
+
+**Fix** (`planner.py`):
+- `_is_source_module()` excludes a known non-source top-level directory
+  vocabulary (`tests`/`docs`/`examples`/`scripts`/`benchmarks`/the
+  loose-root-files `""` bucket) from the pool `implementation_detail`,
+  `tech_choice_rationale`, and `error_handling` pick their target module
+  from. Falls back to the unfiltered module list only if *every* module
+  in the profile is non-source (a docs-only or examples-only repo
+  shouldn't be left with literally nothing to target).
+- `testing_strategy` is no longer just another module-scoped category
+  distributed across source modules in Pass 2 — it explicitly targets a
+  test-like directory (`tests`/`test`/`__tests__`/`spec`/`specs`) when
+  one exists, since pairing it with e.g. `target_module="click"` would
+  filter retrieval to a directory containing zero test chunks for a
+  click-shaped repo. Falls back to the largest source module (relying on
+  `retrieval.py`'s existing test-path *preference*, not exclusion, for
+  that category) only when no dedicated test directory exists — e.g. a
+  Go-style repo with co-located `*_test.go` files.
+
+**Regression tests** (`test_questiongen_planner.py`): a click-shaped
+profile (`tests` > `docs` > `click` > `examples` by file count) asserts
+the three implementation-style categories all target `click`; a second
+profile where `click` *is* the largest module still asserts
+`testing_strategy` targets `tests` specifically, not `click`; a third
+covers the co-located-tests fallback; a fourth covers the
+all-modules-non-source degrade path.
+
+## 10.8 CLI Markup Bug (Rich)
+
+Same real-repo run surfaced a second, smaller bug: every question's
+`id [category / module]` label was silently missing from the printed
+output. Root cause: the label was built as a bare
+`f"[{category} / {module}]"` string passed straight into
+`console.print()` — Rich's `Console.print()` treats `[...]` as markup
+syntax, not literal text, by default. `"[implementation_detail /
+click]"` isn't a recognized style name, so Rich silently dropped it
+rather than printing it or raising.
+
+**Fix:** switched the label to parentheses (`f"({category} /
+{module})"`), which carries no markup meaning to Rich. Scoped narrowly
+to this one label — the pre-existing pattern of interpolating
+LLM-produced free text (architecture summaries, module summaries)
+directly into `console.print()` calls elsewhere in `cli.py` carries the
+same theoretical risk if that text ever contains a literal `[`, but that
+pattern predates Phase 5 and isn't this PR's regression to fix.
+
+**Regression test** (`test_cli_questiongen.py`): asserts the literal
+`"implementation_detail / src"` and `"architecture / (project-level)"`
+strings appear in `viva questiongen`'s stdout.
+
+## 10.9 CLI Smoke-Test Command
 
 `viva questiongen <repo_url>` — same precedent as `viva analyze`/`viva
 index`: clone → ingest → analyze → index → build the coverage plan →

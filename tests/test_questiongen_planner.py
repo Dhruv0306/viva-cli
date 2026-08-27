@@ -99,3 +99,66 @@ def test_plan_with_no_modules_grounds_every_category_project_level():
 
     assert len(plan) == len(_ALL_CATEGORIES)
     assert all(item.target_module is None for item in plan)
+
+
+# --- Regression tests for the click real-repo run ---
+#
+# `tests/`/`docs/` outsizing the actual source directory (click: many
+# doc pages, a large test suite, a comparatively small `click/` package)
+# caused every module-scoped category to plan against `tests` or `docs`
+# instead of `click` -- see docs/system-design/10-phase-5-questiongen-design.md
+# §10.8 for the full root-cause trace.
+
+def test_non_source_modules_excluded_from_implementation_style_categories():
+    # "tests" and "docs" both outsize the real source module "click", as
+    # observed against the real pallets/click repo -- they must never be
+    # picked as the target for implementation_detail/tech_choice_rationale/
+    # error_handling.
+    profile = _profile([
+        _Module("tests", 150), _Module("docs", 60), _Module("click", 25),
+    ])
+    plan = build_coverage_plan(profile, _config(max_questions=8))
+
+    for item in plan:
+        if item.category in ("implementation_detail", "tech_choice_rationale", "error_handling"):
+            assert item.target_module == "click", item
+
+
+def test_testing_strategy_targets_dedicated_test_module_even_when_not_largest():
+    # "click" (the source module) is the largest by file_count, but
+    # testing_strategy should still target "tests" specifically -- a
+    # where={"module": "click"} filter would never surface test chunks
+    # for a repo that keeps all its tests under a separate top-level dir.
+    profile = _profile([
+        _Module("click", 100), _Module("tests", 60), _Module("docs", 20),
+    ])
+    plan = build_coverage_plan(profile, _config(max_questions=8))
+
+    testing_items = [i for i in plan if i.category == "testing_strategy"]
+    assert len(testing_items) == 1
+    assert testing_items[0].target_module == "tests"
+
+
+def test_testing_strategy_falls_back_to_source_module_without_dedicated_test_dir():
+    # No tests/-shaped directory at all (e.g. Go-style co-located
+    # *_test.go files) -- fall back to the largest source module rather
+    # than leaving testing_strategy ungrounded, relying on retrieval.py's
+    # test-path preference to surface co-located test chunks within it.
+    profile = _profile([_Module("app", 30), _Module("docs", 10)])
+    plan = build_coverage_plan(profile, _config(max_questions=8))
+
+    testing_items = [i for i in plan if i.category == "testing_strategy"]
+    assert testing_items[0].target_module == "app"
+
+
+def test_all_non_source_modules_falls_back_to_unfiltered_pool():
+    # A repo with no identifiable source directory at all (e.g. root
+    # files only, everything else under docs/examples) shouldn't leave
+    # implementation-style categories with no target -- degrade to the
+    # unfiltered module pool rather than producing an empty plan.
+    profile = _profile([_Module("docs", 20), _Module("examples", 10)])
+    plan = build_coverage_plan(profile, _config(max_questions=8))
+
+    impl_items = [i for i in plan if i.category == "implementation_detail"]
+    assert len(impl_items) >= 1
+    assert all(i.target_module in ("docs", "examples") for i in impl_items)

@@ -374,7 +374,7 @@ def questiongen(
     for q in questions:
         item = q.plan_item
         console.print(
-            f"\n[bold]{item.id}[/bold] [{item.category} / {item.target_module or '(project-level)'}]"
+            f"\n[bold]{item.id}[/bold] ({item.category} / {item.target_module or '(project-level)'})"
         )
         console.print(f"  {q.question_text}")
         console.print(f"  [dim]grounded in: {', '.join(q.grounding_chunk_ids)}[/dim]")

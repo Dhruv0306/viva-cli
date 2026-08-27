@@ -11,6 +11,28 @@ as long as slots remain.
 `architecture` is deliberately never paired with a specific module -- it
 grounds against project-level context (entry points / architecture
 summary), not one module's chunks (see `retrieval.py`).
+
+**Source vs. non-source modules** (bug found via real-repo testing against
+pallets/click, see docs/system-design/10-phase-5-questiongen-design.md
+§10.7): `ProjectProfile.modules[].module` is literally the top-level
+directory name (`ingest/sampling.py::_top_level_module`) -- `tests` and
+`docs` are exactly as much a "module" as the real source package is. A
+naive "biggest module by file_count" pick is wrong for
+`implementation_detail`/`tech_choice_rationale`/`error_handling`: on
+click, `tests/` and `docs/` both have more files than the `click/`
+package itself, so every one of those categories got planned against
+`tests` or `docs`, and the `where={"module": ...}` retrieval filter then
+locked grounding to that directory before the test-path post-filter in
+`retrieval.py` ever got a chance to help.
+
+`_is_source_module()` excludes known non-source top-level directory names
+from the pool those three categories pick from. `testing_strategy` is the
+mirror image: it deliberately targets a test-like directory when one
+exists (`_find_test_module()`), rather than being distributed across
+source modules in Pass 2 the way the other three are -- pairing
+`testing_strategy` with e.g. `target_module="click"` would filter
+retrieval to a directory that (for a click-shaped repo, where tests live
+under a separate top-level `tests/`) contains no test chunks at all.
 """
 from __future__ import annotations
 
@@ -26,28 +48,60 @@ _CATEGORIES: tuple[QuestionCategory, ...] = (
     "testing_strategy",
 )
 
-# Categories that make sense grounded in one module's code, in the order
-# each additional plan slot should try to grab. "architecture" is
-# excluded -- it never takes a target_module (see module docstring).
-_MODULE_SCOPED_CATEGORIES: tuple[QuestionCategory, ...] = (
+# Categories distributed across *source* modules in Pass 2. Excludes
+# "testing_strategy" (targets a dedicated test-like module instead, see
+# module docstring) and "architecture" (never module-scoped).
+_PER_MODULE_CATEGORIES: tuple[QuestionCategory, ...] = (
     "implementation_detail",
     "tech_choice_rationale",
     "error_handling",
-    "testing_strategy",
 )
+
+# Mirrors ingest/sampling.py's _TEST_DIR_NAMES plus its
+# _LOW_PRIORITY_DIR_NAMES vocabulary (docs/scripts/examples) -- not a
+# direct import, since these are private to that module and belong to a
+# different component (see retrieval.py's _is_test_path docstring for the
+# same rationale). "" covers the loose-root-files bucket
+# (`_top_level_module` returns "" for files directly under repo root).
+_TEST_MODULE_NAMES = frozenset({"tests", "test", "__tests__", "spec", "specs"})
+_NON_SOURCE_MODULE_NAMES = _TEST_MODULE_NAMES | frozenset(
+    {"docs", "doc", "documentation", "examples", "example", "scripts", "script",
+     "sample", "samples", "demo", "demos", "benchmark", "benchmarks", ""}
+)
+
+
+def _is_source_module(module_name: str) -> bool:
+    return module_name.lower() not in _NON_SOURCE_MODULE_NAMES
 
 
 def build_coverage_plan(profile: ProjectProfile, config: Config) -> list[QuestionPlanItem]:
     """Build the initial (non-followup) coverage plan (FR12).
 
     Bounded by `config.max_questions`. Returns fewer than
-    `max_questions` items only if the profile has too few modules to
-    fill every round-robin slot (e.g. a very small repo) -- never pads
-    with duplicate (category, module) pairs to hit the count.
+    `max_questions` items only if the profile has too few source modules
+    to fill every round-robin slot (e.g. a very small repo) -- never
+    pads with duplicate (category, module) pairs to hit the count.
     """
     max_questions = config.max_questions
     modules_by_size = sorted(profile.modules, key=lambda m: m.file_count, reverse=True)
-    module_names = [m.module for m in modules_by_size]
+    all_module_names = [m.module for m in modules_by_size]
+
+    source_module_names = [n for n in all_module_names if _is_source_module(n)]
+    # A repo that's genuinely all-docs/all-tests at the top level (no
+    # identifiable source directory) shouldn't leave implementation-ish
+    # categories with nothing to target -- fall back to the unfiltered
+    # list rather than producing an empty plan for those categories.
+    if not source_module_names:
+        source_module_names = all_module_names
+
+    test_module = next((n for n in all_module_names if n.lower() in _TEST_MODULE_NAMES), None)
+    # No dedicated tests/ directory (e.g. co-located *_test.go files) --
+    # fall back to the same largest-source-module target the other
+    # categories use, relying on retrieval.py's test-path preference to
+    # surface the co-located test chunks within it.
+    testing_target = test_module if test_module is not None else (
+        source_module_names[0] if source_module_names else None
+    )
 
     items: list[QuestionPlanItem] = []
     seen: set[tuple[QuestionCategory, str | None]] = set()
@@ -66,27 +120,32 @@ def build_coverage_plan(profile: ProjectProfile, config: Config) -> list[Questio
         )
         return True
 
-    # Pass 1: guarantee one slot per category (FR12's coverage requirement),
-    # using the largest module for each module-scoped category.
+    # Pass 1: guarantee one slot per category (FR12's coverage requirement).
     for category in _CATEGORIES:
         if len(items) >= max_questions:
             break
-        target_module = None if category == "architecture" else (module_names[0] if module_names else None)
+        if category == "architecture":
+            target_module = None
+        elif category == "testing_strategy":
+            target_module = testing_target
+        else:
+            target_module = source_module_names[0] if source_module_names else None
         _add(category, target_module)
 
-    # Pass 2: distribute remaining slots round-robin across module-scoped
-    # categories x modules, biggest modules first, until max_questions is
-    # hit or every (category, module) combination has been used.
-    module_idx = 1  # module_names[0] was already used in Pass 1 above
+    # Pass 2: distribute remaining slots round-robin across the
+    # per-module categories x source modules, biggest modules first,
+    # until max_questions is hit or every (category, module) combination
+    # has been used.
+    module_idx = 1  # source_module_names[0] was already used in Pass 1 above
     exhausted = False
     while len(items) < max_questions and not exhausted:
         exhausted = True
-        for category in _MODULE_SCOPED_CATEGORIES:
+        for category in _PER_MODULE_CATEGORIES:
             if len(items) >= max_questions:
                 break
-            if module_idx >= len(module_names):
+            if module_idx >= len(source_module_names):
                 continue
-            if _add(category, module_names[module_idx]):
+            if _add(category, source_module_names[module_idx]):
                 exhausted = False
         module_idx += 1
 
