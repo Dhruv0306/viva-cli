@@ -34,6 +34,9 @@ class FakeSlowLLMClient(LLMClient):
     def reduce(self, label, summaries, target_tokens):
         raise NotImplementedError  # not exercised by the Phase 0 demo
 
+    def generate_question(self, category, target_module, grounding_context):
+        raise NotImplementedError  # not exercised by the Phase 0 demo
+
 
 def test_run_demo_end_to_end_excludes_llm_latency():
     # sleep_seconds is deliberately higher than the >= 0.2 assertion below

@@ -139,6 +139,31 @@ def test_reduce_combines_summaries_into_one_prompt(client):
     assert "Summary B." in user_prompt
 
 
+def test_generate_question_builds_labeled_sections(client):
+    client._client.chat.return_value = _chat_response("How does this module handle a failed retry?")
+
+    result = client.generate_question(
+        category="error_handling", target_module="payments", grounding_context="def retry(): ..."
+    )
+
+    assert result == "How does this module handle a failed retry?"
+    call_kwargs = client._client.chat.call_args.kwargs
+    assert call_kwargs["think"] is False
+    user_prompt = call_kwargs["messages"][1]["content"]
+    assert "[CATEGORY]\nerror_handling" in user_prompt
+    assert "[TARGET_MODULE]\npayments" in user_prompt
+    assert "[CODE_CONTEXT]\ndef retry(): ..." in user_prompt
+
+
+def test_generate_question_labels_project_level_target_module(client):
+    client._client.chat.return_value = _chat_response("What's the overall architecture?")
+
+    client.generate_question(category="architecture", target_module=None, grounding_context="ctx")
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[TARGET_MODULE]\n(project-level)" in user_prompt
+
+
 def test_get_context_window_parses_family_namespaced_key(client):
     client._client.show.return_value = {"model_info": {"gemma3.context_length": 8192, "other.key": "x"}}
 

@@ -38,6 +38,9 @@ class _FakeLLMClient(LLMClient):
         self.reduce_calls += 1
         return f"reduced({label}, {len(summaries)} items)"
 
+    def generate_question(self, category, target_module, grounding_context):
+        raise NotImplementedError
+
 
 def _config(max_files: int = 500, map_reduce_batch_size: int = 8, max_reduce_context_tokens=None) -> Config:
     return Config(
