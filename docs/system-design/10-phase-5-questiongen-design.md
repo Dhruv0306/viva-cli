@@ -169,12 +169,13 @@ chunks.
 
 **Fix** (`planner.py`):
 - `_is_source_module()` excludes a known non-source top-level directory
-  vocabulary (`tests`/`docs`/`examples`/`scripts`/`benchmarks`/the
-  loose-root-files `""` bucket) from the pool `implementation_detail`,
-  `tech_choice_rationale`, and `error_handling` pick their target module
-  from. Falls back to the unfiltered module list only if *every* module
-  in the profile is non-source (a docs-only or examples-only repo
-  shouldn't be left with literally nothing to target).
+  vocabulary (`tests`/`docs`/`examples`/`scripts`/`benchmarks`/`vendor`/
+  `dist`/`build`/`target`/the loose-root-files `""` bucket) from the pool
+  `implementation_detail`, `tech_choice_rationale`, and `error_handling`
+  pick their target module from. Falls back to the unfiltered module
+  list only if *every* module in the profile is non-source (a docs-only
+  or examples-only repo shouldn't be left with literally nothing to
+  target).
 - `testing_strategy` is no longer just another module-scoped category
   distributed across source modules in Pass 2 — it explicitly targets a
   test-like directory (`tests`/`test`/`__tests__`/`spec`/`specs`) when
@@ -185,13 +186,30 @@ chunks.
   that category) only when no dedicated test directory exists — e.g. a
   Go-style repo with co-located `*_test.go` files.
 
+**Second instance of the same bug, found on the same run:** the first
+fix's denylist correctly excluded `tests`/`docs`/`examples`, but click
+also has a `.github` directory (workflow YAML), which the hardcoded
+vocabulary hadn't anticipated — `q_06`–`q_08` in the first fixed run
+still targeted `.github` once Pass 2 exhausted `src` (click's actual
+package, correctly identified this time thanks to the first fix, since
+click uses a `src/`-layout). A hardcoded denylist will always miss the
+*next* repo's specific tooling directory name, so the fix generalizes
+instead of adding one more entry: `_is_source_module()` now excludes any
+dot-prefixed top-level directory unconditionally (`.github`,
+`.circleci`, `.vscode`, `.git`, ...), which covers essentially every
+ecosystem's CI/tooling convention in one rule rather than playing
+whack-a-mole per repo.
+
 **Regression tests** (`test_questiongen_planner.py`): a click-shaped
 profile (`tests` > `docs` > `click` > `examples` by file count) asserts
 the three implementation-style categories all target `click`; a second
 profile where `click` *is* the largest module still asserts
 `testing_strategy` targets `tests` specifically, not `click`; a third
 covers the co-located-tests fallback; a fourth covers the
-all-modules-non-source degrade path.
+all-modules-non-source degrade path; a fifth reproduces the exact real
+click module shape (`src`/`tests`/`docs`/`examples`/`.github`) and
+asserts `.github` is never picked; a sixth covers vendored/build
+directories (`node_modules`, `dist`).
 
 ## 10.8 CLI Markup Bug (Rich)
 

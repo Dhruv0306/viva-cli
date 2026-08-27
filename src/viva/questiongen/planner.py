@@ -26,7 +26,11 @@ locked grounding to that directory before the test-path post-filter in
 `retrieval.py` ever got a chance to help.
 
 `_is_source_module()` excludes known non-source top-level directory names
-from the pool those three categories pick from. `testing_strategy` is the
+from the pool those three categories pick from -- both a hardcoded
+denylist vocabulary (tests/docs/examples/scripts/vendor/build/...) and a
+general dot-prefix rule (`.github`, `.circleci`, etc., found via a second
+instance of this same bug on the same real click run -- see
+docs/system-design/10-phase-5-questiongen-design.md §10.7). `testing_strategy` is the
 mirror image: it deliberately targets a test-like directory when one
 exists (`_find_test_module()`), rather than being distributed across
 source modules in Pass 2 the way the other three are -- pairing
@@ -66,11 +70,24 @@ _PER_MODULE_CATEGORIES: tuple[QuestionCategory, ...] = (
 _TEST_MODULE_NAMES = frozenset({"tests", "test", "__tests__", "spec", "specs"})
 _NON_SOURCE_MODULE_NAMES = _TEST_MODULE_NAMES | frozenset(
     {"docs", "doc", "documentation", "examples", "example", "scripts", "script",
-     "sample", "samples", "demo", "demos", "benchmark", "benchmarks", ""}
+     "sample", "samples", "demo", "demos", "benchmark", "benchmarks", "",
+     # Common vendored/build/dependency directories -- not tooling-config
+     # (those are covered by the dot-prefix rule in _is_source_module),
+     # but just as clearly never a repo's own implementation.
+     "node_modules", "vendor", "dist", "build", "target"}
 )
 
 
 def _is_source_module(module_name: str) -> bool:
+    if module_name.startswith("."):
+        # Dot-prefixed top-level directories are universally tooling/CI
+        # config, never source -- found via the same real-repo click run
+        # (a second instance of this bug class): a hardcoded denylist
+        # will always miss the next repo's specific tooling directory
+        # name, but "starts with a dot" generalizes across essentially
+        # every repo (.github, .circleci, .vscode, .git, ...) instead of
+        # playing whack-a-mole with one entry per ecosystem.
+        return False
     return module_name.lower() not in _NON_SOURCE_MODULE_NAMES
 
 

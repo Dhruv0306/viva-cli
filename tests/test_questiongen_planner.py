@@ -162,3 +162,34 @@ def test_all_non_source_modules_falls_back_to_unfiltered_pool():
     impl_items = [i for i in plan if i.category == "implementation_detail"]
     assert len(impl_items) >= 1
     assert all(i.target_module in ("docs", "examples") for i in impl_items)
+
+
+def test_dot_prefixed_directories_excluded_even_when_not_denylisted():
+    # Regression test: found via a real `viva questiongen` run against
+    # pallets/click, which uses a src/-layout (top-level dirs: src,
+    # tests, docs, examples, .github). The hardcoded denylist correctly
+    # excluded docs/examples but had never anticipated ".github",
+    # producing questions grounded in CI workflow YAML instead of code.
+    # ".github" itself isn't special-cased -- the dot-prefix rule
+    # generalizes to any tooling-config directory.
+    profile = _profile([
+        _Module("src", 50), _Module("tests", 40), _Module("docs", 20),
+        _Module("examples", 8), _Module(".github", 6),
+    ])
+    plan = build_coverage_plan(profile, _config(max_questions=8))
+
+    for item in plan:
+        if item.category in ("implementation_detail", "tech_choice_rationale", "error_handling"):
+            assert item.target_module == "src", item
+        assert item.target_module != ".github"
+
+
+def test_vendored_and_build_directories_excluded():
+    profile = _profile([
+        _Module("node_modules", 500), _Module("dist", 30), _Module("app", 15),
+    ])
+    plan = build_coverage_plan(profile, _config(max_questions=8))
+
+    for item in plan:
+        if item.category in ("implementation_detail", "tech_choice_rationale", "error_handling"):
+            assert item.target_module == "app", item
