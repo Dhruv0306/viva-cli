@@ -27,6 +27,7 @@ from viva.ingest.clone import CloneError
 from viva.llm_client import OllamaClient
 from viva.phase0_demo import run_demo
 from viva.profile import ProjectProfile
+from viva.questiongen import generate_all
 
 app = typer.Typer(
     help="viva-cli: a local-LLM RAG tool for a code-grounded project viva.",
@@ -292,6 +293,91 @@ def index(
             )
             preview = r["text"].strip().splitlines()[0][:100]
             console.print(f"     {preview}")
+
+
+@app.command()
+def questiongen(
+    repo_url: str = typer.Argument(..., help="GitHub repo URL to clone, ingest, analyze, index, and generate questions for, e.g. https://github.com/owner/repo"),
+    branch: str = typer.Option(None, "--branch", help="Branch to clone (defaults to the repo's default branch)."),
+) -> None:
+    """Clone, ingest, analyze, index, and run Phase 5 question generation
+    (coverage plan + just-in-time grounded question generation) against a
+    repo, printing every generated question.
+
+    This is a Phase 5 smoke-test command for manually reviewing question
+    grounding accuracy and category coverage (docs/plan.md Phase 5 exit
+    criteria), not the real `viva start` -- see
+    docs/system-design/06-cli-contract-and-profile-scaling.md §6.1 for the
+    eventual command contract. Runs one embedding call per retrieval plus
+    one LLM call per generated question, on top of everything `viva index`
+    already does.
+    """
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    console.print(f"Cloning [bold]{repo_url}[/bold]...")
+    try:
+        ingest_result = ingest_repo(repo_url, config, branch=branch)
+    except CloneError as exc:
+        console.print(f"[red]Clone failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+
+    console.print(
+        f"[green]Ingested[/green] {ingest_result.files_analyzed}/{ingest_result.files_total} files "
+        f"(stack: {', '.join(ingest_result.detected_stack) or '(none detected)'})"
+    )
+
+    console.print("Analyzing (this runs one LLM call per file, plus reduce calls)...")
+    llm_client = OllamaClient(model=config.llm_model, temperature=config.temperature, host=config.ollama_host)
+    try:
+        analysis_result = analyze_repo(ingest_result, config, llm_client)
+    except Exception as exc:  # noqa: BLE001 - Phase 5 smoke-test command, not prod error handling
+        console.print(f"[red]Analysis failed:[/red] {exc}")
+        console.print(
+            "[dim]Is Ollama running, and has the configured LLM_MODEL been "
+            "pulled? See README.md 'Installation'.[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    profile = ProjectProfile.build(ingest_result, analysis_result)
+
+    console.print("Indexing (chunking + one embedding call per file)...")
+    embedding_client = OllamaEmbeddingClient(model=config.embedding_model, host=config.ollama_host)
+    try:
+        index_result = index_repo(profile, config, embedding_client)
+    except Exception as exc:  # noqa: BLE001 - Phase 5 smoke-test command, not prod error handling
+        console.print(f"[red]Indexing failed:[/red] {exc}")
+        console.print(
+            "[dim]Is Ollama running, and has the configured EMBEDDING_MODEL "
+            "been pulled? See README.md 'Installation'.[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    console.print("Generating questions (one embedding + one LLM call per question)...")
+    store = VectorStore(config.vector_db_path)
+    try:
+        questions, stats = generate_all(
+            profile, config, store, index_result.collection_name, embedding_client, llm_client
+        )
+    except Exception as exc:  # noqa: BLE001 - Phase 5 smoke-test command, not prod error handling
+        console.print(f"[red]Question generation failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+
+    console.print(
+        f"\n[bold]Plan:[/bold] {stats.plan_items_built} planned, "
+        f"{stats.questions_generated} generated, "
+        f"{stats.plan_items_skipped_no_grounding} skipped (no grounding)"
+    )
+    for q in questions:
+        item = q.plan_item
+        label = f"({item.category} / {item.target_module or '(project-level)'}"
+        label += f" / {item.target_file})" if item.target_file else ")"
+        console.print(f"\n[bold]{item.id}[/bold] {label}")
+        console.print(f"  {q.question_text}")
+        console.print(f"  [dim]grounded in: {', '.join(q.grounding_chunk_ids)}[/dim]")
 
 
 def _profile_to_dict(profile: ProjectProfile) -> dict:

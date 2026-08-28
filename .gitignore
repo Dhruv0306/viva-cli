@@ -22,6 +22,7 @@ venv/
 data/
 
 # Claude-specific files
+.claude/*
 claude/*
 
 # Data folder for local development (NFR7 — never accumulate on disk unbounded; this is a local

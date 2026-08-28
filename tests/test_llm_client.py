@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from viva.llm_client import OllamaClient
+from viva.llm_client import QUESTION_GEN_SYSTEM_PROMPT, OllamaClient
 
 
 def _chat_response(content: str) -> dict:
@@ -137,6 +137,63 @@ def test_reduce_combines_summaries_into_one_prompt(client):
     assert "Module: src" in user_prompt
     assert "Summary A." in user_prompt
     assert "Summary B." in user_prompt
+
+
+def test_question_gen_system_prompt_constrains_length_and_clause_count():
+    # Regression guard for the verbose, multi-clause questions observed
+    # on a real click run ("...especially when encountering a Group
+    # command with chain enabled, and X, and Y..."). The system prompt
+    # is the actual lever here -- target_tokens=80 gives ~240 tokens of
+    # num_predict headroom, nowhere near tight enough to force brevity on
+    # its own, so the constraint has to be explicit in the instructions.
+    assert "ONE clause" in QUESTION_GEN_SYSTEM_PROMPT
+    assert "15-25 words" in QUESTION_GEN_SYSTEM_PROMPT
+
+
+def test_generate_question_builds_labeled_sections(client):
+    client._client.chat.return_value = _chat_response("How does this module handle a failed retry?")
+
+    result = client.generate_question(
+        category="error_handling", target_module="payments", grounding_context="def retry(): ..."
+    )
+
+    assert result == "How does this module handle a failed retry?"
+    call_kwargs = client._client.chat.call_args.kwargs
+    assert call_kwargs["think"] is False
+    user_prompt = call_kwargs["messages"][1]["content"]
+    assert "[CATEGORY]\nerror_handling" in user_prompt
+    assert "[TARGET_MODULE]\npayments" in user_prompt
+    assert "[CODE_CONTEXT]\ndef retry(): ..." in user_prompt
+
+
+def test_generate_question_labels_project_level_target_module(client):
+    client._client.chat.return_value = _chat_response("What's the overall architecture?")
+
+    client.generate_question(category="architecture", target_module=None, grounding_context="ctx")
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[TARGET_MODULE]\n(project-level)" in user_prompt
+
+
+def test_generate_question_includes_target_file_section_when_present(client):
+    client._client.chat.return_value = _chat_response("How does core.py handle retries?")
+
+    client.generate_question(
+        category="implementation_detail", target_module="src",
+        grounding_context="def retry(): ...", target_file="src/core.py",
+    )
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[TARGET_FILE]\nsrc/core.py" in user_prompt
+
+
+def test_generate_question_omits_target_file_section_when_absent(client):
+    client._client.chat.return_value = _chat_response("How does this module handle a failed retry?")
+
+    client.generate_question(category="error_handling", target_module="payments", grounding_context="ctx")
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[TARGET_FILE]" not in user_prompt
 
 
 def test_get_context_window_parses_family_namespaced_key(client):

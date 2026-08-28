@@ -44,6 +44,32 @@ concatenate or list them one by one.
 Write a concise combined summary (roughly the requested length), in plain \
 prose. No preamble, no markdown, no bullet list of the inputs."""
 
+QUESTION_GEN_SYSTEM_PROMPT = """You are writing one oral-exam ("viva") \
+question for a candidate about their own codebase.
+
+Ground the question ONLY in the provided code context -- ask about \
+something the context actually shows, never a generic question that \
+could be answered without having read this specific code (e.g. never \
+"describe your architecture" in isolation; instead ask about the \
+specific pattern/decision/module the context demonstrates).
+
+Keep it to ONE clause, ONE sentence, roughly 15-25 words -- a real \
+examiner asks one thing at a time, not a chain of conditions. Do NOT \
+stack qualifiers with "if X and Y", "especially when Z", or "given \
+that ...". Being specific means naming the exact function/class/\
+parameter the context shows, not piling on every edge case it handles.
+
+Good: "Why does `_resolve_context` set `resilient_parsing=True` on the \
+child context but not the parent?"
+Bad (too many clauses): "When `_resolve_context` traverses a `Group` \
+with `chain` enabled, how does it ensure the context hierarchy stays \
+accurate, especially when `resilient_parsing` is set and a subcommand \
+also defines its own chain?"
+
+Ask exactly ONE question. Write it as a direct, spoken-style question a \
+human examiner would ask out loud. No preamble, no markdown, no \
+numbering, no restating the code context back verbatim."""
+
 EVALUATOR_SYSTEM_PROMPT = """You are grading a candidate's spoken answer in a \
 code-grounded oral exam ("viva") about their own project.
 
@@ -99,6 +125,25 @@ class LLMClient(abc.ABC):
         validation -> repair loop) exists for the Evaluator's
         machine-consumed verdicts (docs/system-design/01-resolved-decisions.md
         §1.2); a prose summary has no such downstream parsing to protect.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def generate_question(
+        self, category: str, target_module: str | None, grounding_context: str, target_file: str | None = None
+    ) -> str:
+        """FR13: just-in-time question generation, grounded in retrieved
+        chunk text (`grounding_context`).
+
+        Free text, not a schema-validated structure -- same rationale as
+        `summarize_file`/`reduce`: nothing downstream parses this as
+        structured data. Grounding is guaranteed by the caller
+        (`questiongen/retrieval.py`) supplying real retrieved chunks as
+        `grounding_context`, not by the model self-reporting what it used.
+
+        `target_file`, when set (Pass 3's file-level plan items --
+        `questiongen/planner.py`), narrows the question to that specific
+        file rather than the module broadly.
         """
         raise NotImplementedError
 
@@ -219,6 +264,25 @@ class OllamaClient(LLMClient):
         joined = "\n\n".join(f"- {s}" for s in summaries)
         prompt = f"[{label}]\n\n[TARGET_LENGTH]\n~{target_tokens} tokens\n\n[SUMMARIES]\n{joined}\n"
         return self._generate(REDUCE_SYSTEM_PROMPT, prompt, target_tokens)
+
+    def generate_question(
+        self, category: str, target_module: str | None, grounding_context: str, target_file: str | None = None
+    ) -> str:
+        # Explicitly labeled, non-concatenated sections, same convention
+        # as _build_prompt's evaluator prompt (design.md §5).
+        sections = [
+            f"[CATEGORY]\n{category}",
+            f"[TARGET_MODULE]\n{target_module or '(project-level)'}",
+        ]
+        if target_file:
+            sections.append(f"[TARGET_FILE]\n{target_file}")
+        sections.append(f"[CODE_CONTEXT]\n{grounding_context}")
+        prompt = "\n\n".join(sections) + "\n"
+        # A single spoken question is short -- a smaller fixed target
+        # than summarize_file/reduce's variable target_tokens is enough
+        # headroom, while still giving a thinking-capable model (think=False
+        # notwithstanding, see _generate's comment) room to not get cut off.
+        return self._generate(QUESTION_GEN_SYSTEM_PROMPT, prompt, target_tokens=80)
 
     def get_context_window(self) -> int | None:
         try:
