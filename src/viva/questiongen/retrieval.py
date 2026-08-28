@@ -50,15 +50,22 @@ _TEST_NAME_PATTERN = re.compile(r"(^test_|_test\.|\.test\.|\.spec\.|^spec_|_spec
 _OVERFETCH_FACTOR = 3
 
 
-def build_query(category: QuestionCategory, module_summary: str | None) -> str:
-    """Expand a bare (category, module) pair into a richer retrieval
-    query grounded in the module's own summary text (open question #6's
-    query-reformulation fix). No LLM call -- deterministic and cheap,
-    consistent with the codebase's existing template-based prompt
-    construction (see `llm_client.py`'s `_build_prompt`)."""
+def build_query(category: QuestionCategory, module_summary: str | None, target_file: str | None = None) -> str:
+    """Expand a bare (category, module[, file]) tuple into a richer
+    retrieval query grounded in the module's own summary text (open
+    question #6's query-reformulation fix). No LLM call -- deterministic
+    and cheap, consistent with the codebase's existing template-based
+    prompt construction (see `llm_client.py`'s `_build_prompt`).
+
+    `target_file`, when set (Pass 3's file-level plan items -- see
+    `planner.py`), anchors the query to that specific file so retrieval
+    doesn't just fall back to the module's most generically-relevant
+    chunks."""
     base = _CATEGORY_QUERY_TEMPLATES[category]
     if module_summary:
-        return f"{base}. Context: {module_summary}"
+        base = f"{base}. Context: {module_summary}"
+    if target_file:
+        base = f"{base} Focus specifically on the file {target_file}."
     return base
 
 
@@ -84,9 +91,16 @@ def retrieve_grounding_chunks(
     callers (`questiongen/__init__.py`) must treat that as "skip this
     plan item," never as an excuse to generate an ungrounded question.
     """
-    query = build_query(plan_item.category, module_summary)
+    query = build_query(plan_item.category, module_summary, plan_item.target_file)
     [query_embedding] = embedding_client.embed([query])
-    where = {"module": plan_item.target_module} if plan_item.target_module else None
+    if plan_item.target_file:
+        # File-level plan item (Pass 3, planner.py) -- narrow retrieval
+        # to that exact file rather than the whole module.
+        where = {"filepath": plan_item.target_file}
+    elif plan_item.target_module:
+        where = {"module": plan_item.target_module}
+    else:
+        where = None
 
     candidates = vector_store.query(
         collection_name, query_embedding, n_results=top_k * _OVERFETCH_FACTOR, where=where

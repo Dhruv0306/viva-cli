@@ -68,6 +68,7 @@ def generate_question(
         category=plan_item.category,
         target_module=plan_item.target_module,
         grounding_context=grounding_context,
+        target_file=plan_item.target_file,
     )
     return GeneratedQuestion(
         plan_item=plan_item,

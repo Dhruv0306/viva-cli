@@ -164,6 +164,27 @@ def test_generate_question_labels_project_level_target_module(client):
     assert "[TARGET_MODULE]\n(project-level)" in user_prompt
 
 
+def test_generate_question_includes_target_file_section_when_present(client):
+    client._client.chat.return_value = _chat_response("How does core.py handle retries?")
+
+    client.generate_question(
+        category="implementation_detail", target_module="src",
+        grounding_context="def retry(): ...", target_file="src/core.py",
+    )
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[TARGET_FILE]\nsrc/core.py" in user_prompt
+
+
+def test_generate_question_omits_target_file_section_when_absent(client):
+    client._client.chat.return_value = _chat_response("How does this module handle a failed retry?")
+
+    client.generate_question(category="error_handling", target_module="payments", grounding_context="ctx")
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[TARGET_FILE]" not in user_prompt
+
+
 def test_get_context_window_parses_family_namespaced_key(client):
     client._client.show.return_value = {"model_info": {"gemma3.context_length": 8192, "other.key": "x"}}
 

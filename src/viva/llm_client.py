@@ -117,7 +117,7 @@ class LLMClient(abc.ABC):
 
     @abc.abstractmethod
     def generate_question(
-        self, category: str, target_module: str | None, grounding_context: str
+        self, category: str, target_module: str | None, grounding_context: str, target_file: str | None = None
     ) -> str:
         """FR13: just-in-time question generation, grounded in retrieved
         chunk text (`grounding_context`).
@@ -127,6 +127,10 @@ class LLMClient(abc.ABC):
         structured data. Grounding is guaranteed by the caller
         (`questiongen/retrieval.py`) supplying real retrieved chunks as
         `grounding_context`, not by the model self-reporting what it used.
+
+        `target_file`, when set (Pass 3's file-level plan items --
+        `questiongen/planner.py`), narrows the question to that specific
+        file rather than the module broadly.
         """
         raise NotImplementedError
 
@@ -249,15 +253,18 @@ class OllamaClient(LLMClient):
         return self._generate(REDUCE_SYSTEM_PROMPT, prompt, target_tokens)
 
     def generate_question(
-        self, category: str, target_module: str | None, grounding_context: str
+        self, category: str, target_module: str | None, grounding_context: str, target_file: str | None = None
     ) -> str:
         # Explicitly labeled, non-concatenated sections, same convention
         # as _build_prompt's evaluator prompt (design.md §5).
-        prompt = (
-            f"[CATEGORY]\n{category}\n\n"
-            f"[TARGET_MODULE]\n{target_module or '(project-level)'}\n\n"
-            f"[CODE_CONTEXT]\n{grounding_context}\n"
-        )
+        sections = [
+            f"[CATEGORY]\n{category}",
+            f"[TARGET_MODULE]\n{target_module or '(project-level)'}",
+        ]
+        if target_file:
+            sections.append(f"[TARGET_FILE]\n{target_file}")
+        sections.append(f"[CODE_CONTEXT]\n{grounding_context}")
+        prompt = "\n\n".join(sections) + "\n"
         # A single spoken question is short -- a smaller fixed target
         # than summarize_file/reduce's variable target_tokens is enough
         # headroom, while still giving a thinking-capable model (think=False

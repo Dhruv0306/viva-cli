@@ -6,7 +6,11 @@ Distribution strategy (docs/system-design/10-phase-5-questiongen-design.md
 `config.max_questions` are distributed round-robin across categories,
 preferring modules with the highest `file_count` -- bigger modules get
 proportionally more coverage without any module going fully unasked-about
-as long as slots remain.
+as long as slots remain. Once every source module already has a
+module-level item and slots still remain (a repo with few top-level
+directories, e.g. a single-package layout), Pass 3 drops to file-level
+targeting within those same modules rather than leaving slots unused --
+see §10.8 below.
 
 `architecture` is deliberately never paired with a specific module -- it
 grounds against project-level context (entry points / architecture
@@ -37,10 +41,21 @@ source modules in Pass 2 the way the other three are -- pairing
 `testing_strategy` with e.g. `target_module="click"` would filter
 retrieval to a directory that (for a click-shaped repo, where tests live
 under a separate top-level `tests/`) contains no test chunks at all.
+
+**File-level fallback** (§10.8): click's real module list is only
+`src`/`tests` once non-source directories are excluded -- Pass 2 has
+nowhere left to distribute extra slots to, so a repo shaped like this
+only ever produced 5 of `MAX_QUESTIONS`'s default 8. Pass 3 fills the
+remaining slots with `implementation_detail`/`tech_choice_rationale`/
+`error_handling` items scoped to a *specific file* within a source
+module (`QuestionPlanItem.target_file`) rather than leaving slots empty
+once modules run out -- multiple, more specific questions about the same
+module's richest files instead of one broad module-level question.
 """
 from __future__ import annotations
 
 from viva.config import Config
+from viva.ingest.models import SampledFile
 from viva.profile import ProjectProfile
 from viva.questiongen.models import QuestionCategory, QuestionPlanItem
 
@@ -52,7 +67,8 @@ _CATEGORIES: tuple[QuestionCategory, ...] = (
     "testing_strategy",
 )
 
-# Categories distributed across *source* modules in Pass 2. Excludes
+# Categories distributed across *source* modules in Pass 2, then across
+# specific files within those modules in Pass 3. Excludes
 # "testing_strategy" (targets a dedicated test-like module instead, see
 # module docstring) and "architecture" (never module-scoped).
 _PER_MODULE_CATEGORIES: tuple[QuestionCategory, ...] = (
@@ -91,13 +107,38 @@ def _is_source_module(module_name: str) -> bool:
     return module_name.lower() not in _NON_SOURCE_MODULE_NAMES
 
 
+def _ranked_files_by_module(sampled_files: list[SampledFile]) -> dict[str, list[str]]:
+    """Rank each module's non-test files by likely importance, for
+    Pass 3's file-level targeting: `always_include` files (README/entry
+    point/manifest -- Ingest already flagged these as notable) first,
+    then largest-by-size_bytes as a coarse proxy for "substantial
+    implementation" (no richer per-file signal survives to the Project
+    Profile -- import-graph centrality is ephemeral to Phase 2's sampling
+    ranking, never persisted onto `SampledFile`). Test files are excluded
+    -- Pass 3 only serves the per-module categories, none of which are
+    `testing_strategy`.
+    """
+    by_module: dict[str, list[SampledFile]] = {}
+    for f in sampled_files:
+        if f.is_test:
+            continue
+        by_module.setdefault(f.module, []).append(f)
+
+    ranked: dict[str, list[str]] = {}
+    for module, files in by_module.items():
+        files.sort(key=lambda f: (not f.always_include, -f.size_bytes))
+        ranked[module] = [f.path for f in files]
+    return ranked
+
+
 def build_coverage_plan(profile: ProjectProfile, config: Config) -> list[QuestionPlanItem]:
     """Build the initial (non-followup) coverage plan (FR12).
 
     Bounded by `config.max_questions`. Returns fewer than
     `max_questions` items only if the profile has too few source modules
-    to fill every round-robin slot (e.g. a very small repo) -- never
-    pads with duplicate (category, module) pairs to hit the count.
+    *and files within them* to fill every slot (e.g. a very small repo)
+    -- never pads with duplicate (category, module, file) triples to hit
+    the count.
     """
     max_questions = config.max_questions
     modules_by_size = sorted(profile.modules, key=lambda m: m.file_count, reverse=True)
@@ -121,10 +162,10 @@ def build_coverage_plan(profile: ProjectProfile, config: Config) -> list[Questio
     )
 
     items: list[QuestionPlanItem] = []
-    seen: set[tuple[QuestionCategory, str | None]] = set()
+    seen: set[tuple[QuestionCategory, str | None, str | None]] = set()
 
-    def _add(category: QuestionCategory, target_module: str | None) -> bool:
-        key = (category, target_module)
+    def _add(category: QuestionCategory, target_module: str | None, target_file: str | None = None) -> bool:
+        key = (category, target_module, target_file)
         if key in seen:
             return False
         seen.add(key)
@@ -133,6 +174,7 @@ def build_coverage_plan(profile: ProjectProfile, config: Config) -> list[Questio
                 id=f"q_{len(items) + 1:02d}",
                 category=category,
                 target_module=target_module,
+                target_file=target_file,
             )
         )
         return True
@@ -165,5 +207,30 @@ def build_coverage_plan(profile: ProjectProfile, config: Config) -> list[Questio
             if _add(category, source_module_names[module_idx]):
                 exhausted = False
         module_idx += 1
+
+    # Pass 3: once every source module already has a module-level item
+    # and slots still remain (e.g. click: only src/tests survive
+    # filtering, so Pass 2 never runs), drop to file-level targeting --
+    # multiple, more specific per-module-category questions about a
+    # module's richest files instead of leaving slots unused.
+    if len(items) < max_questions and source_module_names:
+        files_by_module = _ranked_files_by_module(profile.sampled_files)
+        rank = 0
+        exhausted = False
+        while len(items) < max_questions and not exhausted:
+            exhausted = True
+            for module in source_module_names:
+                files = files_by_module.get(module, [])
+                if rank >= len(files):
+                    continue
+                target_file = files[rank]
+                for category in _PER_MODULE_CATEGORIES:
+                    if len(items) >= max_questions:
+                        break
+                    if _add(category, module, target_file):
+                        exhausted = False
+                if len(items) >= max_questions:
+                    break
+            rank += 1
 
     return items

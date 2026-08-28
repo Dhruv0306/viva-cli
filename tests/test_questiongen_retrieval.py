@@ -18,6 +18,11 @@ def test_build_query_falls_back_to_template_without_module_summary():
     assert "Context:" not in query
 
 
+def test_build_query_anchors_to_target_file_when_present():
+    query = build_query("implementation_detail", "auth module summary", "auth/handler.py")
+    assert "auth/handler.py" in query
+
+
 def test_is_test_path_detects_test_directories_and_filenames():
     assert _is_test_path("tests/test_handler.py") is True
     assert _is_test_path("src/tests/handler.py") is True
@@ -104,3 +109,18 @@ def test_retrieve_grounding_chunks_uses_module_metadata_filter():
         plan_item_scoped, "auth summary", store, "collection", embedding_client, top_k=5
     )
     assert store.query.call_args.kwargs["where"] == {"module": "auth"}
+
+
+def test_retrieve_grounding_chunks_filters_by_filepath_for_file_level_items():
+    plan_item = QuestionPlanItem(
+        id="q_01", category="implementation_detail", target_module="src", target_file="src/core.py"
+    )
+    store = MagicMock()
+    store.query.return_value = [_chunk("c1", "src/core.py")]
+    embedding_client = MagicMock()
+    embedding_client.embed.return_value = [[0.1, 0.2]]
+
+    retrieve_grounding_chunks(plan_item, "src summary", store, "collection", embedding_client, top_k=5)
+
+    # File-level items narrow to the exact file, not the whole module.
+    assert store.query.call_args.kwargs["where"] == {"filepath": "src/core.py"}

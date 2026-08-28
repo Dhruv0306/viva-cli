@@ -38,7 +38,7 @@ class _FakeLLMClient(LLMClient):
         self.reduce_calls += 1
         return f"reduced({label}, {len(summaries)} items)"
 
-    def generate_question(self, category, target_module, grounding_context):
+    def generate_question(self, category, target_module, grounding_context, target_file=None):
         raise NotImplementedError
 
 

@@ -28,12 +28,20 @@ PlanItemStatus = Literal["pending", "generated", "skipped_no_grounding"]
 
 @dataclass(frozen=True)
 class QuestionPlanItem:
-    """One planned (category, target_module) slot (FR12), before the
-    question text itself has been generated.
+    """One planned (category, target_module[, target_file]) slot (FR12),
+    before the question text itself has been generated.
 
     `target_module` is `None` for the `architecture` category, which
     grounds against project-level context (entry points, architecture
     summary) rather than one module -- see `planner.py`.
+
+    `target_file` narrows grounding to one specific file within
+    `target_module`, for the per-module categories' extra slots once
+    every source module already has a module-level item (see
+    `planner.py`'s Pass 3 and
+    `docs/system-design/10-phase-5-questiongen-design.md` §10.8) --
+    `None` means "ground anywhere in `target_module`," matching the
+    original module-level-only behavior.
 
     `is_followup_of` is carried on the contract now so Phase 6's session
     loop (FR14) can construct follow-up `QuestionPlanItem`s using the
@@ -46,6 +54,7 @@ class QuestionPlanItem:
     id: str
     category: QuestionCategory
     target_module: str | None
+    target_file: str | None = None
     status: PlanItemStatus = "pending"
     is_followup_of: str | None = None
 

@@ -211,7 +211,55 @@ click module shape (`src`/`tests`/`docs`/`examples`/`.github`) and
 asserts `.github` is never picked; a sixth covers vendored/build
 directories (`node_modules`, `dist`).
 
-## 10.8 CLI Markup Bug (Rich)
+## 10.8 File-Level Fallback (Pass 3)
+
+Design decision made after the click bugfix round, not itself a bug fix.
+With `docs`/`examples`/`.github` correctly excluded and `tests` reserved
+for `testing_strategy`, click only has **one** real source module (`src`)
+— Pass 2 has nothing left to distribute extra slots to, so the plan
+stopped at 5 items instead of `MAX_QUESTIONS`'s default 8.
+
+Two options were on the table: leave a shorter, honest plan for
+thin-module-count repos, or fill remaining slots some other way.
+Decision: fill them, combining both remaining candidates —
+
+- **Multiple questions per module** once modules run out, *and*
+- **File-level targeting** for granularity, rather than repeating the
+  same broad module-level question.
+
+**Pass 3** (`planner.py`): once every source module already has a
+module-level item (Pass 1/2) and slots still remain, rank each source
+module's non-test files (`always_include` files — README/entry point/
+manifest, already flagged by Ingest — first, then largest-by-`size_bytes`
+as a coarse "substantial implementation" proxy; no richer per-file
+signal survives to the Project Profile, since import-graph centrality is
+ephemeral to Phase 2's sampling ranking and never persisted onto
+`SampledFile`) and produce additional `implementation_detail`/
+`tech_choice_rationale`/`error_handling` items scoped to a specific file
+(`QuestionPlanItem.target_file`), cycling module → file-rank → category
+the same round-robin way Pass 2 cycles modules, until `max_questions` is
+hit or every source module's file pool is exhausted. `architecture` and
+`testing_strategy` are unaffected — both already have dedicated,
+non-distributed targeting from Pass 1.
+
+`target_file` set means grounding narrows all the way to that file:
+`retrieval.py`'s `where` clause becomes `{"filepath": target_file}`
+instead of `{"module": target_module}`, and `build_query()` appends
+"Focus specifically on the file `{target_file}`." to the reformulated
+query so retrieval doesn't just fall back to the module's most
+generically-relevant chunks. `LLMClient.generate_question()` gained a
+matching optional `[TARGET_FILE]` prompt section, included only when
+set — same explicitly-labeled-sections convention as `[CATEGORY]`/
+`[TARGET_MODULE]`.
+
+Verified against the real click module/file shape: with `src`/`tests`
+correctly identified as the only source modules, Pass 3 fills the
+remaining 3 slots with `implementation_detail`/`tech_choice_rationale`/
+`error_handling` items all targeting `src/click/core.py` (the largest
+non-test file in `src`) — 8 questions total, none reaching into
+`docs`/`examples`/`.github`.
+
+## 10.9 CLI Markup Bug (Rich)
 
 Same real-repo run surfaced a second, smaller bug: every question's
 `id [category / module]` label was silently missing from the printed
@@ -234,7 +282,7 @@ pattern predates Phase 5 and isn't this PR's regression to fix.
 `"implementation_detail / src"` and `"architecture / (project-level)"`
 strings appear in `viva questiongen`'s stdout.
 
-## 10.9 CLI Smoke-Test Command
+## 10.10 CLI Smoke-Test Command
 
 `viva questiongen <repo_url>` — same precedent as `viva analyze`/`viva
 index`: clone → ingest → analyze → index → build the coverage plan →

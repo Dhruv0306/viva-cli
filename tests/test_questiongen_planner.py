@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from viva.analyzer.models import AnalysisStats
 from viva.config import Config
-from viva.ingest.models import ExclusionStats
+from viva.ingest.models import ExclusionStats, SampledFile
 from viva.profile import ProjectProfile
 from viva.questiongen.planner import build_coverage_plan
 
@@ -29,10 +29,11 @@ class _Module:
         self.summary = f"summary of {module}"
 
 
-def _profile(modules) -> ProjectProfile:
+def _profile(modules, sampled_files=None) -> ProjectProfile:
     return ProjectProfile(
         repo_url="https://github.com/o/r", repo_slug="o/r", commit_sha="sha", branch="main",
-        local_path="/tmp/x", files_total=10, files_analyzed=10, sampled_files=[], excluded_notable=[],
+        local_path="/tmp/x", files_total=10, files_analyzed=10,
+        sampled_files=sampled_files or [], excluded_notable=[],
         sampling_note="", detected_stack=["python"], exclusion_stats=ExclusionStats(),
         architecture_summary="arch", modules=modules, entry_points=["main.py"],
         test_coverage_present=True, analysis_stats=AnalysisStats(),
@@ -193,3 +194,100 @@ def test_vendored_and_build_directories_excluded():
     for item in plan:
         if item.category in ("implementation_detail", "tech_choice_rationale", "error_handling"):
             assert item.target_module == "app", item
+
+
+# --- Pass 3: file-level fallback (§10.10) ---
+#
+# Found via the same real click run: click only has two real source-ish
+# top-level directories (src, tests) once non-source ones are excluded,
+# so Pass 2 had nowhere left to distribute extra slots to -- the plan
+# stopped at 5 items instead of MAX_QUESTIONS=8. Pass 3 fills remaining
+# slots with file-level items instead of leaving them unused.
+
+def _file(path: str, module: str, size_bytes: int = 1000, always_include: bool = False, is_test: bool = False) -> SampledFile:
+    return SampledFile(path=path, size_bytes=size_bytes, module=module, always_include=always_include, is_test=is_test)
+
+
+def test_pass_3_fills_remaining_slots_with_file_level_items_when_modules_run_out():
+    # Single source module (click-shaped: only "src" survives filtering)
+    # -- Pass 2 has nothing to distribute to, Pass 3 must pick up the slack.
+    files = [
+        _file("src/core.py", "src", size_bytes=5000),
+        _file("src/parser.py", "src", size_bytes=3000),
+        _file("src/utils.py", "src", size_bytes=1000),
+    ]
+    profile = _profile([_Module("src", 10), _Module("docs", 8)], sampled_files=files)
+    plan = build_coverage_plan(profile, _config(max_questions=8))
+
+    assert len(plan) == 8
+    file_level_items = [i for i in plan if i.target_file is not None]
+    assert len(file_level_items) == 3  # 8 total - 5 module-level (Pass 1)
+    assert all(i.target_module == "src" for i in file_level_items)
+    assert all(i.target_file in {"src/core.py", "src/parser.py", "src/utils.py"} for i in file_level_items)
+
+
+def test_pass_3_prefers_largest_files_first():
+    files = [
+        _file("src/small.py", "src", size_bytes=100),
+        _file("src/big.py", "src", size_bytes=9000),
+        _file("src/medium.py", "src", size_bytes=500),
+    ]
+    profile = _profile([_Module("src", 10)], sampled_files=files)
+    # Only 6 slots: 5 module-level (Pass 1) + 1 file-level (Pass 3, first
+    # category to hit the file-level branch gets the largest file).
+    plan = build_coverage_plan(profile, _config(max_questions=6))
+
+    file_level_items = [i for i in plan if i.target_file is not None]
+    assert len(file_level_items) == 1
+    assert file_level_items[0].target_file == "src/big.py"
+
+
+def test_pass_3_prefers_always_include_files_over_size():
+    files = [
+        _file("src/huge_random_file.py", "src", size_bytes=9000, always_include=False),
+        _file("src/main.py", "src", size_bytes=200, always_include=True),
+    ]
+    profile = _profile([_Module("src", 10)], sampled_files=files)
+    plan = build_coverage_plan(profile, _config(max_questions=6))
+
+    file_level_items = [i for i in plan if i.target_file is not None]
+    assert file_level_items[0].target_file == "src/main.py"
+
+
+def test_pass_3_excludes_test_files():
+    files = [
+        _file("src/core.py", "src", size_bytes=1000, is_test=False),
+        _file("src/test_helpers.py", "src", size_bytes=9000, is_test=True),
+    ]
+    profile = _profile([_Module("src", 10)], sampled_files=files)
+    plan = build_coverage_plan(profile, _config(max_questions=6))
+
+    file_level_items = [i for i in plan if i.target_file is not None]
+    assert all(i.target_file != "src/test_helpers.py" for i in file_level_items)
+
+
+def test_pass_3_never_exceeds_max_questions_even_with_many_files():
+    files = [_file(f"src/file_{i}.py", "src", size_bytes=1000 - i) for i in range(20)]
+    profile = _profile([_Module("src", 20)], sampled_files=files)
+    plan = build_coverage_plan(profile, _config(max_questions=8))
+
+    assert len(plan) == 8
+
+
+def test_pass_3_never_duplicates_category_module_file_triples():
+    files = [_file(f"src/file_{i}.py", "src", size_bytes=1000 - i) for i in range(5)]
+    profile = _profile([_Module("src", 5)], sampled_files=files)
+    plan = build_coverage_plan(profile, _config(max_questions=8))
+
+    keys = [(i.category, i.target_module, i.target_file) for i in plan]
+    assert len(keys) == len(set(keys))
+
+
+def test_pass_3_does_not_run_when_module_level_slots_already_fill_budget():
+    # Enough source modules that Pass 2 alone fills every slot -- Pass 3
+    # must never kick in and produce redundant file-level items.
+    files = [_file("auth/handler.py", "auth", size_bytes=5000)]
+    profile = _profile([_Module("auth", 10), _Module("payments", 8), _Module("api", 6)], sampled_files=files)
+    plan = build_coverage_plan(profile, _config(max_questions=5))
+
+    assert all(item.target_file is None for item in plan)
