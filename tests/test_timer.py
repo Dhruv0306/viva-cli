@@ -54,3 +54,19 @@ def test_format_remaining_is_mm_ss():
 def test_negative_duration_rejected():
     with pytest.raises(ValueError):
         AnswerTimer(duration_seconds=0)
+
+
+def test_start_with_initial_elapsed_seconds_restores_progress():
+    """Phase 6 resume: a session that already used 50s of a 60s clock
+    should resume with only ~10s remaining, not a fresh 60s."""
+    timer = AnswerTimer(duration_seconds=60)
+    timer.start(initial_elapsed_seconds=50)
+    assert 49.9 <= timer.elapsed() <= 50.2
+    assert 9.8 <= timer.remaining() <= 10.1
+
+
+def test_start_with_initial_elapsed_seconds_can_already_be_expired():
+    timer = AnswerTimer(duration_seconds=60)
+    timer.start(initial_elapsed_seconds=61)
+    assert timer.expired()
+    assert timer.remaining() == 0.0

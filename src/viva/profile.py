@@ -12,7 +12,8 @@ directly.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from viva.analyzer.models import AnalysisResult, AnalysisStats, ModuleSummary
@@ -67,3 +68,42 @@ class ProjectProfile:
             test_coverage_present=analysis_result.test_coverage_present,
             analysis_stats=analysis_result.analysis_stats,
         )
+
+    # -- JSON round-trip (Phase 6, docs/design.md §8: the persisted Project
+    # Profile a resumed session reloads instead of re-running Ingest/Analyzer) --
+
+    def to_dict(self) -> dict:
+        """All fields here are already JSON-primitive nested dataclasses
+        except `local_path` (a `Path`), which is stringified."""
+        data = asdict(self)
+        data["local_path"] = str(self.local_path)
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ProjectProfile":
+        return cls(
+            repo_url=data["repo_url"],
+            repo_slug=data["repo_slug"],
+            commit_sha=data["commit_sha"],
+            branch=data["branch"],
+            local_path=Path(data["local_path"]),
+            files_total=data["files_total"],
+            files_analyzed=data["files_analyzed"],
+            sampled_files=[SampledFile(**f) for f in data["sampled_files"]],
+            excluded_notable=data["excluded_notable"],
+            sampling_note=data["sampling_note"],
+            detected_stack=data["detected_stack"],
+            exclusion_stats=ExclusionStats(**data["exclusion_stats"]),
+            architecture_summary=data["architecture_summary"],
+            modules=[ModuleSummary(**m) for m in data["modules"]],
+            entry_points=data["entry_points"],
+            test_coverage_present=data["test_coverage_present"],
+            analysis_stats=AnalysisStats(**data["analysis_stats"]),
+        )
+
+    def save(self, path: str | Path) -> None:
+        Path(path).write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str | Path) -> "ProjectProfile":
+        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))

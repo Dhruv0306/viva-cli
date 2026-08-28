@@ -26,8 +26,13 @@ class AnswerTimer:
         self._start: float | None = None
         self._excluded_seconds: float = 0.0
 
-    def start(self) -> None:
-        self._start = time.monotonic()
+    def start(self, initial_elapsed_seconds: float = 0.0) -> None:
+        """`initial_elapsed_seconds` lets a resumed session (Phase 6,
+        docs/system-design/11-phase-6-session-loop-design.md) restore
+        answer time already spent in a prior process before it crashed or
+        was interrupted, rather than granting the full duration again.
+        """
+        self._start = time.monotonic() - initial_elapsed_seconds
         self._excluded_seconds = 0.0
 
     @contextmanager
