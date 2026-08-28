@@ -259,7 +259,37 @@ remaining 3 slots with `implementation_detail`/`tech_choice_rationale`/
 non-test file in `src`) — 8 questions total, none reaching into
 `docs`/`examples`/`.github`.
 
-## 10.9 CLI Markup Bug (Rich)
+## 10.9 Question Phrasing: Length/Clause-Count Tuning
+
+Found by inspection after the click bugfix rounds, not a grounding bug —
+every generated question was structurally correct (single question,
+grounded, no preamble) but tended toward long, multi-clause phrasing:
+"how does X ensure Y, especially when Z, given that W...". Root cause:
+`QUESTION_GEN_SYSTEM_PROMPT` had no length or clause-count constraint at
+all, and `generate_question`'s `target_tokens=80` (→ ~240 tokens of
+`num_predict` headroom via `_generate`'s 3x-with-floor rule) is nowhere
+near tight enough to force brevity as a backstop — the "be specific,
+never generic" instruction alone was enough to push the model toward
+stacking qualifiers to prove specificity.
+
+**Fix:** added an explicit "ONE clause, ONE sentence, roughly 15-25
+words" constraint to the system prompt, plus a concrete good/bad example
+pair contrasting a single-clause specific question against a
+multi-qualifier one (using the exact `_resolve_context`/`chain`/
+`resilient_parsing` case from the real click run as the "bad" example).
+`target_tokens` deliberately left unchanged — tightening the token cap
+as the primary fix risks truncating mid-sentence for models that don't
+fully respect `think=False` and pad before settling into the answer (see
+`_generate`'s existing comment); the prompt instruction is the right
+lever, the token cap stays a generous backstop.
+
+Not verifiable by the mocked test suite (fake `LLMClient`s don't
+exercise real model instruction-following) — `test_llm_client.py` only
+guards against the constraint text regressing out of the prompt.
+Confirming the actual output improved needs another real
+`viva questiongen` run.
+
+## 10.10 CLI Markup Bug (Rich)
 
 Same real-repo run surfaced a second, smaller bug: every question's
 `id [category / module]` label was silently missing from the printed
@@ -282,7 +312,7 @@ pattern predates Phase 5 and isn't this PR's regression to fix.
 `"implementation_detail / src"` and `"architecture / (project-level)"`
 strings appear in `viva questiongen`'s stdout.
 
-## 10.10 CLI Smoke-Test Command
+## 10.11 CLI Smoke-Test Command
 
 `viva questiongen <repo_url>` — same precedent as `viva analyze`/`viva
 index`: clone → ingest → analyze → index → build the coverage plan →

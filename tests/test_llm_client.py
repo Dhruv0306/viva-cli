@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from viva.llm_client import OllamaClient
+from viva.llm_client import QUESTION_GEN_SYSTEM_PROMPT, OllamaClient
 
 
 def _chat_response(content: str) -> dict:
@@ -137,6 +137,17 @@ def test_reduce_combines_summaries_into_one_prompt(client):
     assert "Module: src" in user_prompt
     assert "Summary A." in user_prompt
     assert "Summary B." in user_prompt
+
+
+def test_question_gen_system_prompt_constrains_length_and_clause_count():
+    # Regression guard for the verbose, multi-clause questions observed
+    # on a real click run ("...especially when encountering a Group
+    # command with chain enabled, and X, and Y..."). The system prompt
+    # is the actual lever here -- target_tokens=80 gives ~240 tokens of
+    # num_predict headroom, nowhere near tight enough to force brevity on
+    # its own, so the constraint has to be explicit in the instructions.
+    assert "ONE clause" in QUESTION_GEN_SYSTEM_PROMPT
+    assert "15-25 words" in QUESTION_GEN_SYSTEM_PROMPT
 
 
 def test_generate_question_builds_labeled_sections(client):

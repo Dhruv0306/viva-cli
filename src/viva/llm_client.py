@@ -53,6 +53,19 @@ could be answered without having read this specific code (e.g. never \
 "describe your architecture" in isolation; instead ask about the \
 specific pattern/decision/module the context demonstrates).
 
+Keep it to ONE clause, ONE sentence, roughly 15-25 words -- a real \
+examiner asks one thing at a time, not a chain of conditions. Do NOT \
+stack qualifiers with "if X and Y", "especially when Z", or "given \
+that ...". Being specific means naming the exact function/class/\
+parameter the context shows, not piling on every edge case it handles.
+
+Good: "Why does `_resolve_context` set `resilient_parsing=True` on the \
+child context but not the parent?"
+Bad (too many clauses): "When `_resolve_context` traverses a `Group` \
+with `chain` enabled, how does it ensure the context hierarchy stays \
+accurate, especially when `resilient_parsing` is set and a subcommand \
+also defines its own chain?"
+
 Ask exactly ONE question. Write it as a direct, spoken-style question a \
 human examiner would ask out loud. No preamble, no markdown, no \
 numbering, no restating the code context back verbatim."""
