@@ -94,6 +94,10 @@ class Config:
     vector_db_path: str
     top_k_retrieval: int
 
+    # --- Session persistence / loop (Phase 6, docs/design.md §8) ---
+    session_db_path: str
+    avg_time_per_category_seconds: int
+
     @classmethod
     def load(cls, env_file: str | None = ".env") -> "Config":
         """Load configuration from environment variables.
@@ -162,6 +166,18 @@ class Config:
 
         top_k_retrieval = _get_positive_int("TOP_K_RETRIEVAL", "5")
 
+        session_db_path = os.getenv("SESSION_DB_PATH", "./data/viva.db").strip()
+        if not session_db_path:
+            raise ConfigError("SESSION_DB_PATH must not be empty if set")
+
+        # Used by the Orchestrator's time-budget collapse check
+        # (docs/design.md §7: "remaining_time / avg_time_per_remaining_category")
+        # -- a tunable estimate rather than a hardcoded guess, per FR28, since
+        # actual answer pacing varies a lot by person and by repo complexity.
+        avg_time_per_category_seconds = _get_positive_int(
+            "AVG_TIME_PER_CATEGORY_SECONDS", "180"
+        )
+
         return cls(
             llm_model=llm_model,
             embedding_model=embedding_model,
@@ -180,4 +196,6 @@ class Config:
             line_window_overlap=line_window_overlap,
             vector_db_path=vector_db_path,
             top_k_retrieval=top_k_retrieval,
+            session_db_path=session_db_path,
+            avg_time_per_category_seconds=avg_time_per_category_seconds,
         )

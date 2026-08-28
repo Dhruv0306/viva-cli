@@ -45,6 +45,8 @@ def _make_config(max_files: int = 500, test_file_quota_pct: int = 10) -> Config:
         line_window_overlap=15,
         vector_db_path="./data/chroma",
         top_k_retrieval=5,
+        session_db_path="./data/viva.db",
+        avg_time_per_category_seconds=180,
     )
 
 
