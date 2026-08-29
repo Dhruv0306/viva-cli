@@ -308,3 +308,49 @@ permanently dropped. This still avoids the original FixedWindowLimiter
 repeat in the common case (there are usually other files left to prefer
 at that point in an 8-question plan), while never sacrificing session
 completeness to do it.
+
+## 11.10 Answer-input mechanism replaced: prompt_toolkit, Alt+Enter
+
+Not a bug fix — a deliberate UX change requested after real-world use.
+The original design (§11.6) used `sys.stdin.read()` terminated by EOF
+(Ctrl-D / Ctrl-Z+Enter on Windows). In practice this was confusing —
+real transcripts show `^D^Z` artifacts where the person wasn't sure
+which sequence would actually submit — and, combined with the `Live`
+countdown (§11.9), was part of what made the terminal output hard to
+read.
+
+Replaced with `prompt_toolkit`: `Alt+Enter` submits, plain `Enter`
+inserts a newline for multi-line composition, and a `bottom_toolbar`
+with `refresh_interval=0.5` gives a genuinely continuously-updating
+countdown — not the periodic snapshots §11.9's interim fix settled for.
+This supersedes both prior countdown implementations (`rich.Live`, then
+periodic `console.print`) for the same underlying reason those needed
+fixing: `prompt_toolkit` owns its whole input region coherently through
+one event loop, so the toolbar and the multi-line buffer can never
+desync or corrupt each other the way raw terminal echo and a
+Python-driven redraw could.
+
+New dependency: `prompt_toolkit>=3.0,<4.0`. Chosen deliberately —
+cross-platform (its own console backend detects the real Alt modifier
+on Windows rather than relying on the Unix ESC-prefix convention),
+widely used for exactly this kind of interactive-CLI use case (e.g.
+IPython), and ships first-class testing support
+(`prompt_toolkit.input.create_pipe_input()`) that simulates real
+keystroke sequences — including Alt+Enter — without a real TTY, which
+is what `tests/test_session_ui.py` now uses for genuine behavioral
+coverage instead of the io.StringIO-based approximation the previous
+two implementations were limited to.
+
+Immediate "answer recorded" confirmation (with a word count) was added
+in the same change, addressing separate real-world feedback that
+answers felt like they vanished with no acknowledgment ("ghost talk")
+between submitting and the next question appearing.
+
+**Known limitation carried forward, updated for the new mechanism**: if
+the timer expires mid-answer, the toolbar switches to a "time's up"
+message, but `read_answer()` still blocks until Alt+Enter is pressed —
+nothing forcibly truncates input. Forcibly exiting the prompt from a
+background thread is possible in `prompt_toolkit` (via thread-safe
+scheduling on its event loop) but was deliberately not attempted here,
+to avoid adding more surface area in an area that's already changed
+twice this phase; worth revisiting if it proves to matter in practice.

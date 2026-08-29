@@ -3,33 +3,36 @@ live session to a person (docs/plan.md Phase 6, FR17-FR19).
 
 Mirrors the `LLMClient`/`EmbeddingClient` seam pattern (NFR5, "thin
 interfaces"): `orchestrator.py` only ever talks to this ABC, never to
-`rich`/`sys.stdin` directly, so the session loop can be tested with a
-scripted fake UI instead of a real terminal (CONTRIBUTING.md: "the test
-suite must run without" -- here, without a real TTY).
+`rich`/`prompt_toolkit` directly, so the session loop can be tested with
+a scripted fake UI instead of a real terminal (CONTRIBUTING.md: "the
+test suite must run without" -- here, without a real TTY).
 
-`RichSessionUI` is the one real implementation, printing periodic
-time-remaining status lines for FR17's live-countdown requirement (see
-`read_answer`'s docstring for why these are append-only prints rather
-than a single continuously-redrawn line -- a real corruption bug found
-during real-repo testing, documented in
-docs/system-design/11-phase-6-session-loop-design.md §11.9).
+`RichSessionUI` is the one real implementation. Answer input uses
+`prompt_toolkit` (Alt+Enter to submit, plain Enter for a new line, a
+live-refreshing bottom toolbar showing time remaining) rather than
+`rich`'s `Live` or a raw blocking `sys.stdin.read()` -- both prior
+approaches are documented in
+docs/system-design/11-phase-6-session-loop-design.md §11.9, including a
+real corruption bug the `Live`-based version had. `prompt_toolkit` owns
+its own render region coherently (no cursor-desync risk) and has native
+key-binding support, which a raw EOF-terminated read never could.
 
-**Known limitation** (see the design doc's "Known limitations"):
-`read_answer()`'s background reader thread blocks on `sys.stdin.read()`
-until EOF (Ctrl-D). If the timer expires while the person is still
-typing, status printing stops and a "time's up" notice is shown, but
-the read itself can't be forcibly interrupted from another thread --
-whatever they've typed is still captured once they press Ctrl-D. This
-doesn't affect FR17's actual guarantee (LLM/eval latency exclusion from
-the clock), only how promptly typing is cut off.
+**Known limitation** (unchanged from earlier versions -- see the design
+doc's "Known limitations"): if the timer expires while the person is
+still composing an answer, the toolbar switches to a "time's up"
+message, but `read_answer()` still blocks until they press Alt+Enter --
+nothing forcibly cuts the input short. This doesn't affect FR17's
+actual guarantee (LLM/eval latency exclusion from the clock), only how
+promptly typing is cut off once time runs out.
 """
 from __future__ import annotations
 
 import abc
-import sys
-import threading
 from dataclasses import dataclass
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.panel import Panel
 
@@ -60,8 +63,8 @@ class SessionUI(abc.ABC):
 
     @abc.abstractmethod
     def read_answer(self, timer: AnswerTimer) -> str:
-        """Block until the person finishes answering (or the process
-        receives EOF), returning what they typed."""
+        """Block until the person submits an answer (or the process
+        receives EOF/interrupt), returning what they typed."""
         ...
 
     @abc.abstractmethod
@@ -72,6 +75,24 @@ class SessionUI(abc.ABC):
 
     @abc.abstractmethod
     def error(self, message: str) -> None: ...
+
+
+def _submit_key_bindings() -> KeyBindings:
+    """Alt+Enter submits; plain Enter inserts a newline (multiline
+    composition). Terminals conventionally report Alt+<key> as an ESC
+    byte followed by <key> -- `('escape', 'enter')` is prompt_toolkit's
+    documented idiom for binding Alt+Enter, and on Windows
+    prompt_toolkit's own console backend detects the real Alt modifier
+    at the OS level rather than relying on that ESC-prefix convention,
+    so this works consistently cross-platform.
+    """
+    bindings = KeyBindings()
+
+    @bindings.add("escape", "enter")
+    def _submit(event) -> None:
+        event.current_buffer.validate_and_handle()
+
+    return bindings
 
 
 class RichSessionUI(SessionUI):
@@ -96,71 +117,44 @@ class RichSessionUI(SessionUI):
             Panel(question_text, title=f"Question {question_number} [{category}]")
         )
         self._console.print(
-            "[dim]Type your answer, then press Ctrl-D (Ctrl-Z then Enter on Windows) "
-            "to submit.[/dim]"
+            "[dim]Type your answer (Enter for a new line). Press Alt+Enter to submit.[/dim]"
         )
 
     def read_answer(self, timer: AnswerTimer) -> str:
-        """Reads the answer on a background thread (blocking on
-        `sys.stdin.read()` until EOF) while the main thread prints
-        periodic time-remaining lines.
-
-        This used to use `rich.live.Live` to redraw a single line in
-        place. `Live` assumes it has exclusive control of the terminal
-        region it's redrawing, which broke down the moment the person's
-        own multi-line answer got echoed by the terminal in between
-        redraws -- `Live` has no visibility into those extra lines, so
-        its next redraw's cursor math would land in the wrong place.
-        Found during real-repo testing: this didn't just look messy, it
-        could land mid-line and interleave with already-echoed answer
-        text (docs/system-design/11-phase-6-session-loop-design.md
-        §11.9). Plain `console.print()` calls only ever append -- never
-        reposition the cursor -- so they can't corrupt anything, at the
-        cost of a true smoothly-updating single line: status now updates
-        on whole-minute boundaries plus 30s/10s urgency checkpoints
-        rather than continuously.
+        """`prompt_toolkit` owns the whole input region -- the bottom
+        toolbar and the multi-line buffer are rendered coherently by the
+        same event loop, so (unlike the two prior implementations) there
+        is no risk of a countdown redraw landing on top of and corrupting
+        already-typed text. `refresh_interval` gives a genuinely
+        continuously-updating countdown, not periodic snapshots.
         """
-        result: dict[str, str] = {}
-        done = threading.Event()
-
-        def _read_stdin() -> None:
-            result["text"] = sys.stdin.read()
-            done.set()
-
-        reader = threading.Thread(target=_read_stdin, daemon=True)
-        reader.start()
-
-        self._print_remaining(timer)
-        last_minute_shown = int(timer.remaining() // 60)
-        warned_30s = False
-        warned_10s = False
-
-        while not done.is_set():
+        def _toolbar() -> HTML:
             if timer.expired():
-                break
-            done.wait(1.0)
-            if done.is_set() or timer.expired():
-                break
-            remaining = timer.remaining()
-            current_minute = int(remaining // 60)
-            if current_minute < last_minute_shown:
-                last_minute_shown = current_minute
-                self._print_remaining(timer)
-            elif remaining <= 30 and not warned_30s:
-                warned_30s = True
-                self._print_remaining(timer, style="yellow")
-            elif remaining <= 10 and not warned_10s:
-                warned_10s = True
-                self._print_remaining(timer, style="red")
+                return HTML(
+                    '<style fg="ansired">Time is up -- press Alt+Enter to submit '
+                    "what you have.</style>"
+                )
+            return HTML(
+                f'<style fg="ansiyellow">\u23f1  {timer.format_remaining()} remaining</style>'
+                '  <style fg="ansigray">(Alt+Enter to submit)</style>'
+            )
 
-        if timer.expired() and not done.is_set():
-            self.time_expired()
+        session: PromptSession[str] = PromptSession(key_bindings=_submit_key_bindings())
+        try:
+            answer = session.prompt(
+                "> ", multiline=True, bottom_toolbar=_toolbar, refresh_interval=0.5,
+            )
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
 
-        reader.join(timeout=0.1)
-        return result.get("text", "").strip()
-
-    def _print_remaining(self, timer: AnswerTimer, style: str = "dim") -> None:
-        self._console.print(f"[{style}]\u23f1  {timer.format_remaining()} remaining[/{style}]")
+        answer = answer.strip()
+        if answer:
+            word_count = len(answer.split())
+            plural = "" if word_count == 1 else "s"
+            self._console.print(f"[green]\u2713 Answer recorded ({word_count} word{plural}).[/green]")
+        else:
+            self._console.print("[yellow]No answer recorded (empty response).[/yellow]")
+        return answer
 
     def time_expired(self) -> None:
         self._console.print("[yellow]Time's up.[/yellow]")
