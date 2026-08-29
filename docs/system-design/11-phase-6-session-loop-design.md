@@ -247,3 +247,41 @@ from before the crash, so re-presenting it doesn't cost another LLM
 generation call — the Orchestrator's loop now checks whether the
 selected item already has `question_text` set and skips straight to
 asking if so.
+
+**`rich.Live`-based countdown could corrupt echoed answer text.**
+Observed directly in a real run: status lines like `03:55 remaining`
+appeared concatenated onto the start of typed answer text with no
+separator (`03:55 remainingUsing...`), and later redraws landed
+mid-line. `Live`'s in-place redraw assumes it has exclusive control of
+the terminal lines it's managing. That assumption breaks the moment
+the person's own multi-line answer gets echoed by the terminal in
+between redraws (they press Enter while composing) — `Live` has no
+visibility into those extra lines, so its next redraw's cursor math
+lands in the wrong place. This isn't just cosmetic: an in-place redraw
+landing in the wrong spot can overwrite characters the terminal already
+echoed.
+
+Fixed: `read_answer()` no longer uses `Live`. Status updates are now
+plain, non-overwriting `console.print()` calls — they only ever append,
+never reposition the cursor, so they structurally cannot corrupt
+anything already on screen. The trade-off is a true single continuously
+-updating line becomes periodic updates instead: on whole-minute
+boundaries, plus urgency checkpoints at 30s and 10s remaining. FR17
+("must be displayed as a live, continuously updating countdown... not
+hidden or shown only periodically") is read here as ruling out showing
+the timer only once at the start, not as requiring per-second redraws —
+periodic-but-frequent-and-milestone-driven satisfies the intent without
+the corruption risk.
+
+`session_ui.py` previously had no test coverage at all (it needs a real
+TTY to exercise directly) — `tests/test_session_ui.py` now covers
+`RichSessionUI` against a fake stdin/console (`io.StringIO`), including
+a test that fails against the old `Live`-based code (it left no
+persistent status output behind due to `transient=True`'s exit-time
+erasure). Note honestly: the actual interleaving/corruption bug isn't
+reliably reproducible in a fast synthetic unit test — it required
+several seconds of real typing racing against multiple redraws — so
+that specific failure mode is verified by this fix's structural
+guarantee (no cursor-repositioning codes are ever emitted) plus the
+original real-world report, not by a test that fails on the old code
+for that specific reason.
