@@ -96,6 +96,14 @@ class Config:
 
     # --- Session persistence / loop (Phase 6, docs/design.md §8) ---
     session_db_path: str
+    # NOTE: currently unused by the Orchestrator's question-selection logic
+    # (see orchestrator.py's _select_next_item docstring) -- an earlier
+    # version used this to gate a one-time "collapse to breadth" decision
+    # made at session start, which proved harmful (permanently capped
+    # short sessions at exactly `categories` questions regardless of
+    # actual pacing). Left defined rather than removed, to avoid another
+    # config-shape ripple across the test suite; kept here as a flag for
+    # anyone who goes looking for what reads it and finds nothing.
     avg_time_per_category_seconds: int
 
     @classmethod

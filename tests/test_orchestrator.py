@@ -18,7 +18,7 @@ from viva.orchestrator import (
 )
 from viva.questiongen.models import GeneratedQuestion, QuestionPlanItem
 from viva.storage import SessionStore
-from viva.storage.session_store import ANSWERED, SKIPPED_TIME_COLLAPSE
+from viva.storage.session_store import ANSWERED
 
 
 class FakeSessionUI:
@@ -461,8 +461,13 @@ def test_select_next_item_does_not_flag_distinct_targets(tmp_path):
     assert record.status == "pending"  # not flagged -- distinct target
 
 
-def test_select_next_item_collapses_when_time_short(tmp_path):
-    config = _config(tmp_path, avg_time_per_category_seconds=1_000_000)
+def test_select_next_item_prefers_novel_category_but_keeps_repeat_pending(tmp_path):
+    """Category-breadth preference (design.md §7) is ordering only, never
+    exclusion -- see _select_next_item's docstring for the real-world
+    regression (a permanent, one-time collapse decision capped sessions
+    at a fixed question count regardless of pacing) that this replaced.
+    """
+    config = _config(tmp_path)
     ui = FakeSessionUI(answers=[])
     orch, store = _make_orchestrator(tmp_path, config, ui)
     store.create_session("sess1", "https://github.com/o/r", None, None, 60)
@@ -481,20 +486,37 @@ def test_select_next_item_collapses_when_time_short(tmp_path):
 
     selected = orch._select_next_item("sess1", pending, timer)
 
-    assert selected is not None
-    assert selected.question_id in ("q1", "q3")  # first-per-category survivor
+    assert selected.question_id == "q1"  # first item, nothing asked yet -- no preference difference
     records = {r.question_id: r for r in store.get_qa_records("sess1")}
-    # q2 shares "architecture" with q1 and arrives second -- collapsed away.
-    assert records["q2"].status == SKIPPED_TIME_COLLAPSE
+    assert records["q2"].status == "pending"  # never permanently dropped
+
+    # Once q1 (architecture) is asked, q3 (a novel category) should be
+    # preferred over q2 (a repeat of q1's category) -- but q2 stays
+    # available, not skipped.
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "answer")
+    pending = store.get_pending_plan_items("sess1")
+    selected = orch._select_next_item("sess1", pending, timer)
+    assert selected.question_id == "q3"
+    assert records["q2"].status == "pending"
 
 
-def test_select_next_item_does_not_collapse_with_ample_time(tmp_path):
-    config = _config(tmp_path, avg_time_per_category_seconds=1)
+def test_select_next_item_eventually_asks_repeat_category_when_nothing_novel_left(tmp_path):
+    """The real regression: once every distinct category has been
+    covered, remaining same-category items must still be selectable --
+    the session should keep going until it truly runs out of pending
+    items or time, not stop artificially at (category count)."""
+    config = _config(tmp_path)
     ui = FakeSessionUI(answers=[])
     orch, store = _make_orchestrator(tmp_path, config, ui)
     store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
-    plan = _fake_plan()
+    plan = [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, target_file="a.py"),
+        QuestionPlanItem(id="q2", category="architecture", target_module=None, target_file="b.py"),
+    ]
     store.save_plan("sess1", plan)
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "answer")
 
     from viva.timer import AnswerTimer
 
@@ -504,9 +526,9 @@ def test_select_next_item_does_not_collapse_with_ample_time(tmp_path):
 
     selected = orch._select_next_item("sess1", pending, timer)
 
-    assert selected.question_id == "q1"
-    records = {r.question_id: r for r in store.get_qa_records("sess1")}
-    assert records["q2"].status == "pending"  # nothing collapsed
+    assert selected is not None
+    assert selected.question_id == "q2"  # only option left -- must still be returned, not None
+
 
 
 class _AlwaysPartialProvider(ClassificationProvider):
@@ -656,3 +678,48 @@ def test_falls_back_to_duplicate_target_rather_than_ending_session(tmp_path):
     # It was not permanently dropped -- still asked, just deprioritized.
     record = {r.question_id: r for r in store.get_qa_records("sess1")}["q2"]
     assert record.status == "pending"
+
+
+def test_collapse_does_not_permanently_cap_session_regardless_of_pace(tmp_path):
+    """Regression test for a real-world bug: two real sessions against
+    github.com/Dhruv0306/throttle4j, run with --duration 8 and
+    --duration 10 respectively, both stopped at exactly 5 of 8 planned
+    questions -- identical outcome despite the 2-minute difference in
+    budget. Root cause: with the default AVG_TIME_PER_CATEGORY_SECONDS
+    (180s) and 5 planned categories, budget_needed = 5*180 = 900s (15
+    minutes) is already greater than either --duration, so the collapse
+    check fires on the very FIRST selection (before anything is asked)
+    and permanently marks every 'extra' item skipped -- locking in
+    exactly 5 survivors regardless of how fast the person actually
+    answers or how much real time is left afterward.
+    """
+    config = _config(tmp_path, avg_time_per_category_seconds=180)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 480)
+    # 5 categories, 8 items -- mirrors the real plan shape.
+    plan = [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, target_file="A.java"),
+        QuestionPlanItem(id="q2", category="implementation_detail", target_module=None, target_file="B.java"),
+        QuestionPlanItem(id="q3", category="testing", target_module=None, target_file="C.java"),
+        QuestionPlanItem(id="q4", category="edge_case", target_module=None, target_file="D.java"),
+        QuestionPlanItem(id="q5", category="historical_rationale", target_module=None, target_file="E.java"),
+        QuestionPlanItem(id="q6", category="architecture", target_module=None, target_file="F.java"),
+        QuestionPlanItem(id="q7", category="implementation_detail", target_module=None, target_file="G.java"),
+        QuestionPlanItem(id="q8", category="testing", target_module=None, target_file="H.java"),
+    ]
+    store.save_plan("sess1", plan)
+
+    from viva.timer import AnswerTimer
+
+    timer = AnswerTimer(480)
+    timer.start()  # nothing asked yet, t=0 -- exactly the real failure state
+    pending = store.get_pending_plan_items("sess1")
+
+    orch._select_next_item("sess1", pending, timer)
+
+    # The old behavior marked q6/q7/q8 permanently skipped right here,
+    # before even asking q1 -- with 480s (8 minutes) still on the clock
+    # and only ~a few seconds actually elapsed.
+    still_available = {r.question_id for r in store.get_qa_records("sess1") if r.status == "pending"}
+    assert {"q6", "q7", "q8"} <= still_available

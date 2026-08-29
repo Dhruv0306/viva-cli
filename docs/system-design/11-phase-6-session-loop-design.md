@@ -354,3 +354,50 @@ background thread is possible in `prompt_toolkit` (via thread-safe
 scheduling on its event loop) but was deliberately not attempted here,
 to avoid adding more surface area in an area that's already changed
 twice this phase; worth revisiting if it proves to matter in practice.
+
+**§11.9's own fix repeated the same mistake in a second mechanism.**
+Two real sessions against throttle4j, run with `--duration 8` and
+`--duration 10` respectively, both stopped at exactly 5 of 8 planned
+questions — identical outcome despite the 2-minute difference, which
+by itself rules out "genuinely ran out of time" as the cause (a longer
+duration produced the exact same count). Root cause: with the default
+`AVG_TIME_PER_CATEGORY_SECONDS` (180s) and a 5-category plan,
+`budget_needed = 5 * 180 = 900s` (15 minutes) — already greater than
+either `--duration`, so the collapse check fired on the very first
+selection, before anything was even asked, and (per the pre-existing
+`_select_next_item` logic at the time) permanently marked every item
+beyond one-per-category as `skipped_time_collapse`. This locked the
+session to exactly 5 questions for its entire duration regardless of
+how quickly the person actually answered (each answer took well under
+a minute in the real transcripts) or how much real time was left
+afterward — the same *permanent decision made from a one-time,
+pessimistic upfront guess* mistake as the duplicate-target bug above,
+just in the collapse mechanism instead.
+
+Fixed the same way: `_select_next_item` is now pure priority ordering
+with no exclusion at all beyond genuine dead ends (`skipped_no_grounding`
+remains, since there's truly nothing else to do with an ungrounded
+item). Pending items are ranked — follow-ups, then novel-target items,
+then novel-category items — and the loop's own natural exit conditions
+(timer actually expired, or genuinely no pending items left) are what
+end a session now, not a pre-computed worst-case made once at the
+start. `AVG_TIME_PER_CATEGORY_SECONDS` is consequently unused by
+selection now — left defined in `Config`/`.env.example` rather than
+removed (avoiding another config-shape ripple across the test suite),
+but clearly marked as currently-unused at both definitions.
+
+Worth watching on the next real run: the two real sessions that
+surfaced this bug also each contained one literal duplicate question
+(byte-identical text, not just same target file) — plausibly because
+the *old* collapse bug had already permanently discarded the genuinely
+distinct alternatives that would otherwise have been available to
+prefer, by the time the selector reached that point in the session.
+This fix may reduce or resolve that as a side effect, since there are
+now up to 8 real candidates to route around a repeat instead of a
+locked-in 5. Not claiming it's fully fixed pending confirmation — a
+dedicated semantic-similarity check on generated question text is a
+possible follow-up, but given this phase has now shipped three
+different duplicate-avoidance mechanisms that each individually caused
+a regression, a fourth one deserves real evidence it's still needed
+(and careful calibration) before being added, rather than being
+guessed at.

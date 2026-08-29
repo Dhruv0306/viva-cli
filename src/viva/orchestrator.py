@@ -314,58 +314,56 @@ class Orchestrator:
     ) -> QARecordRow | None:
         """FR15 ("track asked topics/files to avoid duplicate questioning
         and to enforce category coverage across the session") + design.md
-        §7's time-budget collapse.
+        §7's category-breadth preference, both as pure *ordering*, never
+        a permanent exclusion.
 
-        FR15 is a *preference*, not a hard exclusion: prefer a pending
-        item whose target file/module hasn't been asked about yet this
-        session, but if every remaining item duplicates something already
-        asked -- common on a small repo, where there are genuinely fewer
-        distinct files than planned categories -- fall back to asking a
-        duplicate rather than ending the session early with time and
-        questions still available. An earlier version of this method
-        permanently dropped every duplicate-target item regardless of
-        whether anything better was left, which on a small repo (found
-        running against github.com/Dhruv0306/throttle4j) discarded most
-        of the plan and completed the session after only 2 of 8 planned
-        questions -- see docs/system-design/11-phase-6-session-loop-design.md
-        §11.9. Duplicate items are therefore never marked skipped here;
-        they simply get asked later than novel-target items, not instead
-        of them.
+        Two earlier versions of this method each made a one-time,
+        pessimistic decision and permanently dropped whatever didn't fit
+        it (first duplicate-target items outright, then non-first-per-
+        category items when `avg_time_per_category_seconds *
+        categories_remaining` looked too big compared to the *starting*
+        time remaining -- which for any session shorter than
+        `categories * avg_time_per_category_seconds` fired on the very
+        first selection, before anything was even asked, locking in a
+        fixed question count regardless of how fast the person actually
+        answered or how much real time was left afterward). Both were
+        found the same way: a real session against
+        github.com/Dhruv0306/throttle4j stopped identically at exactly
+        (number of categories) questions whether given 8 or 10 minutes --
+        see docs/system-design/11-phase-6-session-loop-design.md §11.9.
 
-        Follow-up items (`is_followup_of` set) are prioritized above
-        both, since they're specifically probing a weak answer rather
-        than covering new ground -- see `_maybe_queue_followup`. This
-        branch is unreachable in Phase 6 (see `viva.classification`) but
-        is written for Phase 7.
+        The fix, both times, was the same lesson: prefer, never exclude.
+        Pending items are ranked -- follow-ups first, then items whose
+        target hasn't been asked about yet, then items whose category
+        hasn't been asked about yet -- and the loop's own natural exit
+        conditions (timer actually expired, or truly no pending items
+        left) are what end the session, not a pre-computed worst-case
+        guess made once at the start.
         """
         followups = [p for p in pending if p.is_followup_of is not None]
         if followups:
             return followups[0]
 
         already_asked_targets = self._already_asked_targets(session_id)
-        non_duplicate = [
-            item for item in pending
-            if not ((item.target_file or item.target_module) in already_asked_targets)
-        ]
-        fresh = non_duplicate if non_duplicate else pending
+        already_asked_categories = self._already_asked_categories(session_id)
 
-        categories_remaining = {p.category for p in fresh}
-        budget_needed = len(categories_remaining) * self.config.avg_time_per_category_seconds
-        if timer.remaining() >= budget_needed:
-            return fresh[0]
+        def _priority(item: QARecordRow) -> tuple[bool, bool]:
+            target = item.target_file or item.target_module
+            is_duplicate_target = bool(target) and target in already_asked_targets
+            is_repeat_category = item.category in already_asked_categories
+            return (is_duplicate_target, is_repeat_category)
 
-        # Collapsed: keep only the first pending item per category, in
-        # plan order; skip the rest of this round without asking them.
-        first_per_category: dict[str, QARecordRow] = {}
-        for item in fresh:
-            first_per_category.setdefault(item.category, item)
-        keep_ids = {item.question_id for item in first_per_category.values()}
-        for item in fresh:
-            if item.question_id not in keep_ids:
-                self.store.mark_item_status(session_id, item.question_id, SKIPPED_TIME_COLLAPSE)
+        ranked = sorted(pending, key=_priority)
+        return ranked[0] if ranked else None
 
-        remaining_after_collapse = [p for p in fresh if p.question_id in keep_ids]
-        return remaining_after_collapse[0] if remaining_after_collapse else None
+    def _already_asked_categories(self, session_id: str) -> set[str]:
+        """Categories already covered this session -- only counts items
+        with status `asked`/`answered`."""
+        return {
+            r.category
+            for r in self.store.get_qa_records(session_id)
+            if r.status in (ASKED, ANSWERED)
+        }
 
     def _already_asked_targets(self, session_id: str) -> set[str]:
         """Files/modules already covered this session (FR15). Only counts
