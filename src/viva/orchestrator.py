@@ -314,30 +314,40 @@ class Orchestrator:
     ) -> QARecordRow | None:
         """FR15 ("track asked topics/files to avoid duplicate questioning
         and to enforce category coverage across the session") + design.md
-        §7's time-budget collapse, in that order: a duplicate is never
-        worth asking regardless of remaining time, so duplicates are
-        filtered out first, then the collapse check runs over what's left.
+        §7's time-budget collapse.
 
-        Follow-up items (`is_followup_of` set) are prioritized above both,
-        since they're specifically probing a weak answer rather than
-        covering new ground -- see `_maybe_queue_followup`. This branch is
-        unreachable in Phase 6 (see `viva.classification`) but is written
-        for Phase 7.
+        FR15 is a *preference*, not a hard exclusion: prefer a pending
+        item whose target file/module hasn't been asked about yet this
+        session, but if every remaining item duplicates something already
+        asked -- common on a small repo, where there are genuinely fewer
+        distinct files than planned categories -- fall back to asking a
+        duplicate rather than ending the session early with time and
+        questions still available. An earlier version of this method
+        permanently dropped every duplicate-target item regardless of
+        whether anything better was left, which on a small repo (found
+        running against github.com/Dhruv0306/throttle4j) discarded most
+        of the plan and completed the session after only 2 of 8 planned
+        questions -- see docs/system-design/11-phase-6-session-loop-design.md
+        §11.9. Duplicate items are therefore never marked skipped here;
+        they simply get asked later than novel-target items, not instead
+        of them.
+
+        Follow-up items (`is_followup_of` set) are prioritized above
+        both, since they're specifically probing a weak answer rather
+        than covering new ground -- see `_maybe_queue_followup`. This
+        branch is unreachable in Phase 6 (see `viva.classification`) but
+        is written for Phase 7.
         """
         followups = [p for p in pending if p.is_followup_of is not None]
         if followups:
             return followups[0]
 
         already_asked_targets = self._already_asked_targets(session_id)
-        fresh: list[QARecordRow] = []
-        for item in pending:
-            target = item.target_file or item.target_module
-            if target and target in already_asked_targets:
-                self.store.mark_item_status(session_id, item.question_id, SKIPPED_DUPLICATE_TARGET)
-            else:
-                fresh.append(item)
-        if not fresh:
-            return None
+        non_duplicate = [
+            item for item in pending
+            if not ((item.target_file or item.target_module) in already_asked_targets)
+        ]
+        fresh = non_duplicate if non_duplicate else pending
 
         categories_remaining = {p.category for p in fresh}
         budget_needed = len(categories_remaining) * self.config.avg_time_per_category_seconds

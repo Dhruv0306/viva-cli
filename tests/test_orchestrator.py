@@ -18,7 +18,7 @@ from viva.orchestrator import (
 )
 from viva.questiongen.models import GeneratedQuestion, QuestionPlanItem
 from viva.storage import SessionStore
-from viva.storage.session_store import ANSWERED, SKIPPED_DUPLICATE_TARGET, SKIPPED_TIME_COLLAPSE
+from viva.storage.session_store import ANSWERED, SKIPPED_TIME_COLLAPSE
 
 
 class FakeSessionUI:
@@ -393,13 +393,20 @@ def test_resume_does_not_regenerate_orphaned_question(tmp_path, monkeypatch):
     assert record.question_text == "Pre-generated question text?"
 
 
-def test_select_next_item_skips_duplicate_target(tmp_path):
+def test_select_next_item_prefers_non_duplicate_target(tmp_path):
     """Regression test for a real-world bug found running `viva start`
     against github.com/Dhruv0306/throttle4j: two plan items in different
     categories both targeted FixedWindowLimiter, and nothing stopped the
     second from being asked -- producing a near-identical question twice
     in the same session. FR15 (docs/requirements.md): "Track asked
     topics/files to avoid duplicate questioning...".
+
+    This is a preference, not a hard exclusion (see
+    _select_next_item's docstring for why an earlier version that
+    permanently dropped duplicates caused a worse regression): q3
+    (a novel target) should be preferred over q2 (a duplicate of q1's
+    target), but q2 must stay 'pending', available if genuinely needed
+    later -- not permanently skipped.
     """
     config = _config(tmp_path, avg_time_per_category_seconds=1)
     ui = FakeSessionUI(answers=[])
@@ -424,9 +431,9 @@ def test_select_next_item_skips_duplicate_target(tmp_path):
 
     selected = orch._select_next_item("sess1", pending, timer)
 
-    assert selected.question_id == "q3"  # q2 skipped as a duplicate target
+    assert selected.question_id == "q3"  # non-duplicate preferred
     record = {r.question_id: r for r in store.get_qa_records("sess1")}["q2"]
-    assert record.status == SKIPPED_DUPLICATE_TARGET
+    assert record.status == "pending"  # deprioritized, not dropped
 
 
 def test_select_next_item_does_not_flag_distinct_targets(tmp_path):
@@ -561,3 +568,91 @@ def test_null_classification_provider_never_queues_followup(tmp_path):
         llm_client=object(), embedding_client=object(), vector_store=object(),
     )
     assert orch.classification_provider.classify("q1", "anything") is None
+
+
+def test_small_repo_does_not_prematurely_exhaust_plan(tmp_path):
+    """Regression test for a real-world bug found running 'viva start'
+    against github.com/Dhruv0306/throttle4j with --duration 8: a small
+    repo has far fewer distinct files than planned questions, so multiple
+    categories necessarily target the same file. The FR15 fix (previous
+    patch) treated 'same target file, any category' as a permanent skip,
+    which on a small repo caused most of an 8-question plan to be dropped
+    after only 2 questions -- asked=2, skipped=6, session COMPLETE with
+    75% of the plan never even attempted, even though ~7 minutes of the
+    8-minute budget remained.
+    """
+    config = _config(tmp_path, avg_time_per_category_seconds=180)
+    ui = FakeSessionUI(answers=["a"] * 8)
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 480)
+    # Mirrors throttle4j: only 3 distinct files, 5 categories, 8 items --
+    # by pigeonhole, several categories must share a target file.
+    plan = [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, target_file="A.java"),
+        QuestionPlanItem(id="q2", category="implementation_detail", target_module=None, target_file="A.java"),
+        QuestionPlanItem(id="q3", category="testing", target_module=None, target_file="B.java"),
+        QuestionPlanItem(id="q4", category="edge_case", target_module=None, target_file="B.java"),
+        QuestionPlanItem(id="q5", category="historical_rationale", target_module=None, target_file="C.java"),
+        QuestionPlanItem(id="q6", category="architecture", target_module=None, target_file="C.java"),
+        QuestionPlanItem(id="q7", category="implementation_detail", target_module=None, target_file="B.java"),
+        QuestionPlanItem(id="q8", category="testing", target_module=None, target_file="A.java"),
+    ]
+    store.save_plan("sess1", plan)
+
+    from viva.timer import AnswerTimer
+
+    timer = AnswerTimer(480)
+    timer.start()
+
+    # Simulate asking q1 (A.java) and q3 (B.java), same as the real run.
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "a")
+    store.record_question_asked("sess1", "q3", "Q3 text", [])
+    store.record_answer("sess1", "q3", "a")
+
+    pending = store.get_pending_plan_items("sess1")
+    selected = orch._select_next_item("sess1", pending, timer)
+
+    # Every remaining item duplicates an already-asked file (A or B) except
+    # q5/q6 (C.java) -- the fix should still select one of those, not
+    # give up because a *majority* of items happen to duplicate.
+    assert selected is not None
+    assert selected.question_id in ("q5", "q6")
+
+
+def test_falls_back_to_duplicate_target_rather_than_ending_session(tmp_path):
+    """The sharper version of the above: a repo small enough that
+    *every* remaining plan item duplicates an already-asked file. The
+    old (buggy) behavior marked all of them skipped_duplicate_target and
+    gave up, ending the session with time and pending questions still
+    left. The fix must still pick one rather than returning None."""
+    config = _config(tmp_path, avg_time_per_category_seconds=180)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 480)
+    plan = [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, target_file="A.java"),
+        QuestionPlanItem(id="q2", category="implementation_detail", target_module=None, target_file="A.java"),
+        QuestionPlanItem(id="q3", category="testing", target_module=None, target_file="B.java"),
+    ]
+    store.save_plan("sess1", plan)
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "a")
+    store.record_question_asked("sess1", "q3", "Q3 text", [])
+    store.record_answer("sess1", "q3", "a")
+    # Only q2 remains, and it duplicates q1's target (A.java) -- there is
+    # no non-duplicate alternative left at all.
+
+    from viva.timer import AnswerTimer
+
+    timer = AnswerTimer(480)
+    timer.start()
+    pending = store.get_pending_plan_items("sess1")
+
+    selected = orch._select_next_item("sess1", pending, timer)
+
+    assert selected is not None
+    assert selected.question_id == "q2"
+    # It was not permanently dropped -- still asked, just deprioritized.
+    record = {r.question_id: r for r in store.get_qa_records("sess1")}["q2"]
+    assert record.status == "pending"

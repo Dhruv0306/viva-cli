@@ -285,3 +285,26 @@ that specific failure mode is verified by this fix's structural
 guarantee (no cursor-repositioning codes are ever emitted) plus the
 original real-world report, not by a test that fails on the old code
 for that specific reason.
+
+**FR15's target-file dedup starved small-repo sessions.** The previous
+fix (patch 9) treated "same target file, already asked" as a permanent,
+irreversible skip. On a small repo (throttle4j: ~7-8 substantive files
+across 5 planned categories), there simply aren't enough distinct files
+to go around — several categories necessarily target the same file.
+Observed directly: two separate real sessions against throttle4j both
+completed after only 2 of 8 planned questions (`asked=2, skipped=6`),
+with ~7 of the 8 minutes budgeted still unused. This is a much worse
+failure than the one patch 9 fixed (one duplicate-sounding question) —
+it can gut most of a session on exactly the kind of small, focused repo
+this tool is often used against.
+
+Fixed: FR15 is now a *preference*, not an exclusion. `_select_next_item`
+prefers a pending item whose target hasn't been asked about yet, but
+falls back to the full pending set (including duplicates) if nothing
+novel is left, rather than returning `None` and ending the session.
+Duplicate-target items are no longer marked `skipped_duplicate_target`
+at all — they just get asked later than novel-target items, never
+permanently dropped. This still avoids the original FixedWindowLimiter
+repeat in the common case (there are usually other files left to prefer
+at that point in an 8-question plan), while never sacrificing session
+completeness to do it.
