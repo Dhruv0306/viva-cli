@@ -139,7 +139,11 @@ class Orchestrator:
         self.store.update_status(session_id, "INDEXING")
         self.ui.stage_started("Indexing for retrieval")
         index_result = index_repo(profile, self.config, self.embedding_client, self.vector_store)
-        self.ui.stage_completed("Indexing", f"{index_result.stats.chunks_built} chunk(s) indexed")
+        if index_result.stats.reused_existing_collection:
+            detail = "reusing existing index for this commit -- no re-embedding needed"
+        else:
+            detail = f"{index_result.stats.chunks_built} chunk(s) indexed"
+        self.ui.stage_completed("Indexing", detail)
 
         profile_path = self._profile_path(session_id)
         profile.save(profile_path)

@@ -38,7 +38,7 @@ class FakeSessionUI:
         self.events.append(("stage_started", stage))
 
     def stage_completed(self, stage, detail):
-        self.events.append(("stage_completed", stage))
+        self.events.append(("stage_completed", stage, detail))
 
     def ask_question(self, question_text, category, question_number):
         self.events.append(("ask", question_number, category))
@@ -105,13 +105,19 @@ def _fake_plan() -> list[QuestionPlanItem]:
     ]
 
 
-def _patch_pipeline(monkeypatch, plan=None, grounded=True):
+def _patch_pipeline(monkeypatch, plan=None, grounded=True, reused_collection=False):
     monkeypatch.setattr(orchestrator_module, "ingest_repo", lambda *a, **kw: _fake_ingest_result())
     monkeypatch.setattr(orchestrator_module, "analyze_repo", lambda *a, **kw: _fake_analysis_result())
     monkeypatch.setattr(
         orchestrator_module, "index_repo",
-        lambda *a, **kw: IndexResult(collection_name="owner--repo-abc123",
-                                      stats=IndexStats(files_processed=2, chunks_built=4)),
+        lambda *a, **kw: IndexResult(
+            collection_name="owner--repo-abc123",
+            stats=IndexStats(
+                files_processed=0 if reused_collection else 2,
+                chunks_built=0 if reused_collection else 4,
+                reused_existing_collection=reused_collection,
+            ),
+        ),
     )
     monkeypatch.setattr(
         orchestrator_module, "build_coverage_plan", lambda *a, **kw: plan or _fake_plan()
@@ -166,6 +172,41 @@ def test_start_persists_profile_for_resume(tmp_path, monkeypatch):
     record = store.get_session(session_id)
     assert record.profile_path is not None
     assert Path(record.profile_path).exists()
+
+
+def test_reused_collection_reports_reuse_not_zero_chunks(tmp_path, monkeypatch):
+    """Regression test for a real-world bug: a second session against the
+    same commit correctly reuses the existing Chroma collection
+    (index_repo() returns chunks_built=0, reused_existing_collection=True
+    -- see indexer/__init__.py), but the original message
+    ("0 chunk(s) indexed") read as if indexing had silently failed, even
+    though retrieval worked fine off the reused collection. Found running
+    `viva start` twice against github.com/Dhruv0306/throttle4j at the same
+    commit."""
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch, reused_collection=True)
+    ui = FakeSessionUI(answers=["answer one", "answer two"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    orch.start("https://github.com/owner/repo")
+
+    indexing_events = [e for e in ui.events if e[0] == "stage_completed" and e[1] == "Indexing"]
+    assert len(indexing_events) == 1
+    detail = indexing_events[0][2]
+    assert "0 chunk" not in detail
+    assert "reus" in detail.lower()
+
+
+def test_freshly_built_collection_reports_chunk_count(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch, reused_collection=False)
+    ui = FakeSessionUI(answers=["answer one", "answer two"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    orch.start("https://github.com/owner/repo")
+
+    indexing_events = [e for e in ui.events if e[0] == "stage_completed" and e[1] == "Indexing"]
+    assert indexing_events[0][2] == "4 chunk(s) indexed"
 
 
 def test_start_marks_session_failed_on_pipeline_error(tmp_path, monkeypatch):
