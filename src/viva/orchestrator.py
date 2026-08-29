@@ -192,7 +192,19 @@ class Orchestrator:
         self.ui.session_started(session_id)
         self.ui.stage_started("Reloading persisted session state")
         profile = ProjectProfile.load(record.profile_path)
-        self.ui.stage_completed("Reload", f"resuming at {record.status}")
+
+        # NFR3: a crash between record_question_asked() and record_answer()
+        # (process dies while a question is on screen) leaves that item
+        # stuck at status='asked' forever -- pending-only lookups never
+        # revisit it, silently dropping a question the person never
+        # actually got to answer. Requeue it as pending before resuming the
+        # loop so it's re-presented (its question_text/grounding_chunk_ids
+        # are preserved, so this doesn't cost another LLM generation call).
+        requeued = self.store.requeue_orphaned_asked_items(session_id)
+        detail = f"resuming at {record.status}"
+        if requeued:
+            detail += f" ({requeued} previously-asked, unanswered question requeued)"
+        self.ui.stage_completed("Reload", detail)
 
         elapsed_seconds = self._elapsed_answer_seconds(session_id)
         self._run_live_session(
@@ -249,25 +261,35 @@ class Orchestrator:
                 self.store.update_status(session_id, "TIME_EXPIRED")
                 break
 
-            plan_item = QuestionPlanItem(
-                id=item.question_id, category=item.category,
-                target_module=item.target_module, target_file=item.target_file,
-                is_followup_of=item.is_followup_of,
-            )
-            with timer.excluding():
-                generated = generate_question(
-                    plan_item, profile, self.config, self.vector_store,
-                    collection_name, self.embedding_client, self.llm_client,
+            if item.question_text:
+                # Requeued orphaned item (see resume()'s
+                # requeue_orphaned_asked_items call) -- it was already
+                # generated and grounded before the crash; re-present it
+                # as-is instead of paying for another LLM generation call.
+                question_text = item.question_text
+                grounding_chunk_ids = item.grounding_chunk_ids
+            else:
+                plan_item = QuestionPlanItem(
+                    id=item.question_id, category=item.category,
+                    target_module=item.target_module, target_file=item.target_file,
+                    is_followup_of=item.is_followup_of,
                 )
-            if generated is None:
-                self.store.mark_item_status(session_id, item.question_id, SKIPPED_NO_GROUNDING)
-                continue
+                with timer.excluding():
+                    generated = generate_question(
+                        plan_item, profile, self.config, self.vector_store,
+                        collection_name, self.embedding_client, self.llm_client,
+                    )
+                if generated is None:
+                    self.store.mark_item_status(session_id, item.question_id, SKIPPED_NO_GROUNDING)
+                    continue
+                question_text = generated.question_text
+                grounding_chunk_ids = generated.grounding_chunk_ids
 
             question_number += 1
             self.store.record_question_asked(
-                session_id, item.question_id, generated.question_text, generated.grounding_chunk_ids
+                session_id, item.question_id, question_text, grounding_chunk_ids
             )
-            self.ui.ask_question(generated.question_text, item.category, question_number)
+            self.ui.ask_question(question_text, item.category, question_number)
             answer_text = self.ui.read_answer(timer)
             self.store.record_answer(session_id, item.question_id, answer_text)
 

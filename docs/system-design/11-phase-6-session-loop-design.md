@@ -228,3 +228,22 @@ not a semantic-similarity check; two different files that happen to
 be conceptually similar can still both get asked. That's a reasonable
 v1 given FR15's wording, but worth revisiting if it proves too coarse
 in practice.
+
+**Orphaned asked-but-unanswered items on resume.** A session crashed
+between `record_question_asked()` and `record_answer()` — the process
+died while a question was on screen, before the person's answer was
+captured (found via `viva resume` on an interrupted
+`github.com/Dhruv0306/throttle4j` session). `resume()`'s pending-item
+lookup (`status='pending'`) never revisited that item — it was stuck
+at `status='asked'` permanently, silently un-answerable, and the
+session summary undercounted (`asked=5, answered=4`, with no
+accounting for the missing one). This is exactly the failure mode
+NFR3 exists to prevent.
+
+Fixed: `SessionStore.requeue_orphaned_asked_items()` resets any such
+item back to `pending` at the start of `resume()`, before the live
+loop starts. Its `question_text`/`grounding_chunk_ids` are preserved
+from before the crash, so re-presenting it doesn't cost another LLM
+generation call — the Orchestrator's loop now checks whether the
+selected item already has `question_text` set and skips straight to
+asking if so.

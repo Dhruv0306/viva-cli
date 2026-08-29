@@ -264,6 +264,23 @@ class SessionStore:
         ).fetchall()
         return [_qa_from_row(row) for row in rows]
 
+    def requeue_orphaned_asked_items(self, session_id: str) -> int:
+        """A session can be interrupted between `record_question_asked()`
+        and `record_answer()` -- the process dies while a question is on
+        screen and the person is mid-answer. That item is stuck at
+        `asked` forever unless something notices on resume: `pending`
+        only covers items never presented at all. Resets any such item
+        back to `pending` (its `question_text`/`grounding_chunk_ids` stay
+        intact, so the Orchestrator can re-present it without paying for
+        another LLM generation call) and returns how many were requeued.
+        """
+        cursor = self._conn.execute(
+            "UPDATE qa_records SET status = ? WHERE session_id = ? AND status = ?",
+            (PENDING, session_id, ASKED),
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
     def get_qa_records(self, session_id: str) -> list[QARecordRow]:
         rows = self._conn.execute(
             "SELECT * FROM qa_records WHERE session_id = ? ORDER BY rowid",

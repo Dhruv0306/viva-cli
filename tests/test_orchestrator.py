@@ -18,7 +18,7 @@ from viva.orchestrator import (
 )
 from viva.questiongen.models import GeneratedQuestion, QuestionPlanItem
 from viva.storage import SessionStore
-from viva.storage.session_store import SKIPPED_DUPLICATE_TARGET, SKIPPED_TIME_COLLAPSE
+from viva.storage.session_store import ANSWERED, SKIPPED_DUPLICATE_TARGET, SKIPPED_TIME_COLLAPSE
 
 
 class FakeSessionUI:
@@ -311,6 +311,86 @@ def test_resume_continues_pending_items(tmp_path, monkeypatch):
     record = store.get_session("sess1")
     assert record.status == "COMPLETE"
     assert ui.summary.questions_answered == 1
+
+
+def test_resume_reasks_orphaned_unanswered_question(tmp_path, monkeypatch):
+    """Regression test for a real-world bug found running `viva resume`
+    against an interrupted session on github.com/Dhruv0306/throttle4j:
+    the process crashed while a question was displayed, before the
+    answer was captured. The old behavior left that question stuck at
+    'asked' forever -- resume silently never gave the person a chance to
+    answer it, and the summary undercounted (asked=N, answered=N-1) with
+    no accounting for the gap.
+    """
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    ui = FakeSessionUI(answers=["answer to the orphaned question"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    from viva.profile import ProjectProfile
+
+    profile = ProjectProfile.build(_fake_ingest_result(), _fake_analysis_result())
+    profile_path = tmp_path / "sess1-profile.json"
+    profile.save(profile_path)
+
+    store.create_session("sess1", "https://github.com/owner/repo", "main", None, 1800)
+    store.set_pipeline_artifacts(
+        "sess1", repo_slug="owner/repo", commit_sha="abc123",
+        collection_name="owner--repo-abc123", profile_path=str(profile_path),
+    )
+    store.save_plan("sess1", [QuestionPlanItem(id="q1", category="architecture", target_module=None)])
+    store.update_status("sess1", "IN_PROGRESS")
+    # Simulate the crash: q1 was shown but never answered.
+    store.record_question_asked("sess1", "q1", "What does this do?", ["chunk1"])
+
+    orch.resume("sess1")
+
+    record = {r.question_id: r for r in store.get_qa_records("sess1")}["q1"]
+    assert record.status == ANSWERED
+    assert record.answer_text == "answer to the orphaned question"
+    assert ("ask", 1, "architecture") in ui.events  # re-presented, not skipped
+    assert ui.summary.questions_asked == 1
+    assert ui.summary.questions_answered == 1  # no more asked/answered mismatch
+    assert ui.summary.questions_skipped == 0
+
+
+def test_resume_does_not_regenerate_orphaned_question(tmp_path, monkeypatch):
+    """The requeued question's text/grounding were already generated
+    before the crash -- resuming shouldn't pay for another LLM call."""
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    generate_calls = []
+    original = orchestrator_module.generate_question
+
+    def counting_generate_question(*a, **kw):
+        generate_calls.append(1)
+        return original(*a, **kw)
+
+    monkeypatch.setattr(orchestrator_module, "generate_question", counting_generate_question)
+
+    ui = FakeSessionUI(answers=["an answer"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    from viva.profile import ProjectProfile
+
+    profile = ProjectProfile.build(_fake_ingest_result(), _fake_analysis_result())
+    profile_path = tmp_path / "sess1-profile.json"
+    profile.save(profile_path)
+
+    store.create_session("sess1", "https://github.com/owner/repo", "main", None, 1800)
+    store.set_pipeline_artifacts(
+        "sess1", repo_slug="owner/repo", commit_sha="abc123",
+        collection_name="owner--repo-abc123", profile_path=str(profile_path),
+    )
+    store.save_plan("sess1", [QuestionPlanItem(id="q1", category="architecture", target_module=None)])
+    store.update_status("sess1", "IN_PROGRESS")
+    store.record_question_asked("sess1", "q1", "Pre-generated question text?", ["chunk1"])
+
+    orch.resume("sess1")
+
+    assert generate_calls == []  # never called -- reused the persisted text
+    record = {r.question_id: r for r in store.get_qa_records("sess1")}["q1"]
+    assert record.question_text == "Pre-generated question text?"
 
 
 def test_select_next_item_skips_duplicate_target(tmp_path):

@@ -166,3 +166,45 @@ def test_add_followup_item_appears_as_pending(store):
 
 def test_get_qa_records_empty_for_unknown_session(store):
     assert store.get_qa_records("nope") == []
+
+
+def test_requeue_orphaned_asked_items_resets_asked_to_pending(store):
+    """Regression test for a real-world bug: a session crashed while a
+    question was on screen (asked, never answered). On resume, that item
+    was stuck at 'asked' forever -- get_pending_plan_items() never
+    revisits it. Found running `viva resume` on an interrupted session
+    against github.com/Dhruv0306/throttle4j."""
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "Q1 text", ["chunk1"])
+    # q1 is now 'asked' but never answered -- simulates the crash.
+
+    requeued = store.requeue_orphaned_asked_items("sess1")
+
+    assert requeued == 1
+    record = {r.question_id: r for r in store.get_qa_records("sess1")}["q1"]
+    assert record.status == PENDING
+    # question_text/grounding preserved -- no need to regenerate.
+    assert record.question_text == "Q1 text"
+    assert record.grounding_chunk_ids == ["chunk1"]
+    pending_ids = {p.question_id for p in store.get_pending_plan_items("sess1")}
+    assert "q1" in pending_ids
+
+
+def test_requeue_orphaned_asked_items_leaves_answered_items_alone(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "an answer")
+
+    requeued = store.requeue_orphaned_asked_items("sess1")
+
+    assert requeued == 0
+    assert {r.question_id: r for r in store.get_qa_records("sess1")}["q1"].status == ANSWERED
+
+
+def test_requeue_orphaned_asked_items_returns_zero_when_none_orphaned(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+
+    assert store.requeue_orphaned_asked_items("sess1") == 0
