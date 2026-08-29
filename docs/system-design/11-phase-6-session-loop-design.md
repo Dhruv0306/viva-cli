@@ -205,3 +205,26 @@ by person and by repo complexity.
 
 Real evaluation (Phase 7), `viva report` (Phase 8), `viva cleanup`
 (Phase 9).
+
+## 11.9 Real-world bugs found during Phase 6 testing
+
+**Missing half of FR15.** `docs/requirements.md` FR15 reads: *"Track
+asked topics/files to avoid duplicate questioning **and** to enforce
+category coverage across the session."* §11.5 originally only
+implemented the second half (category coverage, via the time-budget
+collapse). Nothing tracked which files/targets had already been asked
+about, so two plan items in different categories that both happened to
+target the same file (`FixedWindowLimiter.java`, found running a real
+session against `github.com/Dhruv0306/throttle4j`) produced two
+near-identical questions in the same session. This should have been
+caught at design-doc time — it's explicit in the FR text — and wasn't.
+
+Fixed: `_select_next_item` now filters out any pending item whose
+`target_file`/`target_module` was already asked about this session
+(`asked`/`answered` status), marking it `skipped_duplicate_target`
+(visible, not silently dropped) before the time-collapse check runs.
+This is a literal reading of "topics/files" — same target file, skip —
+not a semantic-similarity check; two different files that happen to
+be conceptually similar can still both get asked. That's a reasonable
+v1 given FR15's wording, but worth revisiting if it proves too coarse
+in practice.

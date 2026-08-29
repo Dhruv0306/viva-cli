@@ -22,6 +22,7 @@ ASKED = "asked"
 ANSWERED = "answered"
 SKIPPED_NO_GROUNDING = "skipped_no_grounding"
 SKIPPED_TIME_COLLAPSE = "skipped_time_collapse"
+SKIPPED_DUPLICATE_TARGET = "skipped_duplicate_target"
 
 
 @dataclass(frozen=True)

@@ -18,7 +18,7 @@ from viva.orchestrator import (
 )
 from viva.questiongen.models import GeneratedQuestion, QuestionPlanItem
 from viva.storage import SessionStore
-from viva.storage.session_store import SKIPPED_TIME_COLLAPSE
+from viva.storage.session_store import SKIPPED_DUPLICATE_TARGET, SKIPPED_TIME_COLLAPSE
 
 
 class FakeSessionUI:
@@ -311,6 +311,67 @@ def test_resume_continues_pending_items(tmp_path, monkeypatch):
     record = store.get_session("sess1")
     assert record.status == "COMPLETE"
     assert ui.summary.questions_answered == 1
+
+
+def test_select_next_item_skips_duplicate_target(tmp_path):
+    """Regression test for a real-world bug found running `viva start`
+    against github.com/Dhruv0306/throttle4j: two plan items in different
+    categories both targeted FixedWindowLimiter, and nothing stopped the
+    second from being asked -- producing a near-identical question twice
+    in the same session. FR15 (docs/requirements.md): "Track asked
+    topics/files to avoid duplicate questioning...".
+    """
+    config = _config(tmp_path, avg_time_per_category_seconds=1)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    plan = [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None,
+                          target_file="FixedWindowLimiter.java"),
+        QuestionPlanItem(id="q2", category="implementation_detail", target_module=None,
+                          target_file="FixedWindowLimiter.java"),
+        QuestionPlanItem(id="q3", category="testing", target_module=None, target_file="Other.java"),
+    ]
+    store.save_plan("sess1", plan)
+    # q1 already asked this session -- same target_file as q2.
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+
+    from viva.timer import AnswerTimer
+
+    timer = AnswerTimer(1800)
+    timer.start()
+    pending = store.get_pending_plan_items("sess1")
+
+    selected = orch._select_next_item("sess1", pending, timer)
+
+    assert selected.question_id == "q3"  # q2 skipped as a duplicate target
+    record = {r.question_id: r for r in store.get_qa_records("sess1")}["q2"]
+    assert record.status == SKIPPED_DUPLICATE_TARGET
+
+
+def test_select_next_item_does_not_flag_distinct_targets(tmp_path):
+    config = _config(tmp_path, avg_time_per_category_seconds=1)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    plan = [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, target_file="A.java"),
+        QuestionPlanItem(id="q2", category="testing", target_module=None, target_file="B.java"),
+    ]
+    store.save_plan("sess1", plan)
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+
+    from viva.timer import AnswerTimer
+
+    timer = AnswerTimer(1800)
+    timer.start()
+    pending = store.get_pending_plan_items("sess1")
+
+    selected = orch._select_next_item("sess1", pending, timer)
+
+    assert selected.question_id == "q2"
+    record = {r.question_id: r for r in store.get_qa_records("sess1")}["q2"]
+    assert record.status == "pending"  # not flagged -- distinct target
 
 
 def test_select_next_item_collapses_when_time_short(tmp_path):

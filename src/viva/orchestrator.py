@@ -30,7 +30,7 @@ from viva.questiongen import build_coverage_plan, generate_question
 from viva.questiongen.models import QuestionPlanItem
 from viva.session_ui import SessionSummary, SessionUI
 from viva.storage import QARecordRow, SessionStore
-from viva.storage.session_store import ANSWERED, ASKED, SKIPPED_NO_GROUNDING, SKIPPED_TIME_COLLAPSE
+from viva.storage.session_store import ANSWERED, ASKED, SKIPPED_DUPLICATE_TARGET, SKIPPED_NO_GROUNDING, SKIPPED_TIME_COLLAPSE
 from viva.timer import AnswerTimer
 
 # Terminal states that make a session's `IN_PROGRESS` loop stop asking new
@@ -290,39 +290,59 @@ class Orchestrator:
     def _select_next_item(
         self, session_id: str, pending: list[QARecordRow], timer: AnswerTimer
     ) -> QARecordRow | None:
-        """design.md §7's time-budget collapse: if the remaining time can't
-        realistically cover one question per remaining uncovered category,
-        collapse to at most one pending item per category (favoring full
-        coverage over depth) and skip the rest with
-        `skipped_time_collapse` rather than silently truncating the plan.
+        """FR15 ("track asked topics/files to avoid duplicate questioning
+        and to enforce category coverage across the session") + design.md
+        §7's time-budget collapse, in that order: a duplicate is never
+        worth asking regardless of remaining time, so duplicates are
+        filtered out first, then the collapse check runs over what's left.
 
-        Follow-up items (`is_followup_of` set) are prioritized first when
-        present, since they're specifically probing a weak answer rather
-        than covering new ground -- see `_maybe_queue_followup`. This
-        branch is unreachable in Phase 6 (see `viva.classification`) but
-        is written for Phase 7.
+        Follow-up items (`is_followup_of` set) are prioritized above both,
+        since they're specifically probing a weak answer rather than
+        covering new ground -- see `_maybe_queue_followup`. This branch is
+        unreachable in Phase 6 (see `viva.classification`) but is written
+        for Phase 7.
         """
         followups = [p for p in pending if p.is_followup_of is not None]
         if followups:
             return followups[0]
 
-        categories_remaining = {p.category for p in pending}
+        already_asked_targets = self._already_asked_targets(session_id)
+        fresh: list[QARecordRow] = []
+        for item in pending:
+            target = item.target_file or item.target_module
+            if target and target in already_asked_targets:
+                self.store.mark_item_status(session_id, item.question_id, SKIPPED_DUPLICATE_TARGET)
+            else:
+                fresh.append(item)
+        if not fresh:
+            return None
+
+        categories_remaining = {p.category for p in fresh}
         budget_needed = len(categories_remaining) * self.config.avg_time_per_category_seconds
         if timer.remaining() >= budget_needed:
-            return pending[0]
+            return fresh[0]
 
         # Collapsed: keep only the first pending item per category, in
         # plan order; skip the rest of this round without asking them.
         first_per_category: dict[str, QARecordRow] = {}
-        for item in pending:
+        for item in fresh:
             first_per_category.setdefault(item.category, item)
         keep_ids = {item.question_id for item in first_per_category.values()}
-        for item in pending:
+        for item in fresh:
             if item.question_id not in keep_ids:
                 self.store.mark_item_status(session_id, item.question_id, SKIPPED_TIME_COLLAPSE)
 
-        remaining_after_collapse = [p for p in pending if p.question_id in keep_ids]
+        remaining_after_collapse = [p for p in fresh if p.question_id in keep_ids]
         return remaining_after_collapse[0] if remaining_after_collapse else None
+
+    def _already_asked_targets(self, session_id: str) -> set[str]:
+        """Files/modules already covered this session (FR15). Only counts
+        items with status `asked`/`answered`."""
+        return {
+            r.target_file or r.target_module
+            for r in self.store.get_qa_records(session_id)
+            if r.status in (ASKED, ANSWERED) and (r.target_file or r.target_module)
+        }
 
     def _maybe_queue_followup(self, session_id: str, item: QARecordRow, answer_text: str) -> None:
         """FR14 seam. `classify()` always returns `None` in Phase 6 (see
@@ -356,7 +376,7 @@ class Orchestrator:
     def _build_summary(self, session_id: str) -> SessionSummary:
         records = self.store.get_qa_records(session_id)
         session = self.store.get_session(session_id)
-        skipped_statuses = {SKIPPED_NO_GROUNDING, SKIPPED_TIME_COLLAPSE}
+        skipped_statuses = {SKIPPED_NO_GROUNDING, SKIPPED_TIME_COLLAPSE, SKIPPED_DUPLICATE_TARGET}
         return SessionSummary(
             session_id=session_id,
             status=session.status if session else "UNKNOWN",
