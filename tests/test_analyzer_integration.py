@@ -38,7 +38,7 @@ class _FakeLLMClient(LLMClient):
         self.reduce_calls += 1
         return f"reduced({label}, {len(summaries)} items)"
 
-    def generate_question(self, category, target_module, grounding_context, target_file=None):
+    def generate_question(self, category, target_module, grounding_context, target_file=None, avoid_questions=None):
         raise NotImplementedError
 
 
@@ -50,6 +50,8 @@ def _config(max_files: int = 500, map_reduce_batch_size: int = 8, max_reduce_con
         github_token=None, map_reduce_batch_size=map_reduce_batch_size,
         max_reduce_context_tokens=max_reduce_context_tokens, line_window_size=60,
         line_window_overlap=15, vector_db_path="./data/chroma", top_k_retrieval=5,
+        session_db_path="./data/viva.db", avg_time_per_category_seconds=180,
+        question_similarity_threshold=0.90,
     )
 
 

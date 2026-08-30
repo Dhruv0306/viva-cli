@@ -1,0 +1,498 @@
+# System Design Reference — Part 11: Phase 6 Session Loop Design
+
+> Part of the full system-design reference. See `README.md` in this folder
+> for the complete set of parts.
+
+## 11.1 Scope
+
+FR16–FR20 (timed session mechanics) plus the CLI contract's `start` /
+`resume` / `list` commands (§6.1). This is the first phase with an
+Orchestrator, and the first with SQLite persistence — everything before
+this phase ran as one synchronous pipeline call per component with no
+state surviving process exit.
+
+**No evaluation.** `docs/plan.md` scopes Phase 6 to "Session Loop... no
+evaluation yet." The Evaluator (FR21–24) is Phase 7. Every persisted Q&A
+record's `eval_status` is `"deferred"` in this phase — see §11.4.
+
+New modules: `src/viva/storage/` (`schema.py`, `session_store.py`),
+`src/viva/orchestrator.py`, `src/viva/session_ui.py`,
+`src/viva/classification.py`. `cli.py` gains `start`/`resume`/`list`.
+
+## 11.2 Storage
+
+Plain `sqlite3`, no ORM — consistent with the project's existing
+convention of thin direct-client wrappers (Chroma via
+`indexer/store.py`, Ollama via `llm_client.py`) rather than a heavier
+abstraction layer, and the schema is small and stable enough not to
+need one.
+
+Two tables, `sessions` and `qa_records`, mapping onto design.md §6's
+Project Profile / Q&A Record contracts. `SessionStore`
+(`storage/session_store.py`) is the single interface — per design.md's
+"no service calls another directly" rule, nothing outside `storage/`
+touches `sqlite3` or raw SQL.
+
+`sessions.status` holds the design.md §2 state machine values
+(`INGESTING` → `ANALYZING` → `INDEXING` → `PLANNING` → `IN_PROGRESS` →
+`TIME_EXPIRED`/`QUESTIONS_EXHAUSTED` → `FINALIZING_EVALS` →
+`SUMMARIZING` → `COMPLETE`), plus one pragmatic addition not in that
+diagram: **`FAILED`**, for a session that errors out before reaching a
+real terminal state (e.g. a clone failure during `INGESTING`) — without
+it, such a session would sit forever in a non-terminal status that
+`viva resume` would then try (and fail) to resume into. Not enforced as
+a SQL `CHECK` constraint — Phase 7/8 will likely add their own states,
+so validity is enforced at the Python layer instead of baked into the
+schema.
+
+`qa_records.status` tracks each plan item's own lifecycle — `pending` →
+`asked` → `answered`, or `skipped_no_grounding` / `skipped_time_collapse`
+if it's dropped before ever being asked (§11.5). This is deliberately
+separate from `eval_status`, which Phase 6 never sets to anything but
+`"deferred"` (§11.4).
+
+`session_id` is a short `uuid4` hex (12 chars) — created and persisted
+(status `INGESTING`) *before* cloning starts, so `viva start` can print
+it to stdout immediately per CLI contract §6.1, well before
+`repo_slug`/`commit_sha` are known. Those get backfilled via
+`set_pipeline_artifacts()` once Ingest/Indexing actually resolve them.
+
+The persisted `ProjectProfile` (needed for resume, since re-running
+Ingest/Analyzer would re-touch the network — forbidden by
+`05-repo-lifecycle...` §5.3) is **not** stored in SQLite; it's written
+as JSON next to the session DB (`{session_id}-profile.json`) via new
+`ProjectProfile.save()`/`.load()` methods, with `sessions.profile_path`
+pointing at it. All of `ProjectProfile`'s nested dataclasses are already
+JSON-primitive except `local_path` (a `Path`), which is stringified.
+
+## 11.3 Orchestrator
+
+`Orchestrator` (`orchestrator.py`) is the first place multiple
+components get called by one caller — Ingest → Analyzer → Indexer →
+QuestionGen in sequence, mediating exactly as design.md's component rule
+describes. Two public entrypoints: `start()` and `resume()`.
+
+`start()`:
+1. Create the session row (status `INGESTING`), hand `session_id` to the
+   UI immediately.
+2. Run Ingest → Analyzer → Indexer synchronously, updating `status` after
+   each (`ANALYZING`, `INDEXING`), persisting the Project Profile and
+   `set_pipeline_artifacts()` once indexing completes.
+3. `PLANNING`: call `build_coverage_plan()`, persist every item as
+   `pending` via `save_plan()`.
+4. Hand off to the live loop (§11.5), which ends at `COMPLETE`.
+
+Any exception during steps 2–3 sets the session `FAILED` with the error
+message and re-raises for the CLI to report (exit code 1).
+
+`resume()`:
+1. Look up the session. Errors (CLI contract §6.1, exit code 3) if it
+   doesn't exist, is already `COMPLETE` (points to `viva report`
+   instead), is `FAILED`, or crashed before reaching `IN_PROGRESS` — see
+   §11.6 for why that last case is out of scope for this phase.
+2. Reload the persisted `ProjectProfile` from `profile_path`.
+3. Reconstruct elapsed answer time from persisted `asked_at`/`answered_at`
+   timestamps on already-answered records (best-effort — see §11.6) and
+   restart `AnswerTimer` with that offset via its new
+   `start(initial_elapsed_seconds=...)` parameter.
+4. Resume the live loop, which reads pending items straight from
+   `SessionStore` rather than needing a plan passed in.
+
+## 11.4 The FR14/Evaluator boundary: `ClassificationProvider`
+
+design.md §7 ties the follow-up decision to the fast classification call
+("whether/how to generate a follow-up depends on it"), but that call
+belongs to the Evaluator, which doesn't exist until Phase 7.
+
+**Decision (confirmed before implementation): build the full follow-up
+mechanism now, gated behind a `ClassificationProvider` seam that always
+returns `None` in Phase 6.**
+
+`classification.py` defines the ABC (mirrors the `LLMClient`/
+`EmbeddingClient` pattern, NFR5) and `NullClassificationProvider`, the
+one implementation Phase 6 injects. The Orchestrator's follow-up branch
+(`_maybe_queue_followup`) is real, tested code — not a `TODO` — but with
+`NullClassificationProvider` it structurally never fires: every
+`classify()` call returns `None`, so no follow-up is ever queued, and
+every `qa_records.eval_status` lands `"deferred"`. Phase 7 swaps in a
+real provider backed by the synchronous classification call; the
+Orchestrator's control flow doesn't change.
+
+The alternative considered — skip the follow-up mechanism entirely and
+add it in Phase 7 — was rejected because `add_followup_item()`,
+`_followup_depth()` (bounded by `MAX_FOLLOWUP_DEPTH`), and the plan-item
+`is_followup_of` threading all touch the same storage/orchestrator code
+Phase 7 would otherwise have to retrofit; building and testing the
+mechanism now, inert, is cheaper than re-opening this code later.
+
+## 11.5 The live loop (`IN_PROGRESS`)
+
+Each iteration:
+1. If the timer's expired, transition to `TIME_EXPIRED` and stop.
+2. If there are no pending items left, transition to `QUESTIONS_EXHAUSTED`
+   and stop.
+3. Pick the next item (`_select_next_item`, below).
+4. Generate its question (`questiongen.generate_question()`, wrapped in
+   `timer.excluding()` so LLM latency never counts against the clock —
+   FR17). If ungrounded, mark `skipped_no_grounding` and loop again
+   without asking.
+5. Persist `asked`, show the question via `SessionUI.ask_question()`,
+   block on `SessionUI.read_answer()`, persist the answer as `answered`.
+6. `_maybe_queue_followup()` (§11.4 — inert in Phase 6).
+
+**Time-budget collapse** (design.md §7: "remaining_time /
+avg_time_per_remaining_category collapses to one question per remaining
+category"): before picking the next item, `_select_next_item` computes
+`len(categories_remaining) * AVG_TIME_PER_CATEGORY_SECONDS` (new tunable,
+default 180s, FR28) and compares it to `timer.remaining()`. If the
+budget doesn't fit, every pending item beyond the first-per-category is
+marked `skipped_time_collapse` (not silently dropped — visible in
+`viva list`/the eventual report) rather than asked, favoring full
+category coverage over depth as the repo review specified. Follow-up
+items, when present, are always prioritized first (probing a weak
+answer takes precedence over new coverage) — dead code in Phase 6 per
+§11.4, live in Phase 7.
+
+Once the loop ends (either exit), the state machine passes straight
+through `FINALIZING_EVALS` → `SUMMARIZING` → `COMPLETE` — both are
+no-ops in Phase 6 (nothing to finalize, no report to build), kept as
+real transitions so Phase 7/8 only have to fill in behavior at an
+already-correct point in the sequence, not add new states.
+
+## 11.6 `SessionUI`, and a known limitation
+
+`SessionUI` (`session_ui.py`) is the Orchestrator's interface to
+whatever's presenting the session to a person — same seam pattern as
+`ClassificationProvider`. `RichSessionUI` is the one real implementation:
+`rich.live.Live` renders `AnswerTimer.format_remaining()` on a 0.5s
+refresh from the main thread while a background thread blocks on
+`sys.stdin.read()` for the answer, terminated by EOF (Ctrl-D / Ctrl-Z),
+per the multi-line-answer decision made before this series started. In
+tests, the Orchestrator is driven by a scripted fake UI instead — no
+real terminal or threads involved.
+
+**Known limitation:** a blocking `sys.stdin.read()` on a background
+thread can't be forcibly interrupted from the main thread. If the timer
+expires mid-answer, the countdown display stops and a "time's up"
+notice prints, but the read itself keeps blocking until the person
+actually presses Ctrl-D — whatever they'd typed by then is still
+captured as the answer. This doesn't affect FR17's actual guarantee
+(LLM/eval latency exclusion from the clock, tested since Phase 0); it
+only affects how promptly typing is cut off once time runs out. Flagging
+this now rather than after the fact — a cleaner fix (e.g. a
+`select()`-based read with a timeout, POSIX-only) is a reasonable follow-up
+if this turns out to matter in practice.
+
+**Known scope-narrowing on resume:** `resume()` only handles sessions
+that already reached `IN_PROGRESS`. A session that crashes during
+`INGESTING`/`ANALYZING`/`INDEXING`/`PLANNING` has nothing durable to
+resume from (no persisted Project Profile yet) and errors clearly
+instead of attempting a partial pipeline replay — the CLI message points
+back to `viva start`. NFR3 ("a crash... at any point after `INGESTING`
+must not lose already completed work") is satisfied for the case that
+actually matters in practice (an interrupted *viva*, not an interrupted
+*setup*), but this is narrower than a literal reading of "at any point,"
+flagged here for visibility rather than silently narrowed.
+
+## 11.7 New config
+
+`SESSION_DB_PATH` (default `./data/viva.db`) and
+`AVG_TIME_PER_CATEGORY_SECONDS` (default `180`) — per FR28, a tunable
+estimate rather than a hardcoded guess, since answer pacing varies a lot
+by person and by repo complexity.
+
+## 11.8 Explicitly out of scope (per `docs/plan.md`)
+
+Real evaluation (Phase 7), `viva report` (Phase 8), `viva cleanup`
+(Phase 9).
+
+## 11.9 Real-world bugs found during Phase 6 testing
+
+**Missing half of FR15.** `docs/requirements.md` FR15 reads: *"Track
+asked topics/files to avoid duplicate questioning **and** to enforce
+category coverage across the session."* §11.5 originally only
+implemented the second half (category coverage, via the time-budget
+collapse). Nothing tracked which files/targets had already been asked
+about, so two plan items in different categories that both happened to
+target the same file (`FixedWindowLimiter.java`, found running a real
+session against `github.com/Dhruv0306/throttle4j`) produced two
+near-identical questions in the same session. This should have been
+caught at design-doc time — it's explicit in the FR text — and wasn't.
+
+Fixed: `_select_next_item` now filters out any pending item whose
+`target_file`/`target_module` was already asked about this session
+(`asked`/`answered` status), marking it `skipped_duplicate_target`
+(visible, not silently dropped) before the time-collapse check runs.
+This is a literal reading of "topics/files" — same target file, skip —
+not a semantic-similarity check; two different files that happen to
+be conceptually similar can still both get asked. That's a reasonable
+v1 given FR15's wording, but worth revisiting if it proves too coarse
+in practice.
+
+**Orphaned asked-but-unanswered items on resume.** A session crashed
+between `record_question_asked()` and `record_answer()` — the process
+died while a question was on screen, before the person's answer was
+captured (found via `viva resume` on an interrupted
+`github.com/Dhruv0306/throttle4j` session). `resume()`'s pending-item
+lookup (`status='pending'`) never revisited that item — it was stuck
+at `status='asked'` permanently, silently un-answerable, and the
+session summary undercounted (`asked=5, answered=4`, with no
+accounting for the missing one). This is exactly the failure mode
+NFR3 exists to prevent.
+
+Fixed: `SessionStore.requeue_orphaned_asked_items()` resets any such
+item back to `pending` at the start of `resume()`, before the live
+loop starts. Its `question_text`/`grounding_chunk_ids` are preserved
+from before the crash, so re-presenting it doesn't cost another LLM
+generation call — the Orchestrator's loop now checks whether the
+selected item already has `question_text` set and skips straight to
+asking if so.
+
+**`rich.Live`-based countdown could corrupt echoed answer text.**
+Observed directly in a real run: status lines like `03:55 remaining`
+appeared concatenated onto the start of typed answer text with no
+separator (`03:55 remainingUsing...`), and later redraws landed
+mid-line. `Live`'s in-place redraw assumes it has exclusive control of
+the terminal lines it's managing. That assumption breaks the moment
+the person's own multi-line answer gets echoed by the terminal in
+between redraws (they press Enter while composing) — `Live` has no
+visibility into those extra lines, so its next redraw's cursor math
+lands in the wrong place. This isn't just cosmetic: an in-place redraw
+landing in the wrong spot can overwrite characters the terminal already
+echoed.
+
+Fixed: `read_answer()` no longer uses `Live`. Status updates are now
+plain, non-overwriting `console.print()` calls — they only ever append,
+never reposition the cursor, so they structurally cannot corrupt
+anything already on screen. The trade-off is a true single continuously
+-updating line becomes periodic updates instead: on whole-minute
+boundaries, plus urgency checkpoints at 30s and 10s remaining. FR17
+("must be displayed as a live, continuously updating countdown... not
+hidden or shown only periodically") is read here as ruling out showing
+the timer only once at the start, not as requiring per-second redraws —
+periodic-but-frequent-and-milestone-driven satisfies the intent without
+the corruption risk.
+
+`session_ui.py` previously had no test coverage at all (it needs a real
+TTY to exercise directly) — `tests/test_session_ui.py` now covers
+`RichSessionUI` against a fake stdin/console (`io.StringIO`), including
+a test that fails against the old `Live`-based code (it left no
+persistent status output behind due to `transient=True`'s exit-time
+erasure). Note honestly: the actual interleaving/corruption bug isn't
+reliably reproducible in a fast synthetic unit test — it required
+several seconds of real typing racing against multiple redraws — so
+that specific failure mode is verified by this fix's structural
+guarantee (no cursor-repositioning codes are ever emitted) plus the
+original real-world report, not by a test that fails on the old code
+for that specific reason.
+
+**FR15's target-file dedup starved small-repo sessions.** The previous
+fix (patch 9) treated "same target file, already asked" as a permanent,
+irreversible skip. On a small repo (throttle4j: ~7-8 substantive files
+across 5 planned categories), there simply aren't enough distinct files
+to go around — several categories necessarily target the same file.
+Observed directly: two separate real sessions against throttle4j both
+completed after only 2 of 8 planned questions (`asked=2, skipped=6`),
+with ~7 of the 8 minutes budgeted still unused. This is a much worse
+failure than the one patch 9 fixed (one duplicate-sounding question) —
+it can gut most of a session on exactly the kind of small, focused repo
+this tool is often used against.
+
+Fixed: FR15 is now a *preference*, not an exclusion. `_select_next_item`
+prefers a pending item whose target hasn't been asked about yet, but
+falls back to the full pending set (including duplicates) if nothing
+novel is left, rather than returning `None` and ending the session.
+Duplicate-target items are no longer marked `skipped_duplicate_target`
+at all — they just get asked later than novel-target items, never
+permanently dropped. This still avoids the original FixedWindowLimiter
+repeat in the common case (there are usually other files left to prefer
+at that point in an 8-question plan), while never sacrificing session
+completeness to do it.
+
+## 11.10 Answer-input mechanism replaced: prompt_toolkit, Alt+Enter
+
+Not a bug fix — a deliberate UX change requested after real-world use.
+The original design (§11.6) used `sys.stdin.read()` terminated by EOF
+(Ctrl-D / Ctrl-Z+Enter on Windows). In practice this was confusing —
+real transcripts show `^D^Z` artifacts where the person wasn't sure
+which sequence would actually submit — and, combined with the `Live`
+countdown (§11.9), was part of what made the terminal output hard to
+read.
+
+Replaced with `prompt_toolkit`: `Alt+Enter` submits, plain `Enter`
+inserts a newline for multi-line composition, and a `bottom_toolbar`
+with `refresh_interval=0.5` gives a genuinely continuously-updating
+countdown — not the periodic snapshots §11.9's interim fix settled for.
+This supersedes both prior countdown implementations (`rich.Live`, then
+periodic `console.print`) for the same underlying reason those needed
+fixing: `prompt_toolkit` owns its whole input region coherently through
+one event loop, so the toolbar and the multi-line buffer can never
+desync or corrupt each other the way raw terminal echo and a
+Python-driven redraw could.
+
+New dependency: `prompt_toolkit>=3.0,<4.0`. Chosen deliberately —
+cross-platform (its own console backend detects the real Alt modifier
+on Windows rather than relying on the Unix ESC-prefix convention),
+widely used for exactly this kind of interactive-CLI use case (e.g.
+IPython), and ships first-class testing support
+(`prompt_toolkit.input.create_pipe_input()`) that simulates real
+keystroke sequences — including Alt+Enter — without a real TTY, which
+is what `tests/test_session_ui.py` now uses for genuine behavioral
+coverage instead of the io.StringIO-based approximation the previous
+two implementations were limited to.
+
+Immediate "answer recorded" confirmation (with a word count) was added
+in the same change, addressing separate real-world feedback that
+answers felt like they vanished with no acknowledgment ("ghost talk")
+between submitting and the next question appearing.
+
+**Known limitation carried forward, updated for the new mechanism**: if
+the timer expires mid-answer, the toolbar switches to a "time's up"
+message, but `read_answer()` still blocks until Alt+Enter is pressed —
+nothing forcibly truncates input. Forcibly exiting the prompt from a
+background thread is possible in `prompt_toolkit` (via thread-safe
+scheduling on its event loop) but was deliberately not attempted here,
+to avoid adding more surface area in an area that's already changed
+twice this phase; worth revisiting if it proves to matter in practice.
+
+**§11.9's own fix repeated the same mistake in a second mechanism.**
+Two real sessions against throttle4j, run with `--duration 8` and
+`--duration 10` respectively, both stopped at exactly 5 of 8 planned
+questions — identical outcome despite the 2-minute difference, which
+by itself rules out "genuinely ran out of time" as the cause (a longer
+duration produced the exact same count). Root cause: with the default
+`AVG_TIME_PER_CATEGORY_SECONDS` (180s) and a 5-category plan,
+`budget_needed = 5 * 180 = 900s` (15 minutes) — already greater than
+either `--duration`, so the collapse check fired on the very first
+selection, before anything was even asked, and (per the pre-existing
+`_select_next_item` logic at the time) permanently marked every item
+beyond one-per-category as `skipped_time_collapse`. This locked the
+session to exactly 5 questions for its entire duration regardless of
+how quickly the person actually answered (each answer took well under
+a minute in the real transcripts) or how much real time was left
+afterward — the same *permanent decision made from a one-time,
+pessimistic upfront guess* mistake as the duplicate-target bug above,
+just in the collapse mechanism instead.
+
+Fixed the same way: `_select_next_item` is now pure priority ordering
+with no exclusion at all beyond genuine dead ends (`skipped_no_grounding`
+remains, since there's truly nothing else to do with an ungrounded
+item). Pending items are ranked — follow-ups, then novel-target items,
+then novel-category items — and the loop's own natural exit conditions
+(timer actually expired, or genuinely no pending items left) are what
+end a session now, not a pre-computed worst-case made once at the
+start. `AVG_TIME_PER_CATEGORY_SECONDS` is consequently unused by
+selection now — left defined in `Config`/`.env.example` rather than
+removed (avoiding another config-shape ripple across the test suite),
+but clearly marked as currently-unused at both definitions.
+
+Worth watching on the next real run: the two real sessions that
+surfaced this bug also each contained one literal duplicate question
+(byte-identical text, not just same target file) — plausibly because
+the *old* collapse bug had already permanently discarded the genuinely
+distinct alternatives that would otherwise have been available to
+prefer, by the time the selector reached that point in the session.
+This fix may reduce or resolve that as a side effect, since there are
+now up to 8 real candidates to route around a repeat instead of a
+locked-in 5. Not claiming it's fully fixed pending confirmation — a
+dedicated semantic-similarity check on generated question text is a
+possible follow-up, but given this phase has now shipped three
+different duplicate-avoidance mechanisms that each individually caused
+a regression, a fourth one deserves real evidence it's still needed
+(and careful calibration) before being added, rather than being
+guessed at.
+
+## 11.11 FR15's third layer: embedding-based semantic duplicate detection
+
+Confirmed with real evidence before building this, per the plan in
+§11.10: two further real sessions against throttle4j (run after the
+category-breadth fix in §11.9, with the artificial cap removed) still
+each produced at least one pair of questions asking essentially the
+same thing, worded differently (`Math.min(maxRequests * 2, ...)` asked
+twice with different phrasing; `ObjectProvider<MetricsCollector>`
+asked from three overlapping angles). The two existing layers — exact
+`target_file`/`target_module` string matching, and category-breadth
+ordering — don't catch this: different plan items can carry different
+target strings (different categories assign different granularity) and
+still land on the same underlying question, because a small, focused
+piece of code often only supports one obvious angle regardless of which
+category is asking about it.
+
+Added a third layer: after a question is generated, its embedding
+(via the same `EmbeddingClient` already used for RAG retrieval — no
+new client, no new dependency) is compared by cosine similarity against
+every previously-asked question's embedding this session. Above
+`QUESTION_SIMILARITY_THRESHOLD` (new config, default 0.90, FR28 — not
+hardcoded, since it depends on the embedding model in use and hasn't
+been empirically tuned against real output) it's treated as a likely
+duplicate.
+
+**Same discipline as the two mechanisms it follows, applied from the
+start this time rather than learned the hard way**: this is advisory,
+never exclusionary. `_run_live_session` tries up to
+`_MAX_DEDUP_CANDIDATES` (3) ranked candidates per round; if an earlier
+one looks like a duplicate it's remembered as a fallback and the next
+candidate is tried instead, but if every tried candidate is a
+duplicate, the best fallback is asked anyway rather than skipping the
+round or ending the session early. Given this phase has now shipped
+three duplicate-avoidance mechanisms and the first two each caused
+their own regression before this lesson was fully internalized, this
+one was designed with "prefer, never exclude" as a starting constraint
+rather than an afterthought.
+
+Cost: one extra embedding call per question generated (more when a
+retry is needed), wrapped in `timer.excluding()` like all LLM/embedding
+work, so it doesn't touch the user's clock — only real wall-clock/
+compute time. Embeddings for already-asked questions are cached
+in-memory per `Orchestrator` instance and reseeded from persisted
+`question_text` on `resume()` (a fresh instance otherwise starts with
+an empty cache).
+
+**Not yet empirically validated** against real Ollama output in this
+environment (no network access to a live embedding model here) — the
+threshold default is a reasoned starting point, not a calibrated one.
+Worth watching on the next real run: does it still catch cases like
+the `ObjectProvider<MetricsCollector>` cluster, and does it ever
+seem too aggressive (deprioritizing questions that were actually fine)?
+
+## 11.12 FR15's primary defense: avoid-list in the generation prompt
+
+Real evidence from the very next session after §11.11's embedding layer
+shipped: it still missed at least one pair, including one literal
+byte-identical repeat (`metricsProvider.getIfAvailable()` asked twice,
+word-for-word). Diagnosis, prompted by the person's own observation
+("this might be due to how we formulate questions... provide an
+already created question list to the LLM"): §11.11 is a *reordering*
+mechanism — it can only choose among the plan's existing candidates, it
+can't make the model generate something genuinely different. On a
+small repo where the plan legitimately has more categories than
+distinct interesting code, and with only `_MAX_DEDUP_CANDIDATES` (3)
+tried per round on top of the fallback discipline (never end early),
+every candidate can genuinely run out and the least-bad option — a
+near-duplicate the model was never told to avoid — gets asked anyway.
+
+Added the more direct fix the person suggested: `LLMClient.generate_question()`
+now accepts `avoid_questions: list[str] | None`, and when set, the
+prompt gets an `[AVOID_REPEATING]` section listing every question
+already asked this session, with an explicit system-prompt instruction
+not to generate something that tests substantially the same
+understanding even if worded differently. `questiongen.generate_question()`
+passes this straight through; the Orchestrator supplies it via
+`_already_asked_question_texts()`, recomputed fresh each round from
+persisted `qa_records`.
+
+This is now FR15's *primary* defense — giving the model in-context
+awareness so it doesn't produce a near-duplicate in the first place —
+with §11.11's embedding-similarity check kept as a backstop for when
+the model doesn't fully comply (smaller/faster local models won't
+always follow instructions perfectly), not replaced by it. Both layers
+run; neither is exclusionary on its own, per the standing "prefer,
+never exclude" discipline for everything in this section.
+
+Not yet confirmed against real output whether this closes the gap
+completely — worth watching whether the `[AVOID_REPEATING]` list
+itself ever grows long enough (many questions into a long session) to
+crowd out the actual code context in a smaller model's effective
+attention; if that becomes an issue, capping the list to the most
+recent N questions rather than the full session history would be the
+natural follow-up.

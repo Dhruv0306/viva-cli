@@ -52,6 +52,18 @@ def _get_non_negative_int(name: str, default: str) -> int:
     return value
 
 
+def _get_unit_interval_float(name: str, default: str) -> float:
+    """Parses a float in (0.0, 1.0] -- used for similarity thresholds."""
+    raw = os.getenv(name, default)
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from exc
+    if not (0.0 < value <= 1.0):
+        raise ConfigError(f"{name} must be between 0 and 1 (exclusive of 0), got {value}")
+    return value
+
+
 def _get_optional_positive_int(name: str) -> int | None:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -93,6 +105,19 @@ class Config:
     # --- RAG ---
     vector_db_path: str
     top_k_retrieval: int
+
+    # --- Session persistence / loop (Phase 6, docs/design.md §8) ---
+    session_db_path: str
+    # NOTE: currently unused by the Orchestrator's question-selection logic
+    # (see orchestrator.py's _select_next_item docstring) -- an earlier
+    # version used this to gate a one-time "collapse to breadth" decision
+    # made at session start, which proved harmful (permanently capped
+    # short sessions at exactly `categories` questions regardless of
+    # actual pacing). Left defined rather than removed, to avoid another
+    # config-shape ripple across the test suite; kept here as a flag for
+    # anyone who goes looking for what reads it and finds nothing.
+    avg_time_per_category_seconds: int
+    question_similarity_threshold: float
 
     @classmethod
     def load(cls, env_file: str | None = ".env") -> "Config":
@@ -162,6 +187,31 @@ class Config:
 
         top_k_retrieval = _get_positive_int("TOP_K_RETRIEVAL", "5")
 
+        session_db_path = os.getenv("SESSION_DB_PATH", "./data/viva.db").strip()
+        if not session_db_path:
+            raise ConfigError("SESSION_DB_PATH must not be empty if set")
+
+        # Used by the Orchestrator's time-budget collapse check
+        # (docs/design.md §7: "remaining_time / avg_time_per_remaining_category")
+        # -- a tunable estimate rather than a hardcoded guess, per FR28, since
+        # actual answer pacing varies a lot by person and by repo complexity.
+        # NOTE: currently unused by selection logic -- see config.py's field
+        # comment and docs/system-design/11-phase-6-session-loop-design.md §11.9.
+        avg_time_per_category_seconds = _get_positive_int(
+            "AVG_TIME_PER_CATEGORY_SECONDS", "180"
+        )
+
+        # Cosine-similarity threshold (embedding space) above which a
+        # freshly generated question is treated as a likely duplicate of
+        # one already asked this session -- FR15's third and most accurate
+        # duplicate-avoidance layer (docs/system-design/
+        # 11-phase-6-session-loop-design.md §11.9). A tunable per FR28
+        # rather than a hardcoded guess, since it depends on the actual
+        # embedding model in use and hasn't been empirically calibrated.
+        question_similarity_threshold = _get_unit_interval_float(
+            "QUESTION_SIMILARITY_THRESHOLD", "0.90"
+        )
+
         return cls(
             llm_model=llm_model,
             embedding_model=embedding_model,
@@ -180,4 +230,7 @@ class Config:
             line_window_overlap=line_window_overlap,
             vector_db_path=vector_db_path,
             top_k_retrieval=top_k_retrieval,
+            session_db_path=session_db_path,
+            avg_time_per_category_seconds=avg_time_per_category_seconds,
+            question_similarity_threshold=question_similarity_threshold,
         )

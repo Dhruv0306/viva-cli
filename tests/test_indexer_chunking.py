@@ -24,6 +24,8 @@ def _config(line_window_size: int = 60, line_window_overlap: int = 15) -> Config
         github_token=None, map_reduce_batch_size=8, max_reduce_context_tokens=None,
         line_window_size=line_window_size, line_window_overlap=line_window_overlap,
         vector_db_path="./data/chroma", top_k_retrieval=5,
+        session_db_path="./data/viva.db", avg_time_per_category_seconds=180,
+        question_similarity_threshold=0.90,
     )
 
 

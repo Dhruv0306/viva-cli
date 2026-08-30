@@ -19,6 +19,7 @@ dependencies = [
     "tree-sitter>=0.23,<1.0",
     "tree-sitter-language-pack>=0.7,<2.0",
     "chromadb>=0.5,<2.0",
+    "prompt_toolkit>=3.0,<4.0",
 ]
 
 [project.optional-dependencies]

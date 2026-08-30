@@ -32,7 +32,7 @@ class _FakeLLMClient(LLMClient):
     def reduce(self, label, summaries, target_tokens):
         return f"reduced({label}, {len(summaries)} items)"
 
-    def generate_question(self, category, target_module, grounding_context, target_file=None):
+    def generate_question(self, category, target_module, grounding_context, target_file=None, avoid_questions=None):
         target = target_file or target_module or "the project"
         return f"Question about {category} in {target}?"
 
@@ -49,6 +49,8 @@ def _config(vector_db_path: str, max_questions: int = 8) -> Config:
         max_followup_depth=1, session_retention_days=7, max_files=500, test_file_quota_pct=10,
         github_token=None, map_reduce_batch_size=8, max_reduce_context_tokens=100_000,
         line_window_size=60, line_window_overlap=15, vector_db_path=vector_db_path, top_k_retrieval=5,
+        session_db_path="./data/viva.db", avg_time_per_category_seconds=180,
+        question_similarity_threshold=0.90,
     )
 
 

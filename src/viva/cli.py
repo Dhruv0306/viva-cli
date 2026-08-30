@@ -1,11 +1,10 @@
 """CLI entrypoint.
 
-Phase 0 note: only `viva --version` and `viva demo` exist here. The real
-command contract (`viva start` / `resume` / `report` / `list` / `cleanup`,
-docs/system-design/06-cli-contract-and-profile-scaling.md §6.1) is Phase 6/8/9
-scope and should be implemented against that contract directly rather than
-extending `demo` -- `demo` is a throwaway Phase 0 harness, not a stub of
-`start`.
+`viva start` / `resume` / `list` (Phase 6, docs/system-design/06-cli-contract-and-profile-scaling.md
+§6.1) are the real command surface, built on `Orchestrator` (`orchestrator.py`)
+and `RichSessionUI` (`session_ui.py`). `viva report`/`cleanup` are still
+Phase 8/9 scope. `ingest`/`analyze`/`index`/`questiongen` remain as the
+Phase 2-5 smoke-test harnesses they always were -- not stubs of `start`.
 """
 from __future__ import annotations
 
@@ -15,6 +14,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
 from viva import __version__
 from viva.analyzer import analyze_repo
@@ -25,9 +25,18 @@ from viva.indexer.store import VectorStore
 from viva.ingest import ingest_repo
 from viva.ingest.clone import CloneError
 from viva.llm_client import OllamaClient
+from viva.orchestrator import (
+    Orchestrator,
+    OrchestratorError,
+    SessionAlreadyCompleteError,
+    SessionNotFoundError,
+    SessionNotResumableError,
+)
 from viva.phase0_demo import run_demo
 from viva.profile import ProjectProfile
 from viva.questiongen import generate_all
+from viva.session_ui import RichSessionUI
+from viva.storage import SessionStore
 
 app = typer.Typer(
     help="viva-cli: a local-LLM RAG tool for a code-grounded project viva.",
@@ -382,6 +391,115 @@ def questiongen(
 
 def _profile_to_dict(profile: ProjectProfile) -> dict:
     return asdict(profile)
+
+
+def _build_orchestrator(config: Config) -> tuple[Orchestrator, SessionStore]:
+    store = SessionStore(config.session_db_path)
+    orchestrator = Orchestrator(config=config, session_store=store, ui=RichSessionUI(console))
+    return orchestrator, store
+
+
+@app.command()
+def start(
+    repo_url: str = typer.Argument(..., help="GitHub repo URL, e.g. https://github.com/owner/repo"),
+    branch: str = typer.Option(None, "--branch", help="Branch to clone (defaults to the repo's default branch)."),
+    duration: int = typer.Option(None, "--duration", help="Session duration in minutes (overrides VIVA_DURATION_MINUTES for this session only)."),
+    session_name: str = typer.Option(None, "--session-name", help="Optional human-friendly label shown in `viva list`."),
+) -> None:
+    """Clone, analyze, index, plan, and run a full timed viva session
+    end-to-end (docs/plan.md Phase 6, CLI contract §6.1).
+    """
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    orchestrator, store = _build_orchestrator(config)
+    try:
+        orchestrator.start(repo_url, branch=branch, duration_minutes=duration, session_name=session_name)
+    except CloneError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2)
+    except OrchestratorError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:  # noqa: BLE001 - top-level command boundary
+        console.print(f"[red]Session failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+    finally:
+        store.close()
+
+
+@app.command()
+def resume(
+    session_id: str = typer.Argument(..., help="Session ID printed by `viva start` or shown in `viva list`."),
+) -> None:
+    """Resume an interrupted session strictly from persisted state --
+    never re-touches the remote repo (05-repo-lifecycle-and-language-coverage.md §5.3).
+    """
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    orchestrator, store = _build_orchestrator(config)
+    try:
+        orchestrator.resume(session_id)
+    except (SessionNotFoundError, SessionAlreadyCompleteError, SessionNotResumableError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=3)
+    except OrchestratorError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:  # noqa: BLE001 - top-level command boundary
+        console.print(f"[red]Session failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+    finally:
+        store.close()
+
+
+@app.command(name="list")
+def list_sessions(
+    status: str = typer.Option(None, "--status", help="Filter by session status, e.g. IN_PROGRESS, COMPLETE."),
+) -> None:
+    """List past/resumable sessions -- session IDs aren't shown anywhere
+    else after the initial `viva start` run (CLI contract §6.1).
+    """
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    store = SessionStore(config.session_db_path)
+    try:
+        sessions = store.list_sessions(status=status)
+    finally:
+        store.close()
+
+    if not sessions:
+        console.print("[dim]No sessions found.[/dim]")
+        return
+
+    table = Table()
+    table.add_column("session_id")
+    table.add_column("repo")
+    table.add_column("commit")
+    table.add_column("status")
+    table.add_column("created_at")
+    table.add_column("duration budget (s)")
+    for record in sessions:
+        table.add_row(
+            record.session_id,
+            record.repo_slug or "(unknown)",
+            (record.commit_sha or "")[:12],
+            record.status,
+            record.created_at,
+            str(int(record.duration_seconds)),
+        )
+    console.print(table)
 
 
 if __name__ == "__main__":

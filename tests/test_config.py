@@ -23,6 +23,9 @@ def _clean_env(monkeypatch):
         "LINE_WINDOW_OVERLAP",
         "VECTOR_DB_PATH",
         "TOP_K_RETRIEVAL",
+        "SESSION_DB_PATH",
+        "AVG_TIME_PER_CATEGORY_SECONDS",
+        "QUESTION_SIMILARITY_THRESHOLD",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -51,6 +54,37 @@ def test_defaults_applied(monkeypatch):
     assert config.line_window_overlap == 15
     assert config.vector_db_path == "./data/chroma"
     assert config.top_k_retrieval == 5
+    assert config.session_db_path == "./data/viva.db"
+    assert config.avg_time_per_category_seconds == 180
+    assert config.question_similarity_threshold == 0.90
+
+
+def test_invalid_question_similarity_threshold_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("QUESTION_SIMILARITY_THRESHOLD", "1.5")
+    with pytest.raises(ConfigError, match="QUESTION_SIMILARITY_THRESHOLD"):
+        Config.load(env_file=None)
+
+
+def test_zero_question_similarity_threshold_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("QUESTION_SIMILARITY_THRESHOLD", "0")
+    with pytest.raises(ConfigError, match="QUESTION_SIMILARITY_THRESHOLD"):
+        Config.load(env_file=None)
+
+
+def test_invalid_avg_time_per_category_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("AVG_TIME_PER_CATEGORY_SECONDS", "0")
+    with pytest.raises(ConfigError, match="AVG_TIME_PER_CATEGORY_SECONDS"):
+        Config.load(env_file=None)
+
+
+def test_empty_session_db_path_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("SESSION_DB_PATH", "   ")
+    with pytest.raises(ConfigError, match="SESSION_DB_PATH"):
+        Config.load(env_file=None)
 
 
 def test_invalid_temperature_raises(monkeypatch):

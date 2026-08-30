@@ -75,6 +75,9 @@ GITHUB_TOKEN=
 TEMPERATURE=0.3
 LINE_WINDOW_SIZE=60
 LINE_WINDOW_OVERLAP=15
+SESSION_DB_PATH=./data/viva.db
+AVG_TIME_PER_CATEGORY_SECONDS=180
+QUESTION_SIMILARITY_THRESHOLD=0.90
 ```
 
 ## Usage
@@ -101,9 +104,12 @@ View a past report:
 viva report <session-id> [--format md|json] [--output report.md] [--allow-partial]
 ```
 
+`viva start`/`resume`/`list` are real as of Phase 6. `viva report` is
+still Phase 8 scope -- not implemented yet.
+
 Full CLI contract, including exit codes: [`docs/system-design/06-cli-contract-and-profile-scaling.md`](docs/system-design/06-cli-contract-and-profile-scaling.md) §6.1.
 
-Four Phase 2/3/4/5 smoke-test commands also exist for manually exercising ingestion, analysis, indexing, and question generation against a real repo ahead of the real `viva start`:
+Four Phase 2/3/4/5 smoke-test commands also exist for manually exercising ingestion, analysis, indexing, and question generation against a real repo ahead of `viva start`:
 
 ```bash
 viva ingest https://github.com/<owner>/<repo> [--branch main]
@@ -116,7 +122,7 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-5 (walking skeleton through Question Generation) are implemented.**
+**Phases 0-6 (walking skeleton through Session Loop) are implemented.**
 Config now validates every tunable, and an `LLM_MODEL` pressure-test harness
 (`scripts/pressure_test_llm_model.py`) is in place — see
 [`docs/system-design/07-llm-model-pressure-test-results.md`](docs/system-design/07-llm-model-pressure-test-results.md)
@@ -132,9 +138,17 @@ Phase 5 added the category-based coverage plan and just-in-time grounded
 question generation, plus a query-reformulation fix for a retrieval-quality
 issue found during Phase 4's real-repo testing — see
 [`docs/system-design/10-phase-5-questiongen-design.md`](docs/system-design/10-phase-5-questiongen-design.md).
-There's still no real `viva start` yet — only a throwaway harness that
-exercises the two riskiest assumptions end-to-end (local-model
-structured-output reliability, and a timer that excludes LLM latency):
+Phase 6 added the real `viva start` / `viva resume` / `viva list`
+commands: SQLite session persistence, the Orchestrator driving the full
+pipeline plus the live timed Q&A loop, and the time-budget collapse
+behavior from docs/design.md §7. Evaluation doesn't exist yet — every
+answer is persisted with `eval_status="deferred"` until Phase 7's
+Evaluator lands — see
+[`docs/system-design/11-phase-6-session-loop-design.md`](docs/system-design/11-phase-6-session-loop-design.md).
+There's still no real evaluation or report yet -- only a throwaway
+harness that exercises the two riskiest assumptions end-to-end
+(local-model structured-output reliability, and a timer that excludes
+LLM latency):
 
 ```bash
 pip install -e ".[dev]"

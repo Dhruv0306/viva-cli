@@ -49,6 +49,13 @@ history of what was tried and rejected along the way.
   the query-reformulation + test-path-filter resolution of open question
   #6, and the explicit Phase 5/6 boundary around FR14/FR15 (follow-ups and
   live duplicate tracking are session-state concepts owned by Phase 6).
+- **[11-phase-6-session-loop-design.md](11-phase-6-session-loop-design.md)**
+  — the Phase 6 Session Loop implementation design: the SQLite session
+  schema, the Orchestrator's `start`/`resume` flow, the
+  `ClassificationProvider` seam that lets FR14 follow-ups be built for
+  real now while staying inert until Phase 7's Evaluator exists, the
+  design.md §7 time-budget collapse logic, and known limitations
+  (mid-answer timeout interruption, resume scope before `IN_PROGRESS`).
 
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
