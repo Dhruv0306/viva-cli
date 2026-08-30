@@ -68,7 +68,14 @@ also defines its own chain?"
 
 Ask exactly ONE question. Write it as a direct, spoken-style question a \
 human examiner would ask out loud. No preamble, no markdown, no \
-numbering, no restating the code context back verbatim."""
+numbering, no restating the code context back verbatim.
+
+If an [AVOID_REPEATING] section lists questions already asked this \
+session, do not ask something that tests substantially the same \
+understanding, even worded differently (e.g. don't ask "why does X not \
+need parameter Y" twice about the same code just because the phrasing \
+differs) -- pick a different angle, method, parameter, or code path \
+from the context instead."""
 
 EVALUATOR_SYSTEM_PROMPT = """You are grading a candidate's spoken answer in a \
 code-grounded oral exam ("viva") about their own project.
@@ -130,7 +137,8 @@ class LLMClient(abc.ABC):
 
     @abc.abstractmethod
     def generate_question(
-        self, category: str, target_module: str | None, grounding_context: str, target_file: str | None = None
+        self, category: str, target_module: str | None, grounding_context: str,
+        target_file: str | None = None, avoid_questions: list[str] | None = None,
     ) -> str:
         """FR13: just-in-time question generation, grounded in retrieved
         chunk text (`grounding_context`).
@@ -144,6 +152,16 @@ class LLMClient(abc.ABC):
         `target_file`, when set (Pass 3's file-level plan items --
         `questiongen/planner.py`), narrows the question to that specific
         file rather than the module broadly.
+
+        `avoid_questions`, when set (Phase 6, docs/system-design/
+        11-phase-6-session-loop-design.md §11.12), lists question texts
+        already asked this session -- the model is asked not to generate
+        something that tests substantially the same understanding, even
+        if worded differently. This is the primary FR15 defense (giving
+        the model in-context awareness so it doesn't produce a near-
+        duplicate in the first place); the Orchestrator's embedding-
+        similarity check is a backstop for when the model doesn't fully
+        comply, not a replacement for this.
         """
         raise NotImplementedError
 
@@ -266,7 +284,8 @@ class OllamaClient(LLMClient):
         return self._generate(REDUCE_SYSTEM_PROMPT, prompt, target_tokens)
 
     def generate_question(
-        self, category: str, target_module: str | None, grounding_context: str, target_file: str | None = None
+        self, category: str, target_module: str | None, grounding_context: str,
+        target_file: str | None = None, avoid_questions: list[str] | None = None,
     ) -> str:
         # Explicitly labeled, non-concatenated sections, same convention
         # as _build_prompt's evaluator prompt (design.md §5).
@@ -276,6 +295,9 @@ class OllamaClient(LLMClient):
         ]
         if target_file:
             sections.append(f"[TARGET_FILE]\n{target_file}")
+        if avoid_questions:
+            avoid_list = "\n".join(f"- {q}" for q in avoid_questions)
+            sections.append(f"[AVOID_REPEATING]\n{avoid_list}")
         sections.append(f"[CODE_CONTEXT]\n{grounding_context}")
         prompt = "\n\n".join(sections) + "\n"
         # A single spoken question is short -- a smaller fixed target

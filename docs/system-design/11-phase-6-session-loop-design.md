@@ -454,3 +454,45 @@ threshold default is a reasoned starting point, not a calibrated one.
 Worth watching on the next real run: does it still catch cases like
 the `ObjectProvider<MetricsCollector>` cluster, and does it ever
 seem too aggressive (deprioritizing questions that were actually fine)?
+
+## 11.12 FR15's primary defense: avoid-list in the generation prompt
+
+Real evidence from the very next session after §11.11's embedding layer
+shipped: it still missed at least one pair, including one literal
+byte-identical repeat (`metricsProvider.getIfAvailable()` asked twice,
+word-for-word). Diagnosis, prompted by the person's own observation
+("this might be due to how we formulate questions... provide an
+already created question list to the LLM"): §11.11 is a *reordering*
+mechanism — it can only choose among the plan's existing candidates, it
+can't make the model generate something genuinely different. On a
+small repo where the plan legitimately has more categories than
+distinct interesting code, and with only `_MAX_DEDUP_CANDIDATES` (3)
+tried per round on top of the fallback discipline (never end early),
+every candidate can genuinely run out and the least-bad option — a
+near-duplicate the model was never told to avoid — gets asked anyway.
+
+Added the more direct fix the person suggested: `LLMClient.generate_question()`
+now accepts `avoid_questions: list[str] | None`, and when set, the
+prompt gets an `[AVOID_REPEATING]` section listing every question
+already asked this session, with an explicit system-prompt instruction
+not to generate something that tests substantially the same
+understanding even if worded differently. `questiongen.generate_question()`
+passes this straight through; the Orchestrator supplies it via
+`_already_asked_question_texts()`, recomputed fresh each round from
+persisted `qa_records`.
+
+This is now FR15's *primary* defense — giving the model in-context
+awareness so it doesn't produce a near-duplicate in the first place —
+with §11.11's embedding-similarity check kept as a backstop for when
+the model doesn't fully comply (smaller/faster local models won't
+always follow instructions perfectly), not replaced by it. Both layers
+run; neither is exclusionary on its own, per the standing "prefer,
+never exclude" discipline for everything in this section.
+
+Not yet confirmed against real output whether this closes the gap
+completely — worth watching whether the `[AVOID_REPEATING]` list
+itself ever grows long enough (many questions into a long session) to
+crowd out the actual code context in a smaller model's effective
+attention; if that becomes an issue, capping the list to the most
+recent N questions rather than the full session history would be the
+natural follow-up.

@@ -304,6 +304,7 @@ class Orchestrator:
                     generated = generate_question(
                         plan_item, profile, self.config, self.vector_store,
                         collection_name, self.embedding_client, self.llm_client,
+                        avoid_questions=self._already_asked_question_texts(session_id),
                     )
                 if generated is None:
                     self.store.mark_item_status(session_id, candidate.question_id, SKIPPED_NO_GROUNDING)
@@ -478,6 +479,21 @@ class Orchestrator:
             for r in self.store.get_qa_records(session_id)
             if r.status in (ASKED, ANSWERED) and (r.target_file or r.target_module)
         }
+
+    def _already_asked_question_texts(self, session_id: str) -> list[str]:
+        """FR15's primary defense (docs/system-design/
+        11-phase-6-session-loop-design.md §11.12): the actual text of
+        every question asked this session, passed to the LLM as
+        [AVOID_REPEATING] context so it can actively avoid generating
+        something that tests substantially the same understanding --
+        stronger than catching it after the fact via the embedding
+        check, which is a backstop for when the model doesn't fully
+        comply, not a replacement for this."""
+        return [
+            r.question_text
+            for r in self.store.get_qa_records(session_id)
+            if r.status in (ASKED, ANSWERED) and r.question_text
+        ]
 
     def _maybe_queue_followup(self, session_id: str, item: QARecordRow, answer_text: str) -> None:
         """FR14 seam. `classify()` always returns `None` in Phase 6 (see

@@ -903,3 +903,30 @@ def test_seed_embedding_cache_populates_from_prior_answers(tmp_path):
     assert "q1" not in orch._question_embeddings
     orch._seed_embedding_cache("sess1")
     assert "q1" in orch._question_embeddings
+
+
+def test_generate_question_receives_prior_question_texts(tmp_path, monkeypatch):
+    """FR15's primary defense (docs/system-design/
+    11-phase-6-session-loop-design.md §11.12): the LLM should see what's
+    already been asked this session, not just have duplicates caught
+    after the fact."""
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    avoid_questions_seen = []
+
+    def recording_generate_question(plan_item, *a, avoid_questions=None, **kw):
+        avoid_questions_seen.append(list(avoid_questions or []))
+        return GeneratedQuestion(
+            plan_item=plan_item, question_text=f"Question about {plan_item.category}?",
+            grounding_chunk_ids=["c1"],
+        )
+
+    monkeypatch.setattr(orchestrator_module, "generate_question", recording_generate_question)
+    ui = FakeSessionUI(answers=["a1", "a2"])
+    orch, _store = _make_orchestrator(tmp_path, config, ui)
+
+    orch.start("https://github.com/owner/repo")
+
+    assert len(avoid_questions_seen) == 2
+    assert avoid_questions_seen[0] == []  # nothing asked yet for the first question
+    assert avoid_questions_seen[1] == ["Question about architecture?"]  # q1's text, for q2

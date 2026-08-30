@@ -196,6 +196,40 @@ def test_generate_question_omits_target_file_section_when_absent(client):
     assert "[TARGET_FILE]" not in user_prompt
 
 
+def test_generate_question_includes_avoid_repeating_section_when_present(client):
+    client._client.chat.return_value = _chat_response("A fresh question.")
+
+    client.generate_question(
+        category="architecture", target_module="core", grounding_context="ctx",
+        avoid_questions=["Why does X use a switch expression?", "What happens if Y is null?"],
+    )
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[AVOID_REPEATING]" in user_prompt
+    assert "Why does X use a switch expression?" in user_prompt
+    assert "What happens if Y is null?" in user_prompt
+
+
+def test_generate_question_omits_avoid_repeating_section_when_absent(client):
+    client._client.chat.return_value = _chat_response("A fresh question.")
+
+    client.generate_question(category="architecture", target_module="core", grounding_context="ctx")
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[AVOID_REPEATING]" not in user_prompt
+
+
+def test_generate_question_omits_avoid_repeating_section_when_empty_list(client):
+    client._client.chat.return_value = _chat_response("A fresh question.")
+
+    client.generate_question(
+        category="architecture", target_module="core", grounding_context="ctx", avoid_questions=[],
+    )
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[AVOID_REPEATING]" not in user_prompt
+
+
 def test_get_context_window_parses_family_namespaced_key(client):
     client._client.show.return_value = {"model_info": {"gemma3.context_length": 8192, "other.key": "x"}}
 

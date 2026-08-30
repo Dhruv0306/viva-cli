@@ -32,7 +32,7 @@ class _FakeLLMClient(LLMClient):
     def reduce(self, label, summaries, target_tokens):
         return f"reduced({label}, {len(summaries)} items)"
 
-    def generate_question(self, category, target_module, grounding_context, target_file=None):
+    def generate_question(self, category, target_module, grounding_context, target_file=None, avoid_questions=None):
         raise NotImplementedError  # not exercised by Phase 4 indexing tests
 
 

@@ -40,6 +40,7 @@ def generate_question(
     collection_name: str,
     embedding_client: EmbeddingClient,
     llm_client: LLMClient,
+    avoid_questions: list[str] | None = None,
 ) -> GeneratedQuestion | None:
     """Retrieve grounding chunks for one plan item and generate its
     question text (FR13).
@@ -47,6 +48,10 @@ def generate_question(
     Returns `None` if no grounding chunks could be retrieved -- FR13
     forbids generating a question ungrounded in retrieved code, so a
     plan item with nothing to ground against is skipped, not faked.
+
+    `avoid_questions` (Phase 6, docs/system-design/
+    11-phase-6-session-loop-design.md §11.12) is passed straight through
+    to the LLM client -- see `LLMClient.generate_question`'s docstring.
     """
     module_summary = _module_summary(profile, plan_item.target_module)
     chunks = retrieve_grounding_chunks(
@@ -69,6 +74,7 @@ def generate_question(
         target_module=plan_item.target_module,
         grounding_context=grounding_context,
         target_file=plan_item.target_file,
+        avoid_questions=avoid_questions,
     )
     return GeneratedQuestion(
         plan_item=plan_item,
