@@ -47,6 +47,7 @@ def _make_config(max_files: int = 500, test_file_quota_pct: int = 10) -> Config:
         top_k_retrieval=5,
         session_db_path="./data/viva.db",
         avg_time_per_category_seconds=180,
+        question_similarity_threshold=0.90,
     )
 
 

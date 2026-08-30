@@ -61,6 +61,7 @@ def _config(vector_db_path: str) -> Config:
         github_token=None, map_reduce_batch_size=8, max_reduce_context_tokens=100_000,
         line_window_size=60, line_window_overlap=15, vector_db_path=vector_db_path, top_k_retrieval=5,
         session_db_path="./data/viva.db", avg_time_per_category_seconds=180,
+        question_similarity_threshold=0.90,
     )
 
 

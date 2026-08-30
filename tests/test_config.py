@@ -25,6 +25,7 @@ def _clean_env(monkeypatch):
         "TOP_K_RETRIEVAL",
         "SESSION_DB_PATH",
         "AVG_TIME_PER_CATEGORY_SECONDS",
+        "QUESTION_SIMILARITY_THRESHOLD",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -55,6 +56,21 @@ def test_defaults_applied(monkeypatch):
     assert config.top_k_retrieval == 5
     assert config.session_db_path == "./data/viva.db"
     assert config.avg_time_per_category_seconds == 180
+    assert config.question_similarity_threshold == 0.90
+
+
+def test_invalid_question_similarity_threshold_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("QUESTION_SIMILARITY_THRESHOLD", "1.5")
+    with pytest.raises(ConfigError, match="QUESTION_SIMILARITY_THRESHOLD"):
+        Config.load(env_file=None)
+
+
+def test_zero_question_similarity_threshold_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("QUESTION_SIMILARITY_THRESHOLD", "0")
+    with pytest.raises(ConfigError, match="QUESTION_SIMILARITY_THRESHOLD"):
+        Config.load(env_file=None)
 
 
 def test_invalid_avg_time_per_category_raises(monkeypatch):

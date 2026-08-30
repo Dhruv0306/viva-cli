@@ -401,3 +401,56 @@ different duplicate-avoidance mechanisms that each individually caused
 a regression, a fourth one deserves real evidence it's still needed
 (and careful calibration) before being added, rather than being
 guessed at.
+
+## 11.11 FR15's third layer: embedding-based semantic duplicate detection
+
+Confirmed with real evidence before building this, per the plan in
+§11.10: two further real sessions against throttle4j (run after the
+category-breadth fix in §11.9, with the artificial cap removed) still
+each produced at least one pair of questions asking essentially the
+same thing, worded differently (`Math.min(maxRequests * 2, ...)` asked
+twice with different phrasing; `ObjectProvider<MetricsCollector>`
+asked from three overlapping angles). The two existing layers — exact
+`target_file`/`target_module` string matching, and category-breadth
+ordering — don't catch this: different plan items can carry different
+target strings (different categories assign different granularity) and
+still land on the same underlying question, because a small, focused
+piece of code often only supports one obvious angle regardless of which
+category is asking about it.
+
+Added a third layer: after a question is generated, its embedding
+(via the same `EmbeddingClient` already used for RAG retrieval — no
+new client, no new dependency) is compared by cosine similarity against
+every previously-asked question's embedding this session. Above
+`QUESTION_SIMILARITY_THRESHOLD` (new config, default 0.90, FR28 — not
+hardcoded, since it depends on the embedding model in use and hasn't
+been empirically tuned against real output) it's treated as a likely
+duplicate.
+
+**Same discipline as the two mechanisms it follows, applied from the
+start this time rather than learned the hard way**: this is advisory,
+never exclusionary. `_run_live_session` tries up to
+`_MAX_DEDUP_CANDIDATES` (3) ranked candidates per round; if an earlier
+one looks like a duplicate it's remembered as a fallback and the next
+candidate is tried instead, but if every tried candidate is a
+duplicate, the best fallback is asked anyway rather than skipping the
+round or ending the session early. Given this phase has now shipped
+three duplicate-avoidance mechanisms and the first two each caused
+their own regression before this lesson was fully internalized, this
+one was designed with "prefer, never exclude" as a starting constraint
+rather than an afterthought.
+
+Cost: one extra embedding call per question generated (more when a
+retry is needed), wrapped in `timer.excluding()` like all LLM/embedding
+work, so it doesn't touch the user's clock — only real wall-clock/
+compute time. Embeddings for already-asked questions are cached
+in-memory per `Orchestrator` instance and reseeded from persisted
+`question_text` on `resume()` (a fresh instance otherwise starts with
+an empty cache).
+
+**Not yet empirically validated** against real Ollama output in this
+environment (no network access to a live embedding model here) — the
+threshold default is a reasoned starting point, not a calibrated one.
+Worth watching on the next real run: does it still catch cases like
+the `ObjectProvider<MetricsCollector>` cluster, and does it ever
+seem too aggressive (deprioritizing questions that were actually fine)?

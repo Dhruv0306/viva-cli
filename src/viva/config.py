@@ -52,6 +52,18 @@ def _get_non_negative_int(name: str, default: str) -> int:
     return value
 
 
+def _get_unit_interval_float(name: str, default: str) -> float:
+    """Parses a float in (0.0, 1.0] -- used for similarity thresholds."""
+    raw = os.getenv(name, default)
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from exc
+    if not (0.0 < value <= 1.0):
+        raise ConfigError(f"{name} must be between 0 and 1 (exclusive of 0), got {value}")
+    return value
+
+
 def _get_optional_positive_int(name: str) -> int | None:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -105,6 +117,7 @@ class Config:
     # config-shape ripple across the test suite; kept here as a flag for
     # anyone who goes looking for what reads it and finds nothing.
     avg_time_per_category_seconds: int
+    question_similarity_threshold: float
 
     @classmethod
     def load(cls, env_file: str | None = ".env") -> "Config":
@@ -182,8 +195,21 @@ class Config:
         # (docs/design.md §7: "remaining_time / avg_time_per_remaining_category")
         # -- a tunable estimate rather than a hardcoded guess, per FR28, since
         # actual answer pacing varies a lot by person and by repo complexity.
+        # NOTE: currently unused by selection logic -- see config.py's field
+        # comment and docs/system-design/11-phase-6-session-loop-design.md §11.9.
         avg_time_per_category_seconds = _get_positive_int(
             "AVG_TIME_PER_CATEGORY_SECONDS", "180"
+        )
+
+        # Cosine-similarity threshold (embedding space) above which a
+        # freshly generated question is treated as a likely duplicate of
+        # one already asked this session -- FR15's third and most accurate
+        # duplicate-avoidance layer (docs/system-design/
+        # 11-phase-6-session-loop-design.md §11.9). A tunable per FR28
+        # rather than a hardcoded guess, since it depends on the actual
+        # embedding model in use and hasn't been empirically calibrated.
+        question_similarity_threshold = _get_unit_interval_float(
+            "QUESTION_SIMILARITY_THRESHOLD", "0.90"
         )
 
         return cls(
@@ -206,4 +232,5 @@ class Config:
             top_k_retrieval=top_k_retrieval,
             session_db_path=session_db_path,
             avg_time_per_category_seconds=avg_time_per_category_seconds,
+            question_similarity_threshold=question_similarity_threshold,
         )

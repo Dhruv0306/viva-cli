@@ -65,7 +65,7 @@ def _config(tmp_path, **overrides) -> Config:
         github_token=None, map_reduce_batch_size=8, max_reduce_context_tokens=100_000,
         line_window_size=60, line_window_overlap=15, vector_db_path="./data/chroma",
         top_k_retrieval=5, session_db_path=str(tmp_path / "viva.db"),
-        avg_time_per_category_seconds=1,
+        avg_time_per_category_seconds=1, question_similarity_threshold=0.90,
     )
     values.update(overrides)
     return Config(**values)
@@ -135,11 +135,22 @@ def _patch_pipeline(monkeypatch, plan=None, grounded=True, reused_collection=Fal
     monkeypatch.setattr(orchestrator_module, "generate_question", fake_generate_question)
 
 
+class FakeEmbeddingClient:
+    """Deterministic 1-D 'embedding': identical text -> identical vector,
+    different text -> (almost certainly) different vector. Good enough
+    for tests that don't specifically exercise duplicate-similarity
+    logic; tests that do (see test_is_semantic_duplicate_*) construct
+    exact vectors directly instead."""
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[float(hash(text) % 100_000)] for text in texts]
+
+
 def _make_orchestrator(tmp_path, config, ui):
     store = SessionStore(str(tmp_path / "viva.db"))
     orch = Orchestrator(
         config=config, session_store=store, ui=ui,
-        llm_client=object(), embedding_client=object(), vector_store=object(),
+        llm_client=object(), embedding_client=FakeEmbeddingClient(), vector_store=object(),
     )
     return orch, store
 
@@ -723,3 +734,172 @@ def test_collapse_does_not_permanently_cap_session_regardless_of_pace(tmp_path):
     # and only ~a few seconds actually elapsed.
     still_available = {r.question_id for r in store.get_qa_records("sess1") if r.status == "pending"}
     assert {"q6", "q7", "q8"} <= still_available
+
+
+# -- FR15's third layer: embedding-based semantic duplicate detection -------
+
+
+def test_cosine_similarity_identical_vectors():
+    assert orchestrator_module._cosine_similarity([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]) == pytest.approx(1.0)
+
+
+def test_cosine_similarity_orthogonal_vectors():
+    assert orchestrator_module._cosine_similarity([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+
+
+def test_cosine_similarity_zero_vector_returns_zero():
+    assert orchestrator_module._cosine_similarity([0.0, 0.0], [1.0, 2.0]) == 0.0
+
+
+def test_is_semantic_duplicate_true_above_threshold(tmp_path):
+    config = _config(tmp_path, question_similarity_threshold=0.9)
+    ui = FakeSessionUI(answers=[])
+    orch, _store = _make_orchestrator(tmp_path, config, ui)
+    orch._question_embeddings["q1"] = [1.0, 0.0]
+
+    assert orch._is_semantic_duplicate([0.99, 0.01]) is True  # nearly identical direction
+
+
+def test_is_semantic_duplicate_false_below_threshold(tmp_path):
+    config = _config(tmp_path, question_similarity_threshold=0.9)
+    ui = FakeSessionUI(answers=[])
+    orch, _store = _make_orchestrator(tmp_path, config, ui)
+    orch._question_embeddings["q1"] = [1.0, 0.0]
+
+    assert orch._is_semantic_duplicate([0.0, 1.0]) is False  # orthogonal
+
+
+def test_is_semantic_duplicate_false_with_empty_cache(tmp_path):
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    orch, _store = _make_orchestrator(tmp_path, config, ui)
+
+    assert orch._is_semantic_duplicate([1.0, 0.0]) is False
+
+
+class _ScriptedEmbeddingClient:
+    """Maps specific known texts to specific vectors (for controlling
+    similarity outcomes precisely); anything unlisted gets a distinct
+    hash-based vector, mirroring FakeEmbeddingClient's default."""
+
+    def __init__(self, mapping: dict[str, list[float]]) -> None:
+        self._mapping = mapping
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [self._mapping.get(t, [float(hash(t) % 100_000)]) for t in texts]
+
+
+def test_semantic_duplicate_prefers_novel_question_when_available(tmp_path, monkeypatch):
+    """Regression test for a real-world finding: two real sessions against
+    github.com/Dhruv0306/throttle4j each asked essentially the same
+    question twice, worded differently, for plan items whose
+    target_file/target_module strings didn't match exactly -- the
+    string-based dedup couldn't catch it. This is the embedding-based
+    layer that can.
+    """
+    config = _config(tmp_path, question_similarity_threshold=0.9)
+    _patch_pipeline(monkeypatch)
+
+    # q1's generated text and q2's are near-identical in embedding space
+    # (same direction); q3's is orthogonal (genuinely different).
+    scripted = _ScriptedEmbeddingClient({
+        "Question about architecture?": [1.0, 0.0],
+        "A totally different question.": [0.0, 1.0],
+    })
+
+    def fake_generate_question(plan_item, *a, **kw):
+        text_by_id = {
+            "q1": "Question about architecture?",
+            "q2": "Question about architecture?",  # near-duplicate of q1 in embedding space
+            "q3": "A totally different question.",
+        }
+        return GeneratedQuestion(
+            plan_item=plan_item, question_text=text_by_id[plan_item.id], grounding_chunk_ids=["c1"],
+        )
+
+    monkeypatch.setattr(orchestrator_module, "generate_question", fake_generate_question)
+    monkeypatch.setattr(
+        orchestrator_module, "build_coverage_plan",
+        lambda *a, **kw: [
+            QuestionPlanItem(id="q1", category="architecture", target_module=None, target_file="A.java"),
+            QuestionPlanItem(id="q2", category="testing", target_module=None, target_file="B.java"),
+            QuestionPlanItem(id="q3", category="edge_case", target_module=None, target_file="C.java"),
+        ],
+    )
+
+    ui = FakeSessionUI(answers=["a1", "a2", "a3"])
+    store = SessionStore(str(tmp_path / "viva.db"))
+    orch = Orchestrator(
+        config=config, session_store=store, ui=ui,
+        llm_client=object(), embedding_client=scripted, vector_store=object(),
+    )
+
+    orch.start("https://github.com/owner/repo")
+
+    # q3 (novel) should be preferred over q2 (a near-duplicate of q1) when
+    # both are available -- asked before it, not instead of it. With only
+    # 3 total plan items and no time pressure, q2 still eventually gets
+    # asked once nothing else is left (prefer, never exclude -- same
+    # discipline as the other two fixes), but its position should reflect
+    # having been deprioritized.
+    ask_events = [e for e in ui.events if e[0] == "ask"]
+    order_by_category = [category for (_evt, _num, category) in ask_events]
+    assert order_by_category == ["architecture", "edge_case", "testing"]
+
+
+def test_semantic_duplicate_falls_back_when_nothing_novel_available(tmp_path, monkeypatch):
+    """The other half of the same discipline as the previous two fixes:
+    if every candidate tried is a near-duplicate, ask one anyway rather
+    than silently skipping the round or ending the session early."""
+    config = _config(tmp_path, question_similarity_threshold=0.9)
+    _patch_pipeline(monkeypatch)
+
+    def fake_generate_question(plan_item, *a, **kw):
+        # Every candidate embeds identically -- there is no novel option.
+        return GeneratedQuestion(
+            plan_item=plan_item, question_text=f"Question about {plan_item.category}?",
+            grounding_chunk_ids=["c1"],
+        )
+
+    monkeypatch.setattr(orchestrator_module, "generate_question", fake_generate_question)
+    monkeypatch.setattr(
+        orchestrator_module, "build_coverage_plan",
+        lambda *a, **kw: [
+            QuestionPlanItem(id="q1", category="architecture", target_module=None, target_file="A.java"),
+            QuestionPlanItem(id="q2", category="testing", target_module=None, target_file="B.java"),
+        ],
+    )
+
+    class _AllSameVectorEmbeddingClient:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0] for _ in texts]  # every text embeds identically
+
+    ui = FakeSessionUI(answers=["a1", "a2"])
+    store = SessionStore(str(tmp_path / "viva.db"))
+    orch = Orchestrator(
+        config=config, session_store=store, ui=ui,
+        llm_client=object(), embedding_client=_AllSameVectorEmbeddingClient(), vector_store=object(),
+    )
+
+    orch.start("https://github.com/owner/repo")
+
+    # Both still get asked -- the duplicate check deprioritizes, never
+    # excludes, so with only 2 candidates and a 3-candidate retry bound,
+    # both are eventually tried and both get answered.
+    session_id = store.list_sessions()[0].session_id
+    records = store.get_qa_records(session_id)
+    assert sum(1 for r in records if r.status == "answered") == 2
+
+
+def test_seed_embedding_cache_populates_from_prior_answers(tmp_path):
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", [QuestionPlanItem(id="q1", category="architecture", target_module=None)])
+    store.record_question_asked("sess1", "q1", "Why does X work this way?", ["c1"])
+    store.record_answer("sess1", "q1", "because Y")
+
+    assert "q1" not in orch._question_embeddings
+    orch._seed_embedding_cache("sess1")
+    assert "q1" in orch._question_embeddings

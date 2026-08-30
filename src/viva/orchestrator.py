@@ -13,6 +13,7 @@ class plus a `SessionUI` (see `session_ui.py`).
 """
 from __future__ import annotations
 
+import math
 import uuid
 from pathlib import Path
 
@@ -41,6 +42,21 @@ _LOOP_EXIT_STATUSES = {"TIME_EXPIRED", "QUESTIONS_EXHAUSTED"}
 # see docs/system-design/11-phase-6-session-loop-design.md "Known
 # limitations / deliberate scope-narrowing" for why.
 _NOT_RESUMABLE_PRE_SESSION_STATUSES = {"INGESTING", "ANALYZING", "INDEXING", "PLANNING"}
+
+# Bounded number of ranked candidates tried per round before accepting
+# whichever came closest (see _run_live_session) -- keeps the worst-case
+# extra LLM/embedding cost (all excluded from the user's clock) small
+# rather than unbounded on a repo where duplication is pervasive.
+_MAX_DEDUP_CANDIDATES = 3
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 class OrchestratorError(RuntimeError):
@@ -82,6 +98,10 @@ class Orchestrator:
         )
         self.vector_store = vector_store or VectorStore(config.vector_db_path)
         self.classification_provider = classification_provider or NullClassificationProvider()
+        # FR15's third dedup layer (see _is_semantic_duplicate). Keyed by
+        # question_id; session-scoped, since a fresh Orchestrator is
+        # constructed per CLI invocation (start() or resume()).
+        self._question_embeddings: dict[str, list[float]] = {}
 
     # -- viva start ----------------------------------------------------------
 
@@ -242,6 +262,8 @@ class Orchestrator:
         self.store.update_status(session_id, "IN_PROGRESS")
         timer = AnswerTimer(duration_seconds)
         timer.start(initial_elapsed_seconds=initial_elapsed_seconds)
+        with timer.excluding():
+            self._seed_embedding_cache(session_id)
 
         question_number = self._already_asked_count(session_id)
         while True:
@@ -254,25 +276,29 @@ class Orchestrator:
                 self.store.update_status(session_id, "QUESTIONS_EXHAUSTED")
                 break
 
-            item = self._select_next_item(session_id, pending, timer)
-            if item is None:
-                # every remaining item got collapsed away by the time-budget
-                # check below; nothing left worth asking
-                self.store.update_status(session_id, "TIME_EXPIRED")
-                break
+            ranked = self._rank_pending_items(session_id, pending)
+            selected_item: QARecordRow | None = None
+            question_text = ""
+            grounding_chunk_ids: list[str] = []
+            fallback: tuple[QARecordRow, str, list[str], list[float]] | None = None
 
-            if item.question_text:
-                # Requeued orphaned item (see resume()'s
-                # requeue_orphaned_asked_items call) -- it was already
-                # generated and grounded before the crash; re-present it
-                # as-is instead of paying for another LLM generation call.
-                question_text = item.question_text
-                grounding_chunk_ids = item.grounding_chunk_ids
-            else:
+            for candidate in ranked[:_MAX_DEDUP_CANDIDATES]:
+                if candidate.question_text:
+                    # Requeued orphaned item (see resume()'s
+                    # requeue_orphaned_asked_items call) -- already
+                    # generated and grounded before the crash; re-present
+                    # it as-is, no dedup check (an intentional re-ask,
+                    # not a fresh candidate that might duplicate
+                    # something).
+                    selected_item = candidate
+                    question_text = candidate.question_text
+                    grounding_chunk_ids = candidate.grounding_chunk_ids
+                    break
+
                 plan_item = QuestionPlanItem(
-                    id=item.question_id, category=item.category,
-                    target_module=item.target_module, target_file=item.target_file,
-                    is_followup_of=item.is_followup_of,
+                    id=candidate.question_id, category=candidate.category,
+                    target_module=candidate.target_module, target_file=candidate.target_file,
+                    is_followup_of=candidate.is_followup_of,
                 )
                 with timer.excluding():
                     generated = generate_question(
@@ -280,20 +306,47 @@ class Orchestrator:
                         collection_name, self.embedding_client, self.llm_client,
                     )
                 if generated is None:
-                    self.store.mark_item_status(session_id, item.question_id, SKIPPED_NO_GROUNDING)
+                    self.store.mark_item_status(session_id, candidate.question_id, SKIPPED_NO_GROUNDING)
                     continue
-                question_text = generated.question_text
-                grounding_chunk_ids = generated.grounding_chunk_ids
+
+                with timer.excluding():
+                    candidate_vec = self._embed_text(generated.question_text)
+                    is_duplicate = self._is_semantic_duplicate(candidate_vec)
+
+                if not is_duplicate:
+                    selected_item = candidate
+                    question_text = generated.question_text
+                    grounding_chunk_ids = generated.grounding_chunk_ids
+                    self._question_embeddings[candidate.question_id] = candidate_vec
+                    break
+
+                # Remember as a fallback -- never permanently exclude a
+                # duplicate; if nothing better turns up among the bounded
+                # candidates tried, ask it anyway rather than end the
+                # session early (the exact lesson from the two duplicate-
+                # avoidance regressions earlier in this phase -- see
+                # docs/system-design/11-phase-6-session-loop-design.md
+                # §11.9).
+                fallback = (candidate, generated.question_text, generated.grounding_chunk_ids, candidate_vec)
+
+            if selected_item is None:
+                if fallback is None:
+                    # every tried candidate was ungrounded -- nothing to
+                    # ask this round; loop back and re-fetch pending
+                    # (now smaller, since those got marked skipped)
+                    continue
+                selected_item, question_text, grounding_chunk_ids, fallback_vec = fallback
+                self._question_embeddings[selected_item.question_id] = fallback_vec
 
             question_number += 1
             self.store.record_question_asked(
-                session_id, item.question_id, question_text, grounding_chunk_ids
+                session_id, selected_item.question_id, question_text, grounding_chunk_ids
             )
-            self.ui.ask_question(question_text, item.category, question_number)
+            self.ui.ask_question(question_text, selected_item.category, question_number)
             answer_text = self.ui.read_answer(timer)
-            self.store.record_answer(session_id, item.question_id, answer_text)
+            self.store.record_answer(session_id, selected_item.question_id, answer_text)
 
-            self._maybe_queue_followup(session_id, item, answer_text)
+            self._maybe_queue_followup(session_id, selected_item, answer_text)
 
         self.store.update_status(session_id, "FINALIZING_EVALS")
         # Phase 6: nothing to finalize -- no Evaluator exists yet (see
@@ -312,6 +365,17 @@ class Orchestrator:
     def _select_next_item(
         self, session_id: str, pending: list[QARecordRow], timer: AnswerTimer
     ) -> QARecordRow | None:
+        """Thin convenience wrapper around `_rank_pending_items` returning
+        just the top pick -- kept for callers/tests that only need one
+        item. `_run_live_session` uses the full ranked list directly,
+        since it needs multiple candidates for the semantic-duplicate
+        check (see `_is_semantic_duplicate`)."""
+        ranked = self._rank_pending_items(session_id, pending)
+        return ranked[0] if ranked else None
+
+    def _rank_pending_items(
+        self, session_id: str, pending: list[QARecordRow]
+    ) -> list[QARecordRow]:
         """FR15 ("track asked topics/files to avoid duplicate questioning
         and to enforce category coverage across the session") + design.md
         §7's category-breadth preference, both as pure *ordering*, never
@@ -320,29 +384,28 @@ class Orchestrator:
         Two earlier versions of this method each made a one-time,
         pessimistic decision and permanently dropped whatever didn't fit
         it (first duplicate-target items outright, then non-first-per-
-        category items when `avg_time_per_category_seconds *
-        categories_remaining` looked too big compared to the *starting*
-        time remaining -- which for any session shorter than
-        `categories * avg_time_per_category_seconds` fired on the very
-        first selection, before anything was even asked, locking in a
-        fixed question count regardless of how fast the person actually
-        answered or how much real time was left afterward). Both were
-        found the same way: a real session against
-        github.com/Dhruv0306/throttle4j stopped identically at exactly
-        (number of categories) questions whether given 8 or 10 minutes --
-        see docs/system-design/11-phase-6-session-loop-design.md §11.9.
+        category items when a time-budget estimate looked too tight
+        compared to the *starting* time remaining -- which for any short
+        session fired on the very first selection, before anything was
+        even asked, locking in a fixed question count regardless of how
+        fast the person actually answered or how much real time was left
+        afterward). Both were found the same way: a real session against
+        github.com/Dhruv0306/throttle4j stopped identically at a fixed
+        question count no matter how much time was given -- see
+        docs/system-design/11-phase-6-session-loop-design.md §11.9.
 
-        The fix, both times, was the same lesson: prefer, never exclude.
-        Pending items are ranked -- follow-ups first, then items whose
-        target hasn't been asked about yet, then items whose category
-        hasn't been asked about yet -- and the loop's own natural exit
-        conditions (timer actually expired, or truly no pending items
-        left) are what end the session, not a pre-computed worst-case
-        guess made once at the start.
+        The fix, both times: prefer, never exclude. Pending items are
+        ranked -- follow-ups first, then items whose target hasn't been
+        asked about yet, then items whose category hasn't been asked
+        about yet -- and the loop's own natural exit conditions (timer
+        actually expired, or truly no pending items left) are what end
+        the session, not a pre-computed worst-case guess made once at
+        the start. Returns the *full* ranked list (not just the top
+        pick) so `_run_live_session` can try several candidates for the
+        semantic-duplicate check without a second query.
         """
         followups = [p for p in pending if p.is_followup_of is not None]
-        if followups:
-            return followups[0]
+        non_followups = [p for p in pending if p.is_followup_of is None]
 
         already_asked_targets = self._already_asked_targets(session_id)
         already_asked_categories = self._already_asked_categories(session_id)
@@ -353,8 +416,50 @@ class Orchestrator:
             is_repeat_category = item.category in already_asked_categories
             return (is_duplicate_target, is_repeat_category)
 
-        ranked = sorted(pending, key=_priority)
-        return ranked[0] if ranked else None
+        return followups + sorted(non_followups, key=_priority)
+
+    def _embed_text(self, text: str) -> list[float]:
+        return self.embedding_client.embed([text])[0]
+
+    def _seed_embedding_cache(self, session_id: str) -> None:
+        """Populates the in-memory duplicate-check cache from
+        already-asked questions. Needed on `resume()` -- a fresh
+        `Orchestrator` instance starts with an empty cache -- and a
+        cheap no-op on `start()` (nothing asked yet)."""
+        for record in self.store.get_qa_records(session_id):
+            if (
+                record.status in (ASKED, ANSWERED)
+                and record.question_text
+                and record.question_id not in self._question_embeddings
+            ):
+                self._question_embeddings[record.question_id] = self._embed_text(record.question_text)
+
+    def _is_semantic_duplicate(self, candidate_vec: list[float]) -> bool:
+        """FR15's third and most accurate duplicate-avoidance layer --
+        see docs/system-design/11-phase-6-session-loop-design.md §11.9
+        for why the first two (exact target-file matching, category-
+        breadth ordering) weren't enough on their own: different plan
+        items can carry different `target_file`/`target_module` values
+        and still land on essentially the same question, because the
+        underlying code region only really supports one obvious angle.
+
+        Compares against every previously-asked question's embedding
+        this session via cosine similarity. Threshold is
+        `QUESTION_SIMILARITY_THRESHOLD` (default 0.90, FR28) rather than
+        hardcoded, since it depends on the embedding model in use and
+        hasn't been empirically calibrated against real output.
+
+        Advisory only, same discipline as the other two layers: the
+        caller (`_run_live_session`) tries a bounded number of
+        alternative candidates and only falls back to a flagged
+        duplicate if nothing better turns up among them, rather than
+        ever blocking the session on this check.
+        """
+        threshold = self.config.question_similarity_threshold
+        return any(
+            _cosine_similarity(candidate_vec, cached_vec) >= threshold
+            for cached_vec in self._question_embeddings.values()
+        )
 
     def _already_asked_categories(self, session_id: str) -> set[str]:
         """Categories already covered this session -- only counts items
