@@ -13,9 +13,18 @@ which always returns `None`.
 
 The result: the follow-up branch in `orchestrator.py` is real code, not a
 TODO, but it structurally never fires in Phase 6 -- every `qa_records.eval_status`
-lands `"deferred"` (see `storage/session_store.py`). Phase 7 swaps in a real
-provider backed by the synchronous classification call, with no changes to
-the Orchestrator's control flow.
+lands `"deferred"` (see `storage/session_store.py`). Phase 7's `Evaluator`
+(`viva.evaluator`) is the real provider, backed by the two-call
+classification/feedback split (docs/system-design/
+12-phase-7-evaluator-design.md), with no changes to the Orchestrator's
+control flow around `classify()` itself.
+
+`bind_session`/`requeue_unfinished`/`flush` are session-lifecycle hooks
+the Orchestrator calls unconditionally (entering `IN_PROGRESS`, on
+`resume()`, and at `FINALIZING_EVALS`) regardless of which provider is
+injected -- default no-ops here so `NullClassificationProvider` and any
+test double needs no changes to keep satisfying the interface; only
+`Evaluator` overrides them with real behavior.
 """
 from __future__ import annotations
 
@@ -31,6 +40,17 @@ class ClassificationProvider(abc.ABC):
         or `None` if no classification is available (Phase 6: always
         `None` -- there is no Evaluator to call yet)."""
         raise NotImplementedError
+
+    def bind_session(self, session_id: str, collection_name: str) -> None:
+        """Called once, right where the Orchestrator enters
+        `IN_PROGRESS`, before the first `classify()`. No-op by default."""
+
+    def requeue_unfinished(self) -> None:
+        """Called on `viva resume`, after `bind_session()`, before the
+        live loop resumes. No-op by default."""
+
+    def flush(self, timeout: float) -> None:
+        """Called at `FINALIZING_EVALS`. No-op by default."""
 
 
 class NullClassificationProvider(ClassificationProvider):

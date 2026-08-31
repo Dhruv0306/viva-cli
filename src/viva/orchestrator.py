@@ -18,9 +18,10 @@ import uuid
 from pathlib import Path
 
 from viva.analyzer import analyze_repo
-from viva.classification import ClassificationProvider, NullClassificationProvider
+from viva.classification import ClassificationProvider
 from viva.config import Config
 from viva.embedding_client import EmbeddingClient, OllamaEmbeddingClient
+from viva.evaluator import Evaluator
 from viva.indexer import index_repo
 from viva.indexer.store import VectorStore
 from viva.ingest import ingest_repo
@@ -97,7 +98,9 @@ class Orchestrator:
             model=config.embedding_model, host=config.ollama_host
         )
         self.vector_store = vector_store or VectorStore(config.vector_db_path)
-        self.classification_provider = classification_provider or NullClassificationProvider()
+        self.classification_provider = classification_provider or Evaluator(
+            self.store, self.vector_store, self.llm_client
+        )
         # FR15's third dedup layer (see _is_semantic_duplicate). Keyed by
         # question_id; session-scoped, since a fresh Orchestrator is
         # constructed per CLI invocation (start() or resume()).
@@ -260,6 +263,12 @@ class Orchestrator:
         initial_elapsed_seconds: float,
     ) -> None:
         self.store.update_status(session_id, "IN_PROGRESS")
+        self.classification_provider.bind_session(session_id, collection_name)
+        # §12.6: re-enqueues anything a crashed prior process left
+        # mid-evaluation. A no-op on a fresh start() (nothing classified/
+        # feedback_pending yet) -- only resume() ever has something here,
+        # but calling it unconditionally avoids a resume-only special case.
+        self.classification_provider.requeue_unfinished()
         timer = AnswerTimer(duration_seconds)
         timer.start(initial_elapsed_seconds=initial_elapsed_seconds)
         with timer.excluding():
@@ -350,8 +359,11 @@ class Orchestrator:
             self._maybe_queue_followup(session_id, selected_item, answer_text)
 
         self.store.update_status(session_id, "FINALIZING_EVALS")
-        # Phase 6: nothing to finalize -- no Evaluator exists yet (see
-        # viva.classification). Every record's eval_status stays "deferred."
+        # docs/system-design/12-phase-7-evaluator-design.md §12.6: drain
+        # the Evaluator's background worker, bounded so session end can't
+        # hang indefinitely on one stuck model call. No-op for
+        # NullClassificationProvider/any provider that doesn't override it.
+        self.classification_provider.flush(self.config.eval_flush_timeout_seconds)
         self.store.update_status(session_id, "SUMMARIZING")
         # Phase 6: no report generation yet (Phase 8) -- pass straight through.
         self.store.update_status(session_id, "COMPLETE")
