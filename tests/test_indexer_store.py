@@ -108,3 +108,50 @@ def test_chunk_metadata_never_contains_none_for_optional_fields(tmp_path):
     results = store.query(name, query_embedding=[0.5, 0.5], n_results=1)
     assert results[0]["metadata"]["symbol_name"] == ""
     assert results[0]["metadata"]["language"] == ""
+
+
+def test_get_by_ids_returns_exact_chunks_in_no_particular_order(tmp_path):
+    store = VectorStore(str(tmp_path / "chroma"))
+    name = collection_name("owner/repo", "abc123def456")
+    store.upsert_chunks(
+        name,
+        [_chunk("c1", "def foo(): ..."), _chunk("c2", "def bar(): ...", symbol_name="bar")],
+        [[1.0, 0.0], [0.0, 1.0]],
+    )
+
+    results = store.get_by_ids(name, ["c2", "c1"])
+
+    assert {r["id"] for r in results} == {"c1", "c2"}
+    by_id = {r["id"]: r for r in results}
+    assert by_id["c1"]["text"] == "def foo(): ..."
+    assert by_id["c2"]["metadata"]["symbol_name"] == "bar"
+    # Not a similarity search -- no 'distance' key in the result shape.
+    assert "distance" not in by_id["c1"]
+
+
+def test_get_by_ids_empty_list_returns_empty_without_touching_chroma(tmp_path):
+    store = VectorStore(str(tmp_path / "chroma"))
+    name = collection_name("owner/repo", "abc123def456")
+
+    # No collection created at all -- must not raise on an empty request.
+    assert store.get_by_ids(name, []) == []
+
+
+def test_get_by_ids_missing_collection_returns_empty_not_raises(tmp_path):
+    store = VectorStore(str(tmp_path / "chroma"))
+    name = collection_name("owner/repo", "does-not-exist")
+
+    assert store.get_by_ids(name, ["c1"]) == []
+
+
+def test_get_by_ids_some_ids_missing_from_existing_collection(tmp_path):
+    store = VectorStore(str(tmp_path / "chroma"))
+    name = collection_name("owner/repo", "abc123def456")
+    store.upsert_chunks(name, [_chunk("c1", "def foo(): ...")], [[1.0, 0.0]])
+
+    # c2 was never indexed -- silently omitted, not an error, per
+    # get_by_ids's "some grounding chunks are gone" degrade-gracefully
+    # contract.
+    results = store.get_by_ids(name, ["c1", "c2"])
+
+    assert [r["id"] for r in results] == ["c1"]

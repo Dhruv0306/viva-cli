@@ -83,6 +83,33 @@ class VectorStore:
             for cid, doc, meta, dist in zip(ids, documents, metadatas, distances)
         ]
 
+    def get_by_ids(self, name: str, ids: list[str]) -> list[dict]:
+        """Exact-ID fetch (docs/system-design/12-phase-7-evaluator-design.md
+        §12.3), not a semantic search: the Evaluator needs the *exact*
+        chunks a question was generated from (persisted as
+        `qa_records.grounding_chunk_ids`) to reconstruct
+        `[GROUND_TRUTH_CODE_CONTEXT]`, not a fresh nearest-neighbor query
+        that could drift from what the question was actually grounded in.
+
+        Same result shape as `.query()` minus `distance` (not meaningful
+        for a direct-ID fetch). Any ID with no matching chunk (e.g. a
+        collection that no longer exists) is silently omitted rather than
+        raising -- callers should treat a shorter-than-requested result
+        as "some grounding chunks are gone" and degrade gracefully, same
+        discipline as `generate_question`'s "no chunks -> skip, don't
+        fabricate" rule.
+        """
+        if not ids:
+            return []
+        if not self.collection_exists(name):
+            return []
+        collection = self._client.get_collection(name)
+        result = collection.get(ids=ids)
+        return [
+            {"id": cid, "text": doc, "metadata": meta}
+            for cid, doc, meta in zip(result["ids"], result["documents"], result["metadatas"])
+        ]
+
 
 def _chunk_metadata(chunk: Chunk) -> dict:
     # Chroma metadata values must be str/int/float/bool -- None isn't
