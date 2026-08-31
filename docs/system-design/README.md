@@ -57,5 +57,15 @@ history of what was tried and rejected along the way.
   design.md §7 time-budget collapse logic, and known limitations
   (mid-answer timeout interruption, resume scope before `IN_PROGRESS`).
 
+- **[12-phase-7-evaluator-design.md](12-phase-7-evaluator-design.md)** —
+  the Phase 7 Evaluator implementation design: retiring the single
+  `evaluate_answer` call in favor of a two-call `classify_answer`/
+  `generate_feedback` split, the `VectorStore.get_by_ids` addition needed
+  to reconstruct ground-truth context from persisted chunk IDs, the
+  single-worker-thread-plus-queue backgrounding model (not a thread per
+  answer), the four-state `eval_status` model, and how
+  `FINALIZING_EVALS`/`viva resume` guarantee no completed evaluation work
+  is lost (NFR3).
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
