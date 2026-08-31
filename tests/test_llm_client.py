@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from viva.llm_client import QUESTION_GEN_SYSTEM_PROMPT, OllamaClient
+from viva.schemas import ClassificationResult
 
 
 def _chat_response(content: str) -> dict:
@@ -17,11 +18,13 @@ def client(monkeypatch):
     return c
 
 
+# -- classify_answer (call #1) -----------------------------------------------
+
 def test_valid_first_attempt(client):
     valid = json.dumps({"classification": "correct", "summary": "Good answer."})
     client._client.chat.return_value = _chat_response(valid)
 
-    call_result = client.evaluate_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", "context", "answer")
 
     assert call_result.result.classification == "correct"
     assert call_result.attempts == 1
@@ -33,7 +36,7 @@ def test_repair_loop_recovers_on_second_attempt(client):
     valid = json.dumps({"classification": "partial", "summary": "Missed X.", "cited_file": "a.py:1"})
     client._client.chat.side_effect = [_chat_response(malformed), _chat_response(valid)]
 
-    call_result = client.evaluate_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", "context", "answer")
 
     assert call_result.result.classification == "partial"
     assert call_result.attempts == 2
@@ -49,7 +52,7 @@ def test_falls_back_to_needs_review_after_two_failures(client):
         _chat_response("still garbage"),
     ]
 
-    call_result = client.evaluate_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", "context", "answer")
 
     assert call_result.result.needs_review is True
     assert call_result.result.classification == "not_attempted"
@@ -63,7 +66,7 @@ def test_ungrounded_incorrect_verdict_is_downgraded(client):
     ungrounded = json.dumps({"classification": "incorrect", "summary": "Wrong."})
     client._client.chat.return_value = _chat_response(ungrounded)
 
-    call_result = client.evaluate_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", "context", "answer")
 
     assert call_result.result.needs_review is True
 
@@ -74,16 +77,16 @@ def test_grounded_incorrect_verdict_passes_through(client):
     )
     client._client.chat.return_value = _chat_response(grounded)
 
-    call_result = client.evaluate_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", "context", "answer")
 
     assert call_result.result.needs_review is False
 
 
-def test_prompt_uses_labeled_sections(client):
+def test_classify_prompt_uses_labeled_sections(client):
     valid = json.dumps({"classification": "correct", "summary": "ok"})
     client._client.chat.return_value = _chat_response(valid)
 
-    client.evaluate_answer("What does X do?", "def x(): ...", "It does X")
+    client.classify_answer("What does X do?", "def x(): ...", "It does X")
 
     first_call_messages = client._client.chat.call_args_list[0].kwargs["messages"]
     user_prompt = first_call_messages[1]["content"]
@@ -91,6 +94,119 @@ def test_prompt_uses_labeled_sections(client):
     assert "[GROUND_TRUTH_CODE_CONTEXT]" in user_prompt
     assert "[USER_ANSWER]" in user_prompt
 
+
+# -- generate_feedback (call #2) ---------------------------------------------
+
+def _classification(**overrides) -> ClassificationResult:
+    values = dict(classification="partial", summary="Missed the edge case.", cited_file="a.py:1")
+    values.update(overrides)
+    return ClassificationResult(**values)
+
+
+def test_generate_feedback_valid_first_attempt(client):
+    valid = json.dumps(
+        {
+            "did_well": ["Explained the happy path."],
+            "missed": [{"point": "Didn't mention retries.", "cited_file": "a.py:1"}],
+            "did_wrong": [],
+            "improvement": "Read the retry logic in a.py.",
+        }
+    )
+    client._client.chat.return_value = _chat_response(valid)
+
+    call_result = client.generate_feedback("Q?", "context", "answer", _classification())
+
+    assert call_result.result.did_well == ["Explained the happy path."]
+    assert call_result.result.missed[0].point == "Didn't mention retries."
+    assert call_result.attempts == 1
+
+
+def test_generate_feedback_includes_prior_verdict_in_prompt(client):
+    valid = json.dumps({"improvement": "n/a"})
+    client._client.chat.return_value = _chat_response(valid)
+
+    client.generate_feedback("Q?", "context", "answer", _classification())
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[VERDICT_ALREADY_GIVEN]" in user_prompt
+    assert "partial" in user_prompt
+    assert "Missed the edge case." in user_prompt
+
+
+def test_generate_feedback_drops_uncited_missed_entries(client):
+    """FR22: an uncited 'missed'/'did_wrong' entry is dropped at the
+    application layer, same discipline as classify_answer's cited_file
+    enforcement."""
+    valid = json.dumps(
+        {
+            "did_well": [],
+            "missed": [
+                {"point": "Cited point.", "cited_file": "a.py:1"},
+                {"point": "Uncited point."},
+            ],
+            "did_wrong": [{"point": "Uncited wrong point."}],
+            "improvement": "n/a",
+        }
+    )
+    client._client.chat.return_value = _chat_response(valid)
+
+    call_result = client.generate_feedback("Q?", "context", "answer", _classification())
+
+    assert len(call_result.result.missed) == 1
+    assert call_result.result.missed[0].point == "Cited point."
+    assert call_result.result.did_wrong == []
+
+
+def test_generate_feedback_needs_review_when_dropping_empties_critical_verdict(client):
+    """Dropping every uncited entry on a 'partial'/'incorrect' verdict
+    leaves nothing to substantiate the criticism -- must be flagged
+    needs_review rather than silently look like a clean pass."""
+    valid = json.dumps(
+        {
+            "did_well": [],
+            "missed": [{"point": "Uncited point."}],
+            "did_wrong": [],
+            "improvement": "n/a",
+        }
+    )
+    client._client.chat.return_value = _chat_response(valid)
+
+    call_result = client.generate_feedback(
+        "Q?", "context", "answer", _classification(classification="incorrect")
+    )
+
+    assert call_result.result.missed == []
+    assert call_result.result.needs_review is True
+
+
+def test_generate_feedback_correct_verdict_not_forced_needs_review_when_empty(client):
+    """A 'correct' verdict legitimately has nothing in missed/did_wrong --
+    that's not the same failure mode as a critical verdict losing its
+    only grounding."""
+    valid = json.dumps({"did_well": ["Nailed it."], "missed": [], "did_wrong": [], "improvement": "n/a"})
+    client._client.chat.return_value = _chat_response(valid)
+
+    call_result = client.generate_feedback(
+        "Q?", "context", "answer", _classification(classification="correct", cited_file=None)
+    )
+
+    assert call_result.result.needs_review is False
+
+
+def test_generate_feedback_falls_back_after_two_failures(client):
+    client._client.chat.side_effect = [
+        _chat_response("garbage"),
+        _chat_response("still garbage"),
+    ]
+
+    call_result = client.generate_feedback("Q?", "context", "answer", _classification())
+
+    assert call_result.result.needs_review is True
+    assert call_result.result.did_well == []
+    assert client._client.chat.call_count == 2
+
+
+# -- other calls (unaffected by the split) -----------------------------------
 
 def test_summarize_file_returns_stripped_text(client):
     client._client.chat.return_value = _chat_response("  A file that adds two numbers.  \n")

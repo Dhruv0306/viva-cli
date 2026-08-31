@@ -5,7 +5,7 @@ from rich.console import Console
 
 from viva.llm_client import LLMCallResult, LLMClient
 from viva.phase0_demo import run_demo
-from viva.schemas import EvaluationResult
+from viva.schemas import ClassificationResult
 
 
 class FakeSlowLLMClient(LLMClient):
@@ -16,17 +16,20 @@ class FakeSlowLLMClient(LLMClient):
         self.sleep_seconds = sleep_seconds
         self.calls = []
 
-    def evaluate_answer(self, question, ground_truth_context, user_answer):
+    def classify_answer(self, question, ground_truth_context, user_answer):
         self.calls.append((question, ground_truth_context, user_answer))
         start = time.monotonic()
         time.sleep(self.sleep_seconds)
         duration = time.monotonic() - start
-        result = EvaluationResult(
+        result = ClassificationResult(
             classification="correct",
             summary="Correctly explained monotonic time and exclusion.",
             cited_file="src/viva/timer.py:33",
         )
         return LLMCallResult(result=result, duration_seconds=duration, attempts=1)
+
+    def generate_feedback(self, question, ground_truth_context, user_answer, classification):
+        raise NotImplementedError  # not exercised by the Phase 0 demo
 
     def summarize_file(self, path, language, content_excerpt, target_tokens):
         raise NotImplementedError  # not exercised by the Phase 0 demo

@@ -23,7 +23,7 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 
 from viva.llm_client import LLMClient
-from viva.schemas import EvaluationResult
+from viva.schemas import ClassificationResult
 from viva.timer import AnswerTimer
 
 # A single hardcoded question, grounded in a real (small, inline) code
@@ -71,7 +71,7 @@ GROUND_TRUTH_CONTEXT = f"File: {CODE_SNIPPET_FILE}\n\n{CODE_SNIPPET}"
 class DemoReport:
     question: str
     answer: str
-    evaluation: EvaluationResult
+    evaluation: ClassificationResult
     answer_time_seconds: float
     llm_latency_seconds: float
 
@@ -118,7 +118,7 @@ def run_demo(llm_client: LLMClient, duration_seconds: float, console: Console) -
 
     with console.status("[dim]Evaluating (not counted against your time)...[/dim]"):
         with timer.excluding():
-            call_result = llm_client.evaluate_answer(
+            call_result = llm_client.classify_answer(
                 question=HARDCODED_QUESTION,
                 ground_truth_context=GROUND_TRUTH_CONTEXT,
                 user_answer=answer,

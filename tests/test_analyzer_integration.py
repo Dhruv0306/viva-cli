@@ -27,7 +27,10 @@ class _FakeLLMClient(LLMClient):
         self.summarize_calls = 0
         self.reduce_calls = 0
 
-    def evaluate_answer(self, *a, **k):
+    def classify_answer(self, *a, **k):
+        raise NotImplementedError
+
+    def generate_feedback(self, *a, **k):
         raise NotImplementedError
 
     def summarize_file(self, path, language, content_excerpt, target_tokens):
