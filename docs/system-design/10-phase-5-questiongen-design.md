@@ -129,7 +129,7 @@ time, not a batch-of-N-questions call), same rationale
 `llm_client.py` already gives for `summarize_file`/`reduce`: nothing
 downstream parses this as structured data. The 3-layer structured-output
 reliability strategy stays reserved for machine-consumed output
-(`evaluate_answer`), where a malformed response would actually break a
+(`classify_answer`/`generate_feedback`, docs/system-design/12-phase-7-evaluator-design.md), where a malformed response would actually break a
 downstream parser.
 
 Grounding (FR13) is enforced by construction, not by asking the model to
