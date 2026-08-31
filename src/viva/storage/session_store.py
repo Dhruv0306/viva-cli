@@ -24,6 +24,17 @@ SKIPPED_NO_GROUNDING = "skipped_no_grounding"
 SKIPPED_TIME_COLLAPSE = "skipped_time_collapse"
 SKIPPED_DUPLICATE_TARGET = "skipped_duplicate_target"
 
+# eval_status states (docs/system-design/12-phase-7-evaluator-design.md
+# §12.5): deferred (Phase 6 default, before any evaluation call runs) ->
+# classified (call #1 done, persisted durably before backgrounding call
+# #2) -> feedback_pending (enqueued to the Evaluator's worker thread) ->
+# terminal complete/needs_review.
+EVAL_DEFERRED = "deferred"
+EVAL_CLASSIFIED = "classified"
+EVAL_FEEDBACK_PENDING = "feedback_pending"
+EVAL_COMPLETE = "complete"
+EVAL_NEEDS_REVIEW = "needs_review"
+
 
 @dataclass(frozen=True)
 class SessionRecord:
@@ -285,5 +296,80 @@ class SessionStore:
         rows = self._conn.execute(
             "SELECT * FROM qa_records WHERE session_id = ? ORDER BY rowid",
             (session_id,),
+        ).fetchall()
+        return [_qa_from_row(row) for row in rows]
+
+    def get_qa_record(self, session_id: str, question_id: str) -> QARecordRow | None:
+        """Single-row lookup -- the Evaluator's `classify()` (the
+        `ClassificationProvider` seam, docs/system-design/
+        12-phase-7-evaluator-design.md §12.2) only receives `question_id`/
+        `answer_text`, so it needs this to recover `question_text`/
+        `grounding_chunk_ids` for the LLM call."""
+        row = self._conn.execute(
+            "SELECT * FROM qa_records WHERE session_id = ? AND question_id = ?",
+            (session_id, question_id),
+        ).fetchone()
+        return _qa_from_row(row) if row else None
+
+    # -- evaluation persistence (Phase 7, docs/system-design/
+    # 12-phase-7-evaluator-design.md §12.2/§12.5) -----------------------------
+
+    def set_eval_classified(self, session_id: str, question_id: str, eval_json: str) -> None:
+        """Call #1 done: persisted durably *before* the feedback call is
+        even enqueued, so a crash before backgrounding starts never loses
+        the classification (NFR3)."""
+        self._conn.execute(
+            "UPDATE qa_records SET eval_status = ?, eval_json = ? "
+            "WHERE session_id = ? AND question_id = ?",
+            (EVAL_CLASSIFIED, eval_json, session_id, question_id),
+        )
+        self._conn.commit()
+
+    def set_eval_feedback_pending(self, session_id: str, question_id: str) -> None:
+        """Marks a record as enqueued to the Evaluator's worker thread --
+        distinguishes "call #1 done, call #2 not started" (`classified`)
+        from "call #2 in flight" for `viva resume`'s requeue logic."""
+        self._conn.execute(
+            "UPDATE qa_records SET eval_status = ? WHERE session_id = ? AND question_id = ?",
+            (EVAL_FEEDBACK_PENDING, session_id, question_id),
+        )
+        self._conn.commit()
+
+    def set_eval_complete(
+        self, session_id: str, question_id: str, eval_json: str, needs_review: bool
+    ) -> None:
+        """Call #2 done: the merged `EvaluationRecord` (classification +
+        feedback) replaces the classification-only `eval_json` written by
+        `set_eval_classified`."""
+        status = EVAL_NEEDS_REVIEW if needs_review else EVAL_COMPLETE
+        self._conn.execute(
+            "UPDATE qa_records SET eval_status = ?, eval_json = ? "
+            "WHERE session_id = ? AND question_id = ?",
+            (status, eval_json, session_id, question_id),
+        )
+        self._conn.commit()
+
+    def mark_eval_needs_review(self, session_id: str, question_id: str) -> None:
+        """`FINALIZING_EVALS` flush-timeout path (docs/system-design/
+        12-phase-7-evaluator-design.md §12.6): call #2 never finished in
+        time, so the record stays at whatever `eval_json` call #1 already
+        wrote (classification-only) -- degraded, never lost."""
+        self._conn.execute(
+            "UPDATE qa_records SET eval_status = ? WHERE session_id = ? AND question_id = ?",
+            (EVAL_NEEDS_REVIEW, session_id, question_id),
+        )
+        self._conn.commit()
+
+    def get_records_needing_feedback(self, session_id: str) -> list[QARecordRow]:
+        """Records a prior process left mid-evaluation when it died --
+        `eval_status` in (`classified`, `feedback_pending`) -- for
+        `viva resume`'s re-enqueue (docs/system-design/
+        12-phase-7-evaluator-design.md §12.6). `grounding_chunk_ids` plus
+        the persisted question/answer text is sufficient to fully
+        regenerate feedback; nothing here is time-sensitive."""
+        rows = self._conn.execute(
+            "SELECT * FROM qa_records WHERE session_id = ? AND eval_status IN (?, ?) "
+            "ORDER BY rowid",
+            (session_id, EVAL_CLASSIFIED, EVAL_FEEDBACK_PENDING),
         ).fetchall()
         return [_qa_from_row(row) for row in rows]
