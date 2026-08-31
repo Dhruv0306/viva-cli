@@ -66,6 +66,7 @@ def _config(tmp_path, **overrides) -> Config:
         line_window_size=60, line_window_overlap=15, vector_db_path="./data/chroma",
         top_k_retrieval=5, session_db_path=str(tmp_path / "viva.db"),
         avg_time_per_category_seconds=1, question_similarity_threshold=0.90,
+        eval_flush_timeout_seconds=1,
     )
     values.update(overrides)
     return Config(**values)

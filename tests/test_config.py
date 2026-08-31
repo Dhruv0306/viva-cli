@@ -26,6 +26,7 @@ def _clean_env(monkeypatch):
         "SESSION_DB_PATH",
         "AVG_TIME_PER_CATEGORY_SECONDS",
         "QUESTION_SIMILARITY_THRESHOLD",
+        "EVAL_FLUSH_TIMEOUT_SECONDS",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -57,6 +58,21 @@ def test_defaults_applied(monkeypatch):
     assert config.session_db_path == "./data/viva.db"
     assert config.avg_time_per_category_seconds == 180
     assert config.question_similarity_threshold == 0.90
+    assert config.eval_flush_timeout_seconds == 60
+
+
+def test_invalid_eval_flush_timeout_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("EVAL_FLUSH_TIMEOUT_SECONDS", "0")
+    with pytest.raises(ConfigError, match="EVAL_FLUSH_TIMEOUT_SECONDS"):
+        Config.load(env_file=None)
+
+
+def test_eval_flush_timeout_accepts_a_custom_value(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("EVAL_FLUSH_TIMEOUT_SECONDS", "15.5")
+    config = Config.load(env_file=None)
+    assert config.eval_flush_timeout_seconds == 15.5
 
 
 def test_invalid_question_similarity_threshold_raises(monkeypatch):

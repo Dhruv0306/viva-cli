@@ -54,6 +54,7 @@ def _config(vector_db_path: str, max_questions: int = 8) -> Config:
         line_window_size=60, line_window_overlap=15, vector_db_path=vector_db_path, top_k_retrieval=5,
         session_db_path="./data/viva.db", avg_time_per_category_seconds=180,
         question_similarity_threshold=0.90,
+        eval_flush_timeout_seconds=60,
     )
 
 
