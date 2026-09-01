@@ -170,8 +170,9 @@ summaries you would like me to synthesize...") -- which only makes sense
 if the individual summaries it was asked to combine were themselves
 empty.
 
-Root cause: `summarize_file`/`reduce` cap `num_predict` (`classify_answer`/`generate_feedback`, docs/system-design/12-phase-7-evaluator-design.md 00a712.2
-doesn't -- it lets generation run unbounded until the model finishes).
+Root cause: `summarize_file`/`reduce` cap `num_predict` (`classify_answer`/
+`generate_feedback`, docs/system-design/12-phase-7-evaluator-design.md
+§12.2, doesn't -- it lets generation run unbounded until the model finishes).
 A reasoning/"thinking"-capable model spends that capped budget on hidden
 `<think>...</think>` reasoning before ever emitting visible `content`,
 so generation gets cut off mid-thought and the visible content comes
