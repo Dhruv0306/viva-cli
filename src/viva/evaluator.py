@@ -89,6 +89,13 @@ class Evaluator(ClassificationProvider):
         self._collection_name: str | None = None
         self._queue: "queue.Queue[object]" = queue.Queue()
         self._worker: threading.Thread | None = None
+        # Set by flush() if the worker doesn't finish within its timeout
+        # (§12.6). Checked by _run_feedback before every persist so a job
+        # that was already given up on -- and whose record flush() has
+        # already marked needs_review -- can't silently overwrite that
+        # terminal decision (or write against a connection the caller may
+        # have since closed) once it eventually finishes late.
+        self._abandoned = threading.Event()
 
     def bind_session(self, session_id: str, collection_name: str) -> None:
         """Must be called once, before the first `classify()`, right
@@ -158,6 +165,12 @@ class Evaluator(ClassificationProvider):
                 self._queue.task_done()
 
     def _run_feedback(self, question_id: str) -> None:
+        if self._abandoned.is_set():
+            # flush() already gave up on this session and marked
+            # whatever was still pending needs_review -- don't waste an
+            # LLM call on a job that can't be persisted anyway.
+            return
+
         record = self._store.get_qa_record(self._session_id, question_id)
         if record is None or not record.question_text:
             return
@@ -174,6 +187,19 @@ class Evaluator(ClassificationProvider):
         )
         feedback = call_result.result
         merged = EvaluationRecord.from_calls(classification, feedback)
+
+        if self._abandoned.is_set():
+            # flush() gave up while this call was in flight. The record
+            # has already been finalized as needs_review -- a late
+            # result, however good, must not silently clobber that
+            # terminal state (and by this point the caller may have
+            # already closed the store).
+            logger.debug(
+                "Evaluator abandoned before feedback for %s could be persisted; discarding",
+                question_id,
+            )
+            return
+
         self._store.set_eval_complete(
             self._session_id, question_id, merged.model_dump_json(),
             needs_review=merged.needs_review,
@@ -204,7 +230,15 @@ class Evaluator(ClassificationProvider):
         session end can't hang indefinitely on a stuck model call. Any
         record still unfinished when the timeout hits is marked
         `needs_review` -- degraded (classification-only, no feedback
-        text) but never lost (NFR3)."""
+        text) but never lost (NFR3).
+
+        If the worker is still alive when the timeout expires, its
+        current (and any subsequently dequeued) job is abandoned: the
+        `_abandoned` flag is set *before* marking records needs_review,
+        so `_run_feedback` won't let a job that finishes late overwrite
+        the terminal state this method just wrote, no matter how long
+        the worker actually takes to notice and exit.
+        """
         if self._worker is None:
             return
         self._queue.put(_SENTINEL)
@@ -213,5 +247,6 @@ class Evaluator(ClassificationProvider):
             # The worker is stuck on whatever job it's currently
             # processing -- everything still queued behind it (including
             # the sentinel) never got a chance to run.
+            self._abandoned.set()
             for record in self._store.get_records_needing_feedback(self._session_id):
                 self._store.mark_eval_needs_review(self._session_id, record.question_id)

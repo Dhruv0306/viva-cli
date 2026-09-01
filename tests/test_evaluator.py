@@ -253,6 +253,79 @@ def test_flush_timeout_marks_unfinished_work_needs_review_without_losing_classif
     evaluator.flush(timeout=2.0)
 
 
+def test_late_completing_job_does_not_overwrite_flush_timeout_terminal_state(
+    session_store, vector_store, collection
+):
+    """The worker thread doesn't die the instant flush()'s timeout
+    expires -- it's still blocked on whatever LLM call it was mid-way
+    through, and eventually that call returns (it was slow, not stuck
+    forever). Without the abandoned-flag guard, that late completion
+    would silently overwrite flush()'s needs_review verdict with
+    'complete' well after the Orchestrator (and whatever read the
+    'terminal' eval_status in the meantime, e.g. a session summary) had
+    already moved on. Regression test for a real Copilot PR review
+    finding."""
+    _seed_answered_question(session_store)
+    llm_client = _FakeLLMClient()
+    llm_client.feedback_block_event = threading.Event()
+    evaluator = Evaluator(session_store, vector_store, llm_client)
+    evaluator.bind_session("sess1", collection)
+    evaluator.classify("q1", "It works by doing Y.")
+
+    evaluator.flush(timeout=0.2)  # times out -- worker still stuck
+    assert session_store.get_qa_record("sess1", "q1").eval_status == "needs_review"
+
+    # The stuck call finally "returns" late, well after flush() already
+    # gave up and moved on.
+    llm_client.feedback_block_event.set()
+    evaluator._worker.join(timeout=2.0)  # wait for the late completion to run its course
+
+    # Must still be needs_review -- the late result was discarded, not
+    # written over the terminal state.
+    final_record = session_store.get_qa_record("sess1", "q1")
+    assert final_record.eval_status == "needs_review"
+    assert json.loads(final_record.eval_json)["classification"] == "partial"
+
+
+def test_abandoned_flag_skips_llm_call_for_still_queued_jobs(
+    session_store, vector_store, collection
+):
+    """A second job still sitting in the queue when flush() times out on
+    the first must not trigger a wasted generate_feedback call once the
+    worker gets around to it -- _run_feedback's entry check short-
+    circuits before calling the LLM client at all."""
+    session_store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    session_store.save_plan(
+        "sess1",
+        [
+            QuestionPlanItem(id="q1", category="architecture", target_module=None),
+            QuestionPlanItem(id="q2", category="architecture", target_module=None),
+        ],
+    )
+    session_store.record_question_asked("sess1", "q1", "Q1 text", ["c1"])
+    session_store.record_answer("sess1", "q1", "answer 1")
+    session_store.record_question_asked("sess1", "q2", "Q2 text", ["c1"])
+    session_store.record_answer("sess1", "q2", "answer 2")
+
+    llm_client = _FakeLLMClient()
+    llm_client.feedback_block_event = threading.Event()  # q1's feedback call blocks forever
+    evaluator = Evaluator(session_store, vector_store, llm_client)
+    evaluator.bind_session("sess1", collection)
+    evaluator.classify("q1", "answer 1")  # worker picks this up and blocks
+    evaluator.classify("q2", "answer 2")  # queued behind q1, never reached before flush gives up
+
+    evaluator.flush(timeout=0.2)
+
+    # Unblock q1's call; the worker will finish it (discarded, see the
+    # test above) then dequeue q2 -- _abandoned should stop it from
+    # calling generate_feedback for q2 at all.
+    llm_client.feedback_block_event.set()
+    evaluator._worker.join(timeout=2.0)
+
+    feedback_calls_for_q2 = [c for c in llm_client.feedback_calls if c[0] == "Q2 text"]
+    assert feedback_calls_for_q2 == []
+
+
 # -- resume ---------------------------------------------------------------------
 
 def test_requeue_unfinished_before_bind_session_raises(session_store, vector_store):
