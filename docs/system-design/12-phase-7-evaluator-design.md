@@ -52,6 +52,16 @@ schema-validation repair loop and graceful-fallback pattern:
   unsubstantiated critical verdict is worse than an admittedly-incomplete
   one.
 
+  `needs_review` on both `ClassificationResult` and `EvaluationFeedback`
+  is client-set, never model-set — real-world validation against
+  `gemma4:e4b` showed the model populating it unprompted otherwise, with
+  no way to tell afterward whether a `true` came from FR22 logic or the
+  model's own opinion. `LLMClient` enforces this at two points: the field
+  is stripped from the schema handed to the model's constrained decoding
+  (`_model_facing_schema()`), and reset to `False` immediately after
+  parsing, before any FR22 logic runs, discarding it even if a model
+  ignores the schema and sends it anyway.
+
 A new `Evaluator` (`src/viva/evaluator.py`) owns both calls plus
 persistence and is the real `ClassificationProvider` the orchestrator
 constructs in place of `NullClassificationProvider`. `EvaluationRecord`
@@ -99,6 +109,32 @@ ordering, at the cost of feedback for answer *N* possibly still running
 while the user reads question *N+1* — the acceptable overlap design.md §7
 asks for. If the user answers faster than the worker drains, the queue
 simply grows; nothing blocks the live loop.
+
+### Known limitation: single-model Ollama serializes inference, so "background" doesn't mean "concurrent" at the model
+
+Real-world validation (a live session against `gemma4:e4b`, one Ollama
+instance, no `OLLAMA_NUM_PARALLEL` override) surfaced a gap between this
+section's reasoning and what actually happens: the background thread is
+real Python-level concurrency, but both the main thread's next
+`classify_answer`/`generate_question` call and the worker thread's
+`generate_feedback` call are HTTP requests to the *same* Ollama server.
+With one model loaded and no parallel-request override, Ollama processes
+one inference request at a time — so whichever call reaches the server
+first occupies the model, and the other queues behind it regardless of
+which Python thread issued it. The validation run saw this manifest as
+per-question delays ranging from a few seconds up to roughly a minute,
+comfortably inside `EVAL_FLUSH_TIMEOUT_SECONDS`'s default (60s) but real
+and noticeable.
+
+This isn't a bug in the queue/thread/lock mechanics — those behave
+exactly as designed. It's a resource-contention ceiling this design
+doesn't remove, only backgrounds around: real overlap between the next
+question and the previous answer's feedback call requires the model
+server itself to be able to run two requests concurrently, which a
+single-model Ollama instance without `OLLAMA_NUM_PARALLEL >= 2` cannot
+do. Whether to raise that setting (hardware/GPU-memory permitting) is a
+deployment decision outside this design's scope, not something the
+Evaluator should assume a default for.
 
 ## 12.5 `eval_status` state model
 
