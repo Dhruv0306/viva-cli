@@ -64,6 +64,17 @@ def _get_unit_interval_float(name: str, default: str) -> float:
     return value
 
 
+def _get_positive_float(name: str, default: str) -> float:
+    raw = os.getenv(name, default)
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from exc
+    if value <= 0:
+        raise ConfigError(f"{name} must be positive, got {value}")
+    return value
+
+
 def _get_optional_positive_int(name: str) -> int | None:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -118,6 +129,13 @@ class Config:
     # anyone who goes looking for what reads it and finds nothing.
     avg_time_per_category_seconds: int
     question_similarity_threshold: float
+
+    # --- Evaluation (Phase 7, docs/system-design/12-phase-7-evaluator-design.md) ---
+    # Bound on how long FINALIZING_EVALS waits for the Evaluator's
+    # background worker thread to drain before giving up and marking
+    # whatever's left needs_review (§12.6) -- session end must never hang
+    # indefinitely on one stuck model call.
+    eval_flush_timeout_seconds: float
 
     @classmethod
     def load(cls, env_file: str | None = ".env") -> "Config":
@@ -212,6 +230,11 @@ class Config:
             "QUESTION_SIMILARITY_THRESHOLD", "0.90"
         )
 
+        # docs/system-design/12-phase-7-evaluator-design.md §12.6:
+        # FINALIZING_EVALS's bound on draining the Evaluator's background
+        # worker before giving up on whatever's left.
+        eval_flush_timeout_seconds = _get_positive_float("EVAL_FLUSH_TIMEOUT_SECONDS", "60")
+
         return cls(
             llm_model=llm_model,
             embedding_model=embedding_model,
@@ -233,4 +256,5 @@ class Config:
             session_db_path=session_db_path,
             avg_time_per_category_seconds=avg_time_per_category_seconds,
             question_similarity_threshold=question_similarity_threshold,
+            eval_flush_timeout_seconds=eval_flush_timeout_seconds,
         )

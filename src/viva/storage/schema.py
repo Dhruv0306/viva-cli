@@ -82,12 +82,16 @@ def connect(db_path: str) -> sqlite3.Connection:
     """Open a connection to the session database, creating parent
     directories and the schema if they don't exist yet.
 
-    One writer (the Orchestrator, design.md §8) -- callers should not
-    fan this connection out across threads/processes.
+    `check_same_thread=False`: as of Phase 7 (docs/system-design/
+    12-phase-7-evaluator-design.md §12.4), the Evaluator's background
+    worker thread also writes through this connection alongside the
+    Orchestrator's main thread. `SessionStore` serializes all access
+    itself via a lock (see `SessionStore._lock`) -- this flag only lifts
+    sqlite3's same-thread check, it doesn't replace that serialization.
     """
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     init_db(conn)

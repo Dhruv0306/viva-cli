@@ -170,12 +170,13 @@ summaries you would like me to synthesize...") -- which only makes sense
 if the individual summaries it was asked to combine were themselves
 empty.
 
-Root cause: `summarize_file`/`reduce` cap `num_predict` (`evaluate_answer`
-doesn't -- it lets generation run unbounded until the model finishes).
+Root cause: `summarize_file`/`reduce` cap `num_predict` (`classify_answer`/
+`generate_feedback`, docs/system-design/12-phase-7-evaluator-design.md
+§12.2, doesn't -- it lets generation run unbounded until the model finishes).
 A reasoning/"thinking"-capable model spends that capped budget on hidden
 `<think>...</think>` reasoning before ever emitting visible `content`,
 so generation gets cut off mid-thought and the visible content comes
-back empty. `evaluate_answer` never hit this because nothing bounds how
+back empty. `classify_answer`/`generate_feedback` never hit this because nothing bounds how
 long it can think before answering.
 
 Fix: pass `think=False` explicitly on every `summarize_file`/`reduce`
@@ -191,7 +192,7 @@ placeholder string is returned instead of `""`, so a summarization
 failure is visible in the profile output rather than silently producing
 a blank `architecture_summary`/`modules[].summary`.
 
-`evaluate_answer` was deliberately left unbounded rather than also
+`classify_answer`/`generate_feedback` were deliberately left unbounded rather than also
 getting `think=False` -- it already works correctly (verified via the
 Phase 1 pressure-test harness), and changing working, tested behavior to
 fix an unrelated bug elsewhere isn't the right move without its own

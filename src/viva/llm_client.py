@@ -1,9 +1,9 @@
 """LLM client interface and the Ollama implementation.
 
 Per docs/design.md §10: `LLMClient` is a thin interface so nothing else in
-the pipeline imports Ollama directly (NFR5). Phase 0 only implements the one
-call the walking skeleton needs — `evaluate_answer` — using the 3-layer
-structured-output reliability strategy from
+the pipeline imports Ollama directly (NFR5). Phase 0 implemented the one
+call the walking skeleton needed -- originally named `evaluate_answer` --
+using the 3-layer structured-output reliability strategy from
 docs/system-design/01-resolved-decisions.md §1.2:
 
   1. Grammar/schema-constrained decoding (Ollama's `format=<json schema>`).
@@ -12,8 +12,10 @@ docs/system-design/01-resolved-decisions.md §1.2:
      failure, fall back to a `needs_review: true` record rather than
      blocking (never a hard failure).
 
-The heavier "small-schema decomposition" and "async free-text call" pieces
-of that strategy are Phase 7 scope once the full Evaluation Record exists.
+Phase 7 (docs/system-design/12-phase-7-evaluator-design.md §12.2) splits
+that one call into two, both following the same 3-layer strategy:
+`classify_answer` (the fast verdict, `evaluate_answer` renamed) and
+`generate_feedback` (the free-text detail, conditioned on the verdict).
 """
 from __future__ import annotations
 
@@ -21,11 +23,12 @@ import abc
 import logging
 import time
 from dataclasses import dataclass
+from typing import Union
 
 import ollama
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from viva.schemas import EvaluationResult
+from viva.schemas import ClassificationResult, EvaluationFeedback
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +80,7 @@ need parameter Y" twice about the same code just because the phrasing \
 differs) -- pick a different angle, method, parameter, or code path \
 from the context instead."""
 
-EVALUATOR_SYSTEM_PROMPT = """You are grading a candidate's spoken answer in a \
+CLASSIFICATION_SYSTEM_PROMPT = """You are grading a candidate's spoken answer in a \
 code-grounded oral exam ("viva") about their own project.
 
 Judge ONLY against the provided code context. If the code does not clearly \
@@ -97,28 +100,93 @@ never produce an ungrounded criticism.
 
 Respond with a `summary` of one or two sentences explaining the verdict."""
 
+FEEDBACK_SYSTEM_PROMPT = """You are writing detailed feedback on a candidate's \
+spoken answer in a code-grounded oral exam ("viva") about their own project. \
+A verdict (`classification`, `summary`) has already been produced for this \
+answer -- your job is to explain it in more depth, not to re-grade it.
+
+Judge ONLY against the provided code context. Every entry in `missed` or \
+`did_wrong` MUST cite the specific file/function that grounds it in \
+`cited_file` (e.g. "src/payments/handler.py:42") -- never produce an \
+ungrounded criticism. If you cannot point to a specific citation for a \
+point, leave it out rather than including it uncited.
+
+Tailor the balance of fields to the verdict already given: a "correct" \
+answer should have a full `did_well` and little or nothing in `missed`/\
+`did_wrong`; an "incorrect" answer should have little or nothing in \
+`did_well`. Do not pad a list just to fill it.
+
+`improvement` is one or two sentences of forward-looking, actionable \
+advice -- not a repeat of `missed`/`did_wrong`, but what to go read or \
+think about next."""
+
 
 @dataclass(frozen=True)
 class LLMCallResult:
     """Wraps a structured LLM result with the latency it took to produce.
 
+    `result` is `ClassificationResult` for `classify_answer` calls or
+    `EvaluationFeedback` for `generate_feedback` calls -- one wrapper
+    shape for both, since callers (viva.evaluator) already know which
+    call they made and don't need this to discriminate.
+
     `duration_seconds` is what the caller (see viva.timer) excludes from the
     user-facing answer clock (docs/design.md §7, FR17).
     """
 
-    result: EvaluationResult
+    result: Union[ClassificationResult, EvaluationFeedback]
     duration_seconds: float
     attempts: int
+
+
+def _model_facing_schema(model_cls: type[BaseModel]) -> dict:
+    """The JSON schema handed to Ollama's `format=` parameter, with
+    `needs_review` removed.
+
+    `needs_review` is documented on both `ClassificationResult` and
+    `EvaluationFeedback` as client-set, not model-set (docs/design.md
+    §4) -- but leaving it in the schema we hand the model is an
+    invitation for the model to populate it anyway, which a real run
+    against gemma4:e4b showed happening in practice: `needs_review: true`
+    values appearing on responses whose citations were actually fine,
+    with no way to tell after the fact whether the flag came from our
+    own FR22 downgrade logic or the model's own unprompted opinion.
+    Removing the field from the schema is the first of two defenses (see
+    the `model_copy(update={"needs_review": False})` immediately after
+    parsing in `classify_answer`/`generate_feedback`, which discards it
+    even if a model ignores the schema and sends it anyway).
+    """
+    schema = model_cls.model_json_schema()
+    schema["properties"].pop("needs_review", None)
+    if "required" in schema and "needs_review" in schema["required"]:
+        schema["required"] = [f for f in schema["required"] if f != "needs_review"]
+    return schema
 
 
 class LLMClient(abc.ABC):
     """Thin interface so pipeline code never imports a backend directly."""
 
     @abc.abstractmethod
-    def evaluate_answer(
+    def classify_answer(
         self, question: str, ground_truth_context: str, user_answer: str
     ) -> LLMCallResult:
-        """Produce a schema-validated EvaluationResult for one Q&A pair."""
+        """Call #1 (docs/system-design/12-phase-7-evaluator-design.md
+        §12.2): produce a schema-validated `ClassificationResult` for one
+        Q&A pair. Fast, drives FR14's follow-up decision synchronously."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def generate_feedback(
+        self,
+        question: str,
+        ground_truth_context: str,
+        user_answer: str,
+        classification: ClassificationResult,
+    ) -> LLMCallResult:
+        """Call #2: produce a schema-validated `EvaluationFeedback` for
+        one Q&A pair, conditioned on call #1's already-produced verdict.
+        Slower; the Evaluator backgrounds this (docs/system-design/
+        12-phase-7-evaluator-design.md §12.4)."""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -201,12 +269,12 @@ class OllamaClient(LLMClient):
         # hang the whole process indefinitely with no error and no signal
         # to the caller (surfaced by the pressure-test harness hanging on
         # a larger candidate model). 120s is generous for a single
-        # evaluate_answer call on commodity 7B-14B hardware; callers that
-        # need something different (e.g. a slower box, a much bigger model)
-        # can override it.
+        # classify_answer/generate_feedback call on commodity 7B-14B
+        # hardware; callers that need something different (e.g. a slower
+        # box, a much bigger model) can override it.
         self._client = ollama.Client(host=host, timeout=timeout)
 
-    def evaluate_answer(
+    def classify_answer(
         self, question: str, ground_truth_context: str, user_answer: str
     ) -> LLMCallResult:
         prompt = self._build_prompt(question, ground_truth_context, user_answer)
@@ -218,7 +286,7 @@ class OllamaClient(LLMClient):
         for attempt in (1, 2):
             attempts = attempt
             messages = [
-                {"role": "system", "content": EVALUATOR_SYSTEM_PROMPT},
+                {"role": "system", "content": CLASSIFICATION_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ]
             if last_error is not None:
@@ -236,16 +304,22 @@ class OllamaClient(LLMClient):
             response = self._client.chat(
                 model=self._model,
                 messages=messages,
-                format=EvaluationResult.model_json_schema(),
+                format=_model_facing_schema(ClassificationResult),
                 options={"temperature": self._temperature},
             )
             raw = response["message"]["content"]
 
             try:
-                parsed = EvaluationResult.model_validate_json(raw)
+                parsed = ClassificationResult.model_validate_json(raw)
             except ValidationError as exc:
                 last_error = str(exc)
                 continue
+
+            # Discard whatever the model sent for needs_review (should be
+            # nothing, given _model_facing_schema, but a model can ignore
+            # the schema) -- this field is client-set only, see
+            # _model_facing_schema's docstring.
+            parsed = parsed.model_copy(update={"needs_review": False})
 
             # Enforce FR22 at the application layer too, not just via the
             # system prompt: a partial/incorrect verdict with no citation is
@@ -258,10 +332,100 @@ class OllamaClient(LLMClient):
 
         # Both attempts failed schema validation: repair loop exhausted.
         # Never block the session on one bad parse (design.md §4/§9).
-        fallback = EvaluationResult(
+        fallback = ClassificationResult(
             classification="not_attempted",
             summary="Automated evaluation could not be produced reliably for this answer.",
             cited_file=None,
+            needs_review=True,
+        )
+        duration = time.monotonic() - start
+        return LLMCallResult(result=fallback, duration_seconds=duration, attempts=attempts)
+
+    def generate_feedback(
+        self,
+        question: str,
+        ground_truth_context: str,
+        user_answer: str,
+        classification: ClassificationResult,
+    ) -> LLMCallResult:
+        prompt = self._build_prompt(question, ground_truth_context, user_answer) + (
+            f"\n[VERDICT_ALREADY_GIVEN]\nclassification: {classification.classification}\n"
+            f"summary: {classification.summary}\n"
+        )
+
+        start = time.monotonic()
+        attempts = 0
+        last_error: str | None = None
+
+        for attempt in (1, 2):
+            attempts = attempt
+            messages = [
+                {"role": "system", "content": FEEDBACK_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
+            if last_error is not None:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous response failed schema validation "
+                            f"with this error: {last_error}\n"
+                            "Return ONLY valid JSON matching the schema."
+                        ),
+                    }
+                )
+
+            response = self._client.chat(
+                model=self._model,
+                messages=messages,
+                format=_model_facing_schema(EvaluationFeedback),
+                options={"temperature": self._temperature},
+            )
+            raw = response["message"]["content"]
+
+            try:
+                parsed = EvaluationFeedback.model_validate_json(raw)
+            except ValidationError as exc:
+                last_error = str(exc)
+                continue
+
+            # Discard whatever the model sent for needs_review, same as
+            # classify_answer -- see _model_facing_schema's docstring.
+            parsed = parsed.model_copy(update={"needs_review": False})
+
+            # FR22 at the application layer: drop any missed/did_wrong
+            # entry with no citation rather than surface it ungrounded.
+            grounded_missed = [p for p in parsed.missed if p.cited_file]
+            grounded_did_wrong = [p for p in parsed.did_wrong if p.cited_file]
+            dropped_any = (
+                len(grounded_missed) < len(parsed.missed)
+                or len(grounded_did_wrong) < len(parsed.did_wrong)
+            )
+            needs_review = False
+            if dropped_any and classification.classification in ("partial", "incorrect") \
+                    and not grounded_missed and not grounded_did_wrong:
+                # Dropping uncited entries emptied both lists on a
+                # critical verdict -- an unsubstantiated criticism is
+                # worse than an admittedly incomplete one.
+                needs_review = True
+            parsed = parsed.model_copy(
+                update={
+                    "missed": grounded_missed,
+                    "did_wrong": grounded_did_wrong,
+                    "needs_review": needs_review,
+                }
+            )
+
+            duration = time.monotonic() - start
+            return LLMCallResult(result=parsed, duration_seconds=duration, attempts=attempts)
+
+        # Both attempts failed schema validation: repair loop exhausted.
+        # Never block the session on one bad parse (design.md §4/§9).
+        fallback = EvaluationFeedback(
+            did_well=[],
+            missed=[],
+            did_wrong=[],
+            improvement="Automated feedback could not be produced reliably for this answer.",
             needs_review=True,
         )
         duration = time.monotonic() - start
@@ -341,11 +505,12 @@ class OllamaClient(LLMClient):
             ],
             # Disable extended thinking explicitly for reasoning-capable
             # models. Discovered against a real Ollama run: summarize_file/
-            # reduce cap num_predict (evaluate_answer doesn't -- see below),
-            # and a thinking model spends that budget on hidden <think>
-            # reasoning before ever emitting visible content, coming back
-            # empty. evaluate_answer never hit this because it sets no
-            # num_predict cap at all, giving a thinking model room to
+            # reduce cap num_predict (classify_answer/generate_feedback
+            # don't -- see below), and a thinking model spends that budget
+            # on hidden <think> reasoning before ever emitting visible
+            # content, coming back empty. classify_answer/generate_feedback
+            # never hit this because they set no num_predict cap at all,
+            # giving a thinking model room to
             # finish reasoning before the budget runs out -- but doing
             # that here too would make the Map step (one call per sampled
             # file, potentially hundreds per repo) unpredictably slow for

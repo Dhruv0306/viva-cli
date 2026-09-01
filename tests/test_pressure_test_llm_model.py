@@ -15,7 +15,7 @@ from pressure_test_llm_model import (  # noqa: E402
     run_repetitions,
 )
 from viva.llm_client import LLMCallResult  # noqa: E402
-from viva.schemas import EvaluationResult  # noqa: E402
+from viva.schemas import ClassificationResult  # noqa: E402
 
 
 SAMPLE = {
@@ -28,7 +28,7 @@ SAMPLE = {
 
 
 def _eval(classification, cited_file=None, needs_review=False):
-    return EvaluationResult(
+    return ClassificationResult(
         classification=classification,
         summary="s",
         cited_file=cited_file,
@@ -62,14 +62,14 @@ def test_load_samples_returns_fixture_set():
 
 def test_run_repetitions_calls_client_n_times(mocker):
     client = mocker.Mock()
-    client.evaluate_answer.return_value = LLMCallResult(
+    client.classify_answer.return_value = LLMCallResult(
         result=_eval("correct"), duration_seconds=0.1, attempts=1
     )
     outcomes = run_repetitions(client, SAMPLE, repetitions=5)
     assert len(outcomes) == 5
     assert all(not o.is_call_error for o in outcomes)
-    assert client.evaluate_answer.call_count == 5
-    client.evaluate_answer.assert_called_with(
+    assert client.classify_answer.call_count == 5
+    client.classify_answer.assert_called_with(
         question="q", ground_truth_context="ctx", user_answer="a"
     )
 
@@ -79,7 +79,7 @@ def test_run_repetitions_tags_exceptions_as_call_errors_not_model_results(mocker
     # timeout) must never be indistinguishable from the model genuinely
     # returning not_attempted.
     client = mocker.Mock()
-    client.evaluate_answer.side_effect = TimeoutError("read timed out")
+    client.classify_answer.side_effect = TimeoutError("read timed out")
     outcomes = run_repetitions(client, SAMPLE, repetitions=3)
     assert len(outcomes) == 3
     assert all(o.is_call_error for o in outcomes)
@@ -88,7 +88,7 @@ def test_run_repetitions_tags_exceptions_as_call_errors_not_model_results(mocker
 
 def test_run_repetitions_mixes_valid_and_error_outcomes(mocker):
     client = mocker.Mock()
-    client.evaluate_answer.side_effect = [
+    client.classify_answer.side_effect = [
         LLMCallResult(result=_eval("correct"), duration_seconds=0.1, attempts=1),
         TimeoutError("boom"),
         LLMCallResult(result=_eval("correct"), duration_seconds=0.1, attempts=1),

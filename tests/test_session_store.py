@@ -208,3 +208,126 @@ def test_requeue_orphaned_asked_items_returns_zero_when_none_orphaned(store):
     store.save_plan("sess1", _plan_items())
 
     assert store.requeue_orphaned_asked_items("sess1") == 0
+
+
+def test_get_qa_record_returns_single_row(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "How does X work?", ["chunk1"])
+
+    record = store.get_qa_record("sess1", "q1")
+
+    assert record is not None
+    assert record.question_text == "How does X work?"
+    assert record.grounding_chunk_ids == ["chunk1"]
+
+
+def test_get_qa_record_returns_none_for_unknown_question(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+
+    assert store.get_qa_record("sess1", "nope") is None
+
+
+def test_set_eval_classified_updates_status_and_json(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "an answer")
+
+    store.set_eval_classified("sess1", "q1", '{"classification": "correct"}')
+
+    record = store.get_qa_record("sess1", "q1")
+    assert record.eval_status == "classified"
+    assert record.eval_json == '{"classification": "correct"}'
+
+
+def test_set_eval_feedback_pending_updates_status_only(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "an answer")
+    store.set_eval_classified("sess1", "q1", '{"classification": "correct"}')
+
+    store.set_eval_feedback_pending("sess1", "q1")
+
+    record = store.get_qa_record("sess1", "q1")
+    assert record.eval_status == "feedback_pending"
+    assert record.eval_json == '{"classification": "correct"}'  # untouched
+
+
+def test_set_eval_complete_sets_complete_status_when_not_needs_review(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "an answer")
+
+    store.set_eval_complete("sess1", "q1", '{"classification": "correct", "did_well": []}', needs_review=False)
+
+    record = store.get_qa_record("sess1", "q1")
+    assert record.eval_status == "complete"
+    assert record.eval_json == '{"classification": "correct", "did_well": []}'
+
+
+def test_set_eval_complete_sets_needs_review_status_when_flagged(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "an answer")
+
+    store.set_eval_complete("sess1", "q1", '{"classification": "incorrect"}', needs_review=True)
+
+    assert store.get_qa_record("sess1", "q1").eval_status == "needs_review"
+
+
+def test_mark_eval_needs_review_preserves_existing_eval_json(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "an answer")
+    store.set_eval_classified("sess1", "q1", '{"classification": "partial"}')
+
+    store.mark_eval_needs_review("sess1", "q1")
+
+    record = store.get_qa_record("sess1", "q1")
+    assert record.eval_status == "needs_review"
+    assert record.eval_json == '{"classification": "partial"}'
+
+
+def test_get_records_needing_feedback_returns_classified_and_feedback_pending_only(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "answer 1")
+    store.record_question_asked("sess1", "q2", "Q2 text", [])
+    store.record_answer("sess1", "q2", "answer 2")
+
+    store.set_eval_classified("sess1", "q1", '{"classification": "correct"}')
+    # q2 stays 'deferred' -- never even reached call #1.
+
+    needing_feedback = store.get_records_needing_feedback("sess1")
+
+    assert [r.question_id for r in needing_feedback] == ["q1"]
+
+
+def test_get_records_needing_feedback_includes_feedback_pending(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "answer 1")
+    store.set_eval_classified("sess1", "q1", '{"classification": "correct"}')
+    store.set_eval_feedback_pending("sess1", "q1")
+
+    needing_feedback = store.get_records_needing_feedback("sess1")
+
+    assert [r.question_id for r in needing_feedback] == ["q1"]
+
+
+def test_get_records_needing_feedback_excludes_terminal_states(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "answer 1")
+    store.set_eval_complete("sess1", "q1", '{"classification": "correct"}', needs_review=False)
+
+    assert store.get_records_needing_feedback("sess1") == []

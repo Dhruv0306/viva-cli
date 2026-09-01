@@ -13,7 +13,7 @@ classification call --
 This script turns that into an actual n=4-10 measurement: it runs a fixed set
 of hand-written sample answers (tests/fixtures/pressure_test_samples.json),
 repeated N times each, against every candidate model, using the *real*
-`OllamaClient.evaluate_answer` from Phase 0 -- no new evaluation code, this
+`OllamaClient.classify_answer` (originally evaluate_answer) -- no new evaluation code, this
 just loops and logs the existing call, per the open-questions.md
 recommendation that this is cheap precisely because the Phase 0 call
 already does the work.
@@ -56,7 +56,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from viva.llm_client import LLMClient, OllamaClient  # noqa: E402
-from viva.schemas import EvaluationResult  # noqa: E402
+from viva.schemas import ClassificationResult  # noqa: E402
 
 DEFAULT_SAMPLES_PATH = (
     Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "pressure_test_samples.json"
@@ -74,7 +74,7 @@ class RepetitionOutcome:
 
       1. The model genuinely judged the answer as blank/not attempted --
          a real, meaningful result.
-      2. `OllamaClient.evaluate_answer`'s own repair loop was exhausted
+      2. `OllamaClient.classify_answer`'s own repair loop was exhausted
          (bad JSON twice in a row) and fell back internally -- this *is* a
          real finding about the model's structured-output reliability
          (docs/system-design/01-resolved-decisions.md §1.2), not noise, so
@@ -91,7 +91,7 @@ class RepetitionOutcome:
     client itself.
     """
 
-    result: EvaluationResult
+    result: ClassificationResult
     is_call_error: bool = False
     error_message: str | None = None
 
@@ -173,7 +173,7 @@ def load_samples(path: Path = DEFAULT_SAMPLES_PATH) -> list[dict]:
 def run_repetitions(
     client: LLMClient, sample: dict, repetitions: int
 ) -> list[RepetitionOutcome]:
-    """Call evaluate_answer `repetitions` times for one sample, same inputs.
+    """Call classify_answer `repetitions` times for one sample, same inputs.
 
     Prints per-repetition progress to stderr (with elapsed time) so a slow
     or hung call is visible in real time rather than showing nothing until
@@ -187,14 +187,14 @@ def run_repetitions(
     for i in range(1, repetitions + 1):
         rep_start = time.monotonic()
         try:
-            call_result = client.evaluate_answer(
+            call_result = client.classify_answer(
                 question=sample["question"],
                 ground_truth_context=sample["ground_truth_context"],
                 user_answer=sample["user_answer"],
             )
             outcome = RepetitionOutcome(result=call_result.result)
         except Exception as exc:  # noqa: BLE001 - deliberately broad: keep the run alive
-            placeholder = EvaluationResult(
+            placeholder = ClassificationResult(
                 classification="not_attempted",
                 summary=f"Call failed: {exc}",
                 cited_file=None,

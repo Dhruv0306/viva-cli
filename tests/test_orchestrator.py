@@ -6,8 +6,9 @@ import pytest
 
 import viva.orchestrator as orchestrator_module
 from viva.analyzer.models import AnalysisResult, AnalysisStats, ModuleSummary
-from viva.classification import ClassificationProvider
+from viva.classification import ClassificationProvider, NullClassificationProvider
 from viva.config import Config
+from viva.evaluator import Evaluator
 from viva.indexer.models import IndexResult, IndexStats
 from viva.ingest.models import ExclusionStats, IngestResult, SampledFile
 from viva.orchestrator import (
@@ -66,6 +67,7 @@ def _config(tmp_path, **overrides) -> Config:
         line_window_size=60, line_window_overlap=15, vector_db_path="./data/chroma",
         top_k_retrieval=5, session_db_path=str(tmp_path / "viva.db"),
         avg_time_per_category_seconds=1, question_similarity_threshold=0.90,
+        eval_flush_timeout_seconds=1,
     )
     values.update(overrides)
     return Config(**values)
@@ -146,11 +148,19 @@ class FakeEmbeddingClient:
         return [[float(hash(text) % 100_000)] for text in texts]
 
 
-def _make_orchestrator(tmp_path, config, ui):
+def _make_orchestrator(tmp_path, config, ui, classification_provider=None):
     store = SessionStore(str(tmp_path / "viva.db"))
     orch = Orchestrator(
         config=config, session_store=store, ui=ui,
         llm_client=object(), embedding_client=FakeEmbeddingClient(), vector_store=object(),
+        # These orchestrator tests exercise the session loop itself, not
+        # evaluation (see test_evaluator.py for that) -- a real Evaluator
+        # would need a real vector_store/llm_client to back classify(),
+        # which none of these fixtures provide. Explicit
+        # NullClassificationProvider() default here matches Phase 6's
+        # tests' original intent, now that Orchestrator's own default
+        # (no classification_provider passed at all) is a real Evaluator.
+        classification_provider=classification_provider or NullClassificationProvider(),
     )
     return orch, store
 
@@ -547,6 +557,89 @@ class _AlwaysPartialProvider(ClassificationProvider):
         return "partial"
 
 
+class _SpyClassificationProvider(ClassificationProvider):
+    """Records lifecycle-hook calls so orchestrator wiring can be
+    verified directly, rather than only inferring "didn't crash" from
+    NullClassificationProvider's no-ops (docs/system-design/
+    12-phase-7-evaluator-design.md §12.2/§12.6)."""
+
+    def __init__(self):
+        self.bind_calls = []
+        self.requeue_calls = 0
+        self.flush_calls = []
+
+    def classify(self, question_id, answer_text):
+        return None
+
+    def bind_session(self, session_id, collection_name):
+        self.bind_calls.append((session_id, collection_name))
+
+    def requeue_unfinished(self):
+        self.requeue_calls += 1
+
+    def flush(self, timeout):
+        self.flush_calls.append(timeout)
+
+
+def test_start_binds_and_flushes_the_classification_provider(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    ui = FakeSessionUI(answers=["answer one", "answer two"])
+    spy = _SpyClassificationProvider()
+    orch, store = _make_orchestrator(tmp_path, config, ui, classification_provider=spy)
+
+    session_id = orch.start("https://github.com/owner/repo")
+
+    record = store.get_session(session_id)
+    assert spy.bind_calls == [(session_id, record.collection_name)]
+    assert spy.requeue_calls == 1  # harmless no-op on start(), see _run_live_session
+    assert spy.flush_calls == [config.eval_flush_timeout_seconds]
+
+
+def test_resume_requeues_unfinished_evaluation_work(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    ui = FakeSessionUI(answers=["answer one", "answer two"])
+    spy = _SpyClassificationProvider()
+    orch, store = _make_orchestrator(tmp_path, config, ui, classification_provider=spy)
+    session_id = orch.start("https://github.com/owner/repo")
+    spy.requeue_calls = 0  # reset -- only interested in the resume() call now
+
+    # start() already ran the session to COMPLETE; force it back to a
+    # resumable status to exercise resume()'s path specifically, same
+    # trick other resume tests in this file use.
+    store.update_status(session_id, "IN_PROGRESS")
+
+    ui2 = FakeSessionUI(answers=[])
+    orch2, _store2 = _make_orchestrator(tmp_path, config, ui2, classification_provider=spy)
+    orch2.resume(session_id)
+
+    assert spy.requeue_calls == 1
+
+
+def test_null_classification_provider_never_queues_followup_via_maybe_queue(tmp_path):
+    """The FR14 branch stays unreachable end-to-end with the null
+    provider injected, same as Phase 6."""
+    config = _config(tmp_path, max_followup_depth=1)
+    ui = FakeSessionUI(answers=[])
+    store = SessionStore(str(tmp_path / "viva.db"))
+    orch = Orchestrator(
+        config=config, session_store=store, ui=ui,
+        llm_client=object(), embedding_client=object(), vector_store=object(),
+        classification_provider=NullClassificationProvider(),
+    )
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    item = QuestionPlanItem(id="q1", category="architecture", target_module=None)
+    store.save_plan("sess1", [item])
+    store.record_question_asked("sess1", "q1", "text", [])
+    record = store.get_qa_record("sess1", "q1")
+
+    orch._maybe_queue_followup("sess1", record, "an answer")
+
+    pending_ids = {r.question_id for r in store.get_pending_plan_items("sess1")}
+    assert pending_ids == set()  # no follow-up queued
+
+
 def test_maybe_queue_followup_adds_item_when_classification_available(tmp_path):
     config = _config(tmp_path, max_followup_depth=1)
     ui = FakeSessionUI(answers=[])
@@ -591,16 +684,34 @@ def test_maybe_queue_followup_respects_max_depth(tmp_path):
     assert ids == {"q1", "q1_f1"}  # no q1_f2 -- max_followup_depth honored
 
 
-def test_null_classification_provider_never_queues_followup(tmp_path):
-    """Phase 6's real default -- the FR14 branch is unreachable end-to-end."""
+def test_null_classification_provider_always_returns_none(tmp_path):
+    """NullClassificationProvider's own behavior, tested directly --
+    Phase 6's real Orchestrator default, still available for injection
+    (e.g. these dedup/session-loop tests, which don't want a real
+    Evaluator's vector_store/llm_client requirements)."""
     config = _config(tmp_path)
     ui = FakeSessionUI(answers=["weak answer", "weak answer"])
     store = SessionStore(str(tmp_path / "viva.db"))
     orch = Orchestrator(
         config=config, session_store=store, ui=ui,
         llm_client=object(), embedding_client=object(), vector_store=object(),
+        classification_provider=NullClassificationProvider(),
     )
     assert orch.classification_provider.classify("q1", "anything") is None
+
+
+def test_orchestrator_defaults_to_a_real_evaluator(tmp_path):
+    """Phase 7 (docs/system-design/12-phase-7-evaluator-design.md §12.2):
+    the real Evaluator is now the Orchestrator's default when no
+    classification_provider is injected, not NullClassificationProvider."""
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    store = SessionStore(str(tmp_path / "viva.db"))
+    orch = Orchestrator(
+        config=config, session_store=store, ui=ui,
+        llm_client=object(), embedding_client=object(), vector_store=object(),
+    )
+    assert isinstance(orch.classification_provider, Evaluator)
 
 
 def test_small_repo_does_not_prematurely_exhaust_plan(tmp_path):
@@ -832,6 +943,7 @@ def test_semantic_duplicate_prefers_novel_question_when_available(tmp_path, monk
     orch = Orchestrator(
         config=config, session_store=store, ui=ui,
         llm_client=object(), embedding_client=scripted, vector_store=object(),
+        classification_provider=NullClassificationProvider(),
     )
 
     orch.start("https://github.com/owner/repo")
@@ -879,6 +991,7 @@ def test_semantic_duplicate_falls_back_when_nothing_novel_available(tmp_path, mo
     orch = Orchestrator(
         config=config, session_store=store, ui=ui,
         llm_client=object(), embedding_client=_AllSameVectorEmbeddingClient(), vector_store=object(),
+        classification_provider=NullClassificationProvider(),
     )
 
     orch.start("https://github.com/owner/repo")

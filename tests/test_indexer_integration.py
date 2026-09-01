@@ -23,7 +23,10 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures" / "golden_repos"
 
 
 class _FakeLLMClient(LLMClient):
-    def evaluate_answer(self, *a, **k):
+    def classify_answer(self, *a, **k):
+        raise NotImplementedError
+
+    def generate_feedback(self, *a, **k):
         raise NotImplementedError
 
     def summarize_file(self, path, language, content_excerpt, target_tokens):
@@ -62,6 +65,7 @@ def _config(vector_db_path: str) -> Config:
         line_window_size=60, line_window_overlap=15, vector_db_path=vector_db_path, top_k_retrieval=5,
         session_db_path="./data/viva.db", avg_time_per_category_seconds=180,
         question_similarity_threshold=0.90,
+        eval_flush_timeout_seconds=60,
     )
 
 
