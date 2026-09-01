@@ -241,7 +241,16 @@ def test_flush_timeout_marks_unfinished_work_needs_review_without_losing_classif
     # Classification-only eval_json survives -- degraded, not lost (NFR3).
     persisted = json.loads(record.eval_json)
     assert persisted["classification"] == "partial"
-    llm_client.feedback_block_event.set()  # unblock the stray worker thread so it can exit
+
+    # Unblock the stray worker thread and wait for it to actually finish
+    # (not just wake up) before the test returns. Without this, the
+    # worker can still be mid-write when the session_store fixture's
+    # close() runs during teardown -- a real crash, not a flaky
+    # assertion, if close() and a write race on the same connection
+    # (see the close() fix in SessionStore). flush() again is the
+    # public way to wait for the queue to fully drain.
+    llm_client.feedback_block_event.set()
+    evaluator.flush(timeout=2.0)
 
 
 # -- resume ---------------------------------------------------------------------

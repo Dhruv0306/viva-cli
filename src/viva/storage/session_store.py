@@ -127,7 +127,16 @@ class SessionStore:
         self._lock = threading.Lock()
 
     def close(self) -> None:
-        self._conn.close()
+        # Must hold the same lock every write method does: closing the
+        # connection while another thread (the Evaluator's worker) is
+        # mid-execute()/commit() on it is a real crash, not just a
+        # Python exception -- sqlite3's C extension segfaulted in CI
+        # when this raced set_eval_complete() (docs/system-design/
+        # 12-phase-7-evaluator-design.md §12.4's worker thread). Every
+        # other method already serializes through self._lock; close()
+        # was the one gap.
+        with self._lock:
+            self._conn.close()
 
     def __enter__(self) -> "SessionStore":
         return self
