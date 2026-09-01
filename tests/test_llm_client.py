@@ -82,6 +82,40 @@ def test_grounded_incorrect_verdict_passes_through(client):
     assert call_result.result.needs_review is False
 
 
+def test_classify_answer_schema_sent_to_model_excludes_needs_review(client):
+    """docs/system-design/12-phase-7-evaluator-design.md's needs_review
+    fix: the field is client-set only, so it must not even appear in the
+    schema handed to the model's constrained decoding."""
+    valid = json.dumps({"classification": "correct", "summary": "ok"})
+    client._client.chat.return_value = _chat_response(valid)
+
+    client.classify_answer("Q?", "context", "answer")
+
+    schema_sent = client._client.chat.call_args.kwargs["format"]
+    assert "needs_review" not in schema_sent["properties"]
+    assert "needs_review" not in schema_sent.get("required", [])
+
+
+def test_classify_answer_discards_model_supplied_needs_review_when_grounded(client):
+    """Regression test for a real gemma4:e4b run: the model populated
+    needs_review: true on its own even though the verdict was grounded
+    (cited_file present, classification correct) -- must be discarded,
+    not trusted, since needs_review is meant to be client-set only."""
+    model_set_it_anyway = json.dumps(
+        {
+            "classification": "correct",
+            "summary": "Good answer.",
+            "cited_file": "src/x.py:10",
+            "needs_review": True,
+        }
+    )
+    client._client.chat.return_value = _chat_response(model_set_it_anyway)
+
+    call_result = client.classify_answer("Q?", "context", "answer")
+
+    assert call_result.result.needs_review is False
+
+
 def test_classify_prompt_uses_labeled_sections(client):
     valid = json.dumps({"classification": "correct", "summary": "ok"})
     client._client.chat.return_value = _chat_response(valid)
@@ -188,6 +222,39 @@ def test_generate_feedback_correct_verdict_not_forced_needs_review_when_empty(cl
 
     call_result = client.generate_feedback(
         "Q?", "context", "answer", _classification(classification="correct", cited_file=None)
+    )
+
+    assert call_result.result.needs_review is False
+
+
+def test_generate_feedback_schema_sent_to_model_excludes_needs_review(client):
+    valid = json.dumps({"improvement": "n/a"})
+    client._client.chat.return_value = _chat_response(valid)
+
+    client.generate_feedback("Q?", "context", "answer", _classification())
+
+    schema_sent = client._client.chat.call_args.kwargs["format"]
+    assert "needs_review" not in schema_sent["properties"]
+    assert "needs_review" not in schema_sent.get("required", [])
+
+
+def test_generate_feedback_discards_model_supplied_needs_review_when_grounded(client):
+    """Same regression as classify_answer's: a real run showed the model
+    setting needs_review: true unprompted even when every missed/
+    did_wrong entry was properly cited -- must be discarded."""
+    model_set_it_anyway = json.dumps(
+        {
+            "did_well": [],
+            "missed": [{"point": "Cited point.", "cited_file": "a.py:1"}],
+            "did_wrong": [],
+            "improvement": "n/a",
+            "needs_review": True,
+        }
+    )
+    client._client.chat.return_value = _chat_response(model_set_it_anyway)
+
+    call_result = client.generate_feedback(
+        "Q?", "context", "answer", _classification(classification="partial")
     )
 
     assert call_result.result.needs_review is False

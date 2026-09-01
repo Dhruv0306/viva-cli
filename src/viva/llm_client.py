@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Union
 
 import ollama
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from viva.schemas import ClassificationResult, EvaluationFeedback
 
@@ -137,6 +137,30 @@ class LLMCallResult:
     result: Union[ClassificationResult, EvaluationFeedback]
     duration_seconds: float
     attempts: int
+
+
+def _model_facing_schema(model_cls: type[BaseModel]) -> dict:
+    """The JSON schema handed to Ollama's `format=` parameter, with
+    `needs_review` removed.
+
+    `needs_review` is documented on both `ClassificationResult` and
+    `EvaluationFeedback` as client-set, not model-set (docs/design.md
+    §4) -- but leaving it in the schema we hand the model is an
+    invitation for the model to populate it anyway, which a real run
+    against gemma4:e4b showed happening in practice: `needs_review: true`
+    values appearing on responses whose citations were actually fine,
+    with no way to tell after the fact whether the flag came from our
+    own FR22 downgrade logic or the model's own unprompted opinion.
+    Removing the field from the schema is the first of two defenses (see
+    the `model_copy(update={"needs_review": False})` immediately after
+    parsing in `classify_answer`/`generate_feedback`, which discards it
+    even if a model ignores the schema and sends it anyway).
+    """
+    schema = model_cls.model_json_schema()
+    schema["properties"].pop("needs_review", None)
+    if "required" in schema and "needs_review" in schema["required"]:
+        schema["required"] = [f for f in schema["required"] if f != "needs_review"]
+    return schema
 
 
 class LLMClient(abc.ABC):
@@ -280,7 +304,7 @@ class OllamaClient(LLMClient):
             response = self._client.chat(
                 model=self._model,
                 messages=messages,
-                format=ClassificationResult.model_json_schema(),
+                format=_model_facing_schema(ClassificationResult),
                 options={"temperature": self._temperature},
             )
             raw = response["message"]["content"]
@@ -290,6 +314,12 @@ class OllamaClient(LLMClient):
             except ValidationError as exc:
                 last_error = str(exc)
                 continue
+
+            # Discard whatever the model sent for needs_review (should be
+            # nothing, given _model_facing_schema, but a model can ignore
+            # the schema) -- this field is client-set only, see
+            # _model_facing_schema's docstring.
+            parsed = parsed.model_copy(update={"needs_review": False})
 
             # Enforce FR22 at the application layer too, not just via the
             # system prompt: a partial/incorrect verdict with no citation is
@@ -348,7 +378,7 @@ class OllamaClient(LLMClient):
             response = self._client.chat(
                 model=self._model,
                 messages=messages,
-                format=EvaluationFeedback.model_json_schema(),
+                format=_model_facing_schema(EvaluationFeedback),
                 options={"temperature": self._temperature},
             )
             raw = response["message"]["content"]
@@ -359,6 +389,10 @@ class OllamaClient(LLMClient):
                 last_error = str(exc)
                 continue
 
+            # Discard whatever the model sent for needs_review, same as
+            # classify_answer -- see _model_facing_schema's docstring.
+            parsed = parsed.model_copy(update={"needs_review": False})
+
             # FR22 at the application layer: drop any missed/did_wrong
             # entry with no citation rather than surface it ungrounded.
             grounded_missed = [p for p in parsed.missed if p.cited_file]
@@ -367,7 +401,7 @@ class OllamaClient(LLMClient):
                 len(grounded_missed) < len(parsed.missed)
                 or len(grounded_did_wrong) < len(parsed.did_wrong)
             )
-            needs_review = parsed.needs_review
+            needs_review = False
             if dropped_any and classification.classification in ("partial", "incorrect") \
                     and not grounded_missed and not grounded_did_wrong:
                 # Dropping uncited entries emptied both lists on a
