@@ -19,13 +19,31 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from viva.schemas import EvaluationRecord
-from viva.storage.session_store import ANSWERED, QARecordRow, SessionRecord
+from viva.storage.session_store import (
+    ANSWERED,
+    PENDING,
+    QARecordRow,
+    SKIPPED_DUPLICATE_TARGET,
+    SKIPPED_NO_GROUNDING,
+    SKIPPED_TIME_COLLAPSE,
+    SessionRecord,
+)
 
 # Classifications whose did_well text is eligible for the strengths rollup.
 _STRENGTH_CLASSIFICATIONS = {"correct", "partial"}
 # Classifications whose missed/did_wrong text is eligible for the
 # weaknesses rollup, and whose category feeds topics-to-revisit.
 _WEAKNESS_CLASSIFICATIONS = {"partial", "incorrect"}
+
+# Human-readable reasons for qa_records that never got an answer (§13.4:
+# these are reported as a coverage note, never silently dropped). Dict
+# order is the order notes are rendered in.
+_UNANSWERED_REASON_TEXT = {
+    PENDING: "planned but not reached before the session ended",
+    SKIPPED_TIME_COLLAPSE: "skipped (time budget collapse)",
+    SKIPPED_DUPLICATE_TARGET: "skipped (duplicate target module)",
+    SKIPPED_NO_GROUNDING: "skipped (no grounding found)",
+}
 
 
 @dataclass(frozen=True)
@@ -66,6 +84,7 @@ class Report:
     weaknesses: list[str]
     topics_to_revisit: list[str]
     needs_review_count: int
+    coverage_notes: list[str] = field(default_factory=list)
     questions: list[QuestionSummary] = field(default_factory=list)
 
 
@@ -105,6 +124,25 @@ class ReportBuilder:
         max_items_per_section: int = 10,
     ) -> Report:
         answered = [r for r in qa_records if r.status == ANSWERED]
+
+        # §13.4: unanswered qa_records (pending/skipped_*) are never
+        # silently dropped -- they're surfaced as coverage notes instead
+        # of folded into strengths/weaknesses. Root-caused against a real
+        # `--duration 8` session where a planned question was never
+        # reached and simply vanished from the report; see
+        # test_coverage_notes_surface_unanswered_records_by_reason.
+        unanswered_counts: dict[str, int] = {}
+        for r in qa_records:
+            if r.status != ANSWERED:
+                unanswered_counts[r.status] = unanswered_counts.get(r.status, 0) + 1
+        coverage_notes = [
+            f"{count} question{'s' if count != 1 else ''} {_UNANSWERED_REASON_TEXT.get(status, status)}."
+            for status, count in (
+                (status, unanswered_counts[status])
+                for status in _UNANSWERED_REASON_TEXT
+                if status in unanswered_counts
+            )
+        ]
 
         classification_counts: dict[str, int] = {}
         strength_candidates: list[str] = []
@@ -192,6 +230,7 @@ class ReportBuilder:
             weaknesses=_dedup_capped(weakness_candidates, max_items_per_section),
             topics_to_revisit=topics_to_revisit,
             needs_review_count=needs_review_count,
+            coverage_notes=coverage_notes,
             questions=questions,
         )
 
@@ -221,6 +260,8 @@ def render_markdown(report: Report) -> str:
         f"- **Answered:** {report.answered_count}/{report.total_questions} "
         f"(needs review: {report.needs_review_count})"
     )
+    for note in report.coverage_notes:
+        lines.append(f"  - {note}")
     lines.append("")
 
     lines.append(_render_section("Strengths", report.strengths))
@@ -256,6 +297,7 @@ def render_json(report: Report) -> str:
         "weaknesses": report.weaknesses,
         "topics_to_revisit": report.topics_to_revisit,
         "needs_review_count": report.needs_review_count,
+        "coverage_notes": report.coverage_notes,
         "questions": [
             {
                 "question_id": q.question_id,

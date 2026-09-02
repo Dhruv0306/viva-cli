@@ -178,6 +178,84 @@ def test_answered_record_missing_eval_json_is_treated_as_needs_review():
     assert report.questions[0].classification == "needs_review"
 
 
+def test_coverage_notes_surface_unanswered_records_by_reason():
+    """Root-caused against a real `viva start --duration 8` run against
+    throttle4j: a session ran out of time budget with 10 questions
+    answered and 1 planned-but-never-reached qa_record left at PENDING.
+    That record was completely invisible in the report (not in the
+    table, not counted anywhere, not explained) despite the design doc
+    promising unanswered records are surfaced as a coverage note rather
+    than silently dropped (§13.4). Reproduces that exact shape: 10
+    answered + 1 pending, `total_questions=11`, `answered_count=10`.
+    """
+    session = _session()
+    qa_records = [
+        *[_qa(f"q{i}", "rag", "answered", _record("correct", did_well=[f"Point {i}"])) for i in range(1, 11)],
+        _qa("q11", "architecture", "pending", None, question_text=None, answer_text=None, asked_at=None, answered_at=None, eval_status="deferred"),
+    ]
+
+    report = ReportBuilder().build(session, qa_records)
+
+    assert report.total_questions == 11
+    assert report.answered_count == 10
+    assert report.coverage_notes == ["1 question planned but not reached before the session ended."]
+    # The 11th record must not silently appear as an answered question.
+    assert len(report.questions) == 10
+
+
+def test_coverage_notes_group_multiple_reasons_and_pluralize():
+    session = _session()
+    qa_records = [
+        _qa("q1", "rag", "answered", _record("correct")),
+        _qa("q2", "architecture", "pending", None, question_text=None, answer_text=None, asked_at=None, answered_at=None, eval_status="deferred"),
+        _qa("q3", "architecture", "pending", None, question_text=None, answer_text=None, asked_at=None, answered_at=None, eval_status="deferred"),
+        _qa("q4", "testing", "skipped_time_collapse", None, question_text=None, answer_text=None, asked_at=None, answered_at=None, eval_status="deferred"),
+    ]
+
+    report = ReportBuilder().build(session, qa_records)
+
+    assert report.coverage_notes == [
+        "2 questions planned but not reached before the session ended.",
+        "1 question skipped (time budget collapse).",
+    ]
+
+
+def test_render_markdown_shows_coverage_notes_indented_under_answered_line():
+    session = _session()
+    qa_records = [
+        _qa("q1", "rag", "answered", _record("correct")),
+        _qa("q2", "architecture", "pending", None, question_text=None, answer_text=None, asked_at=None, answered_at=None, eval_status="deferred"),
+    ]
+    report = ReportBuilder().build(session, qa_records)
+
+    markdown = render_markdown(report)
+
+    assert "1 question planned but not reached before the session ended." in markdown
+
+
+def test_render_markdown_omits_coverage_notes_when_fully_answered():
+    session = _session()
+    qa_records = [_qa("q1", "rag", "answered", _record("correct"))]
+    report = ReportBuilder().build(session, qa_records)
+
+    markdown = render_markdown(report)
+
+    assert "not reached before the session ended" not in markdown
+
+
+def test_render_json_includes_coverage_notes():
+    session = _session()
+    qa_records = [
+        _qa("q1", "rag", "answered", _record("correct")),
+        _qa("q2", "architecture", "pending", None, question_text=None, answer_text=None, asked_at=None, answered_at=None, eval_status="deferred"),
+    ]
+    report = ReportBuilder().build(session, qa_records)
+
+    payload = json.loads(render_json(report))
+
+    assert payload["coverage_notes"] == ["1 question planned but not reached before the session ended."]
+
+
 def test_dedup_is_case_insensitive_and_capped(monkeypatch=None):
     session = _session()
     qa_records = [

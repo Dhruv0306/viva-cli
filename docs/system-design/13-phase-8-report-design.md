@@ -204,7 +204,39 @@ convention rather than inventing a new error class per case.
   artificially left at `feedback_pending` past `flush()` is forced to
   `needs_review` by `SUMMARIZING` before `COMPLETE`.
 
-## 13.9 Explicitly out of scope
+## 13.9 Real-world bugs found during Phase 8 testing
+
+**Unanswered questions silently disappeared from the report.** Found
+running a real `viva start https://github.com/Dhruv0306/throttle4j
+--duration 8` session on Windows: the session's time budget ran out
+with 10 questions answered and 1 planned qa_record left at `PENDING`,
+never reached. `viva report` showed `"total_questions": 11,
+"answered_count": 10"` but gave no indication anywhere — not in the
+Markdown table, not in the JSON `questions` array — of what happened to
+the 11th question. §13.4 of this very doc had already specified that
+`pending`/`skipped_*` records "are reported separately as a coverage
+note, not folded into strengths/weaknesses," but the first
+implementation only did the first half (excluding them from the
+strengths/weaknesses walk) and dropped the second half (the note
+itself) entirely — the same "read half the sentence, implement half the
+sentence" mistake as Phase 6's FR15 bug (§11.9 of the Phase 6 doc).
+
+Fixed: `Report` gained a `coverage_notes: list[str]` field.
+`ReportBuilder.build()` now groups every non-`answered` `qa_record` by
+its `status` (`pending`, `skipped_time_collapse`,
+`skipped_duplicate_target`, `skipped_no_grounding`) and renders one
+human-readable, pluralized sentence per reason present (e.g. "1
+question planned but not reached before the session ended."),
+in both Markdown (indented under the `Answered:` line) and JSON. An
+unanswered record is still never counted in `classification_counts`,
+`strengths`, `weaknesses`, or `topics_to_revisit` — the fix only adds
+the missing visibility, it doesn't change what counts as answered.
+
+Regression test: `test_coverage_notes_surface_unanswered_records_by_reason`
+in `tests/test_report.py` reproduces the exact 10-answered/1-pending
+shape from the real session.
+
+## 13.10 Explicitly out of scope
 
 - `viva cleanup` (Phase 9).
 - Any report caching/persistence — every `viva report` call re-aggregates
