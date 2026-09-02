@@ -582,6 +582,42 @@ class _SpyClassificationProvider(ClassificationProvider):
         self.flush_calls.append(timeout)
 
 
+def test_summarizing_forces_stray_evals_to_needs_review(tmp_path):
+    """docs/system-design/13-phase-8-report-design.md §13.3: even though
+    Evaluator.flush()'s bounded timeout should already leave every
+    answered qa_record at a terminal eval_status, SUMMARIZING guards
+    against it anyway -- an answered record still stuck at
+    'classified'/'feedback_pending' (e.g. a stub/broken
+    ClassificationProvider that never finalizes) must not silently reach
+    COMPLETE un-terminal, since ReportBuilder/FR27 rely on that
+    guarantee.
+    """
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan(
+        "sess1",
+        [
+            QuestionPlanItem(id="q1", category="architecture", target_module=None),
+            QuestionPlanItem(id="q2", category="testing", target_module=None),
+        ],
+    )
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "an answer")
+    store.set_eval_feedback_pending("sess1", "q1")
+
+    store.record_question_asked("sess1", "q2", "Q2 text", [])
+    store.record_answer("sess1", "q2", "another answer")
+    store.set_eval_complete("sess1", "q2", '{"classification": "correct"}', needs_review=False)
+
+    orch._finalize_stray_evals("sess1")
+
+    records = {r.question_id: r for r in store.get_qa_records("sess1")}
+    assert records["q1"].eval_status == "needs_review"  # forced, was stuck
+    assert records["q2"].eval_status == "complete"  # already terminal, untouched
+
+
 def test_start_binds_and_flushes_the_classification_provider(tmp_path, monkeypatch):
     config = _config(tmp_path)
     _patch_pipeline(monkeypatch)

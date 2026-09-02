@@ -32,7 +32,15 @@ from viva.questiongen import build_coverage_plan, generate_question
 from viva.questiongen.models import QuestionPlanItem
 from viva.session_ui import SessionSummary, SessionUI
 from viva.storage import QARecordRow, SessionStore
-from viva.storage.session_store import ANSWERED, ASKED, SKIPPED_DUPLICATE_TARGET, SKIPPED_NO_GROUNDING, SKIPPED_TIME_COLLAPSE
+from viva.storage.session_store import (
+    ANSWERED,
+    ASKED,
+    EVAL_CLASSIFIED,
+    EVAL_FEEDBACK_PENDING,
+    SKIPPED_DUPLICATE_TARGET,
+    SKIPPED_NO_GROUNDING,
+    SKIPPED_TIME_COLLAPSE,
+)
 from viva.timer import AnswerTimer
 
 # Terminal states that make a session's `IN_PROGRESS` loop stop asking new
@@ -365,10 +373,31 @@ class Orchestrator:
         # NullClassificationProvider/any provider that doesn't override it.
         self.classification_provider.flush(self.config.eval_flush_timeout_seconds)
         self.store.update_status(session_id, "SUMMARIZING")
-        # Phase 6: no report generation yet (Phase 8) -- pass straight through.
+        self._finalize_stray_evals(session_id)
+        # Report rendering itself (Phase 8) is a lazy, on-demand read by
+        # `viva report`, not built here -- see docs/system-design/
+        # 13-phase-8-report-design.md §13.2. SUMMARIZING's job is just the
+        # integrity check above: guarantee every answered qa_record is at
+        # a terminal eval_status before COMPLETE, so `viva report` and
+        # FR27 can both rely on that without re-checking it themselves.
         self.store.update_status(session_id, "COMPLETE")
 
         self.ui.session_complete(self._build_summary(session_id))
+
+    def _finalize_stray_evals(self, session_id: str) -> None:
+        """Defensive SUMMARIZING pass (docs/system-design/
+        13-phase-8-report-design.md §13.3): `Evaluator.flush()`'s bounded
+        timeout should already leave every answered qa_record at a
+        terminal eval_status (`complete`/`needs_review`), but this costs
+        nothing to guard and turns COMPLETE into a hard guarantee that
+        `ReportBuilder`/FR27 can rely on without re-deriving it.
+        """
+        for record in self.store.get_qa_records(session_id):
+            if record.status == ANSWERED and record.eval_status in (
+                EVAL_CLASSIFIED,
+                EVAL_FEEDBACK_PENDING,
+            ):
+                self.store.mark_eval_needs_review(session_id, record.question_id)
 
     def _already_asked_count(self, session_id: str) -> int:
         return sum(
