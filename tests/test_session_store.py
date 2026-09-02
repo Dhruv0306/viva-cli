@@ -331,3 +331,44 @@ def test_get_records_needing_feedback_excludes_terminal_states(store):
     store.set_eval_complete("sess1", "q1", '{"classification": "correct"}', needs_review=False)
 
     assert store.get_records_needing_feedback("sess1") == []
+
+
+# -- delete_session (docs/plan.md Phase 9, NFR7,
+# docs/system-design/14-phase-9-polish-design.md Sec14.7) --------------------
+
+
+def test_delete_session_removes_session_row(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+
+    store.delete_session("sess1")
+
+    assert store.get_session("sess1") is None
+
+
+def test_delete_session_removes_qa_records(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+
+    store.delete_session("sess1")
+
+    assert store.get_qa_records("sess1") == []
+
+
+def test_delete_session_leaves_other_sessions_intact(store):
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.create_session("sess2", "https://github.com/o/r2", None, None, 1800)
+    store.save_plan("sess1", _plan_items())
+    store.save_plan("sess2", _plan_items())
+
+    store.delete_session("sess1")
+
+    assert store.get_session("sess1") is None
+    assert store.get_session("sess2") is not None
+    assert len(store.get_qa_records("sess2")) == 2
+
+
+def test_delete_session_missing_id_is_a_noop(store):
+    # No prior session with this id -- should not raise.
+    store.delete_session("does-not-exist")
+
+    assert store.get_session("does-not-exist") is None

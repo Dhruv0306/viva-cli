@@ -214,6 +214,24 @@ class SessionStore:
             ).fetchone()
         return _session_from_row(row) if row else None
 
+    def delete_session(self, session_id: str) -> None:
+        """Removes a session and its qa_records rows entirely -- used by
+        `viva cleanup` (docs/plan.md Phase 9, NFR7,
+        docs/system-design/14-phase-9-polish-design.md Sec14.7).
+
+        `qa_records` has no FK/CASCADE onto `sessions` (schema.py keeps
+        both as plain columns, not enforced constraints -- see its
+        docstring), so the child rows are deleted explicitly first
+        rather than relying on the database to clean them up. Silently
+        a no-op if `session_id` doesn't exist, matching this class's
+        existing get-methods' "missing means empty/None, not an error"
+        posture rather than raising.
+        """
+        with self._lock:
+            self._conn.execute("DELETE FROM qa_records WHERE session_id = ?", (session_id,))
+            self._conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            self._conn.commit()
+
     def list_sessions(self, status: str | None = None) -> list[SessionRecord]:
         with self._lock:
             if status:
