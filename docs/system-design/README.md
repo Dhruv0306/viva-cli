@@ -67,5 +67,14 @@ history of what was tried and rejected along the way.
   `FINALIZING_EVALS`/`viva resume` guarantee no completed evaluation work
   is lost (NFR3).
 
+- **[13-phase-8-report-design.md](13-phase-8-report-design.md)** — the
+  Phase 8 Report implementation design: why `ReportBuilder` is a lazy,
+  on-demand reader invoked by the `viva report` CLI command rather than
+  something the Orchestrator builds during a live session, the
+  strengths/weaknesses/topics-to-revisit aggregation rules (including how
+  `needs_review` records are excluded from rollups but still surfaced
+  individually), the single-`Report`-dataclass Markdown/JSON dual-render
+  approach, and the `SUMMARIZING` state's new integrity-check role.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
