@@ -68,6 +68,7 @@ def _config(tmp_path, **overrides) -> Config:
         top_k_retrieval=5, session_db_path=str(tmp_path / "viva.db"),
         avg_time_per_category_seconds=1, question_similarity_threshold=0.90,
         eval_flush_timeout_seconds=1,
+        report_max_items_per_section=10,
     )
     values.update(overrides)
     return Config(**values)

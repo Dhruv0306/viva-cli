@@ -49,6 +49,7 @@ def _make_config(max_files: int = 500, test_file_quota_pct: int = 10) -> Config:
         avg_time_per_category_seconds=180,
         question_similarity_threshold=0.90,
         eval_flush_timeout_seconds=60,
+        report_max_items_per_section=10,
     )
 
 

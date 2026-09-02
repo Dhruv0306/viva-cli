@@ -56,6 +56,7 @@ def _config(max_files: int = 500, map_reduce_batch_size: int = 8, max_reduce_con
         session_db_path="./data/viva.db", avg_time_per_category_seconds=180,
         question_similarity_threshold=0.90,
         eval_flush_timeout_seconds=60,
+        report_max_items_per_section=10,
     )
 
 
