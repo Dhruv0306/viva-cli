@@ -1,9 +1,10 @@
 """CLI entrypoint.
 
-`viva start` / `resume` / `list` (Phase 6, docs/system-design/06-cli-contract-and-profile-scaling.md
-§6.1) are the real command surface, built on `Orchestrator` (`orchestrator.py`)
-and `RichSessionUI` (`session_ui.py`). `viva report`/`cleanup` are still
-Phase 8/9 scope. `ingest`/`analyze`/`index`/`questiongen` remain as the
+`viva start` / `resume` / `list` / `report` (Phase 6/8, docs/system-design/
+06-cli-contract-and-profile-scaling.md §6.1) are the real command surface,
+built on `Orchestrator` (`orchestrator.py`), `RichSessionUI`
+(`session_ui.py`), and `ReportBuilder` (`report.py`). `viva cleanup` is
+still Phase 9 scope. `ingest`/`analyze`/`index`/`questiongen` remain as the
 Phase 2-5 smoke-test harnesses they always were -- not stubs of `start`.
 """
 from __future__ import annotations
@@ -35,6 +36,7 @@ from viva.orchestrator import (
 from viva.phase0_demo import run_demo
 from viva.profile import ProjectProfile
 from viva.questiongen import generate_all
+from viva.report import ReportBuilder, render_json, render_markdown
 from viva.session_ui import RichSessionUI
 from viva.storage import SessionStore
 
@@ -500,6 +502,65 @@ def list_sessions(
             str(int(record.duration_seconds)),
         )
     console.print(table)
+
+
+@app.command()
+def report(
+    session_id: str = typer.Argument(..., help="Session ID printed by `viva start` or shown in `viva list`."),
+    format: str = typer.Option("md", "--format", help="Output format: 'md' (default) or 'json'."),
+    output: Path = typer.Option(None, "--output", help="Write the report to this path instead of stdout."),
+    allow_partial: bool = typer.Option(
+        False,
+        "--allow-partial",
+        help="Show a report for a session that isn't COMPLETE yet, instead of erroring.",
+    ),
+) -> None:
+    """Render a session's final report -- aggregation and formats per FR25/FR26
+    (docs/plan.md Phase 8, CLI contract §6.1, docs/system-design/
+    13-phase-8-report-design.md).
+    """
+    if format not in ("md", "json"):
+        console.print(f"[red]--format must be 'md' or 'json', got {format!r}[/red]")
+        raise typer.Exit(code=2)
+
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    store = SessionStore(config.session_db_path)
+    try:
+        session = store.get_session(session_id)
+        if session is None:
+            console.print(f"[red]No session found with id {session_id!r}.[/red]")
+            raise typer.Exit(code=3)
+        if session.status != "COMPLETE" and not allow_partial:
+            console.print(
+                f"[red]Session {session_id!r} is not COMPLETE (status: {session.status}). "
+                "Pass --allow-partial to show a report anyway.[/red]"
+            )
+            raise typer.Exit(code=3)
+
+        qa_records = store.get_qa_records(session_id)
+    finally:
+        store.close()
+
+    built_report = ReportBuilder().build(
+        session, qa_records, max_items_per_section=config.report_max_items_per_section
+    )
+    text = render_json(built_report) if format == "json" else render_markdown(built_report)
+
+    if output is not None:
+        output.write_text(text, encoding="utf-8")
+        console.print(f"[green]Report written to {output}[/green]")
+    else:
+        # Not console.print(text): Rich markup parsing would corrupt the
+        # report body -- summaries/quoted code containing "[...]" (e.g.
+        # "the [correct] classification", a Markdown link) get silently
+        # swallowed as (mis)parsed markup tags rather than printed
+        # verbatim. `viva report`'s stdout must be raw, pipeable text.
+        typer.echo(text)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ def _clean_env(monkeypatch):
         "AVG_TIME_PER_CATEGORY_SECONDS",
         "QUESTION_SIMILARITY_THRESHOLD",
         "EVAL_FLUSH_TIMEOUT_SECONDS",
+        "REPORT_MAX_ITEMS_PER_SECTION",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -59,6 +60,21 @@ def test_defaults_applied(monkeypatch):
     assert config.avg_time_per_category_seconds == 180
     assert config.question_similarity_threshold == 0.90
     assert config.eval_flush_timeout_seconds == 60
+    assert config.report_max_items_per_section == 10
+
+
+def test_invalid_report_max_items_per_section_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("REPORT_MAX_ITEMS_PER_SECTION", "0")
+    with pytest.raises(ConfigError, match="REPORT_MAX_ITEMS_PER_SECTION"):
+        Config.load(env_file=None)
+
+
+def test_report_max_items_per_section_accepts_a_custom_value(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("REPORT_MAX_ITEMS_PER_SECTION", "25")
+    config = Config.load(env_file=None)
+    assert config.report_max_items_per_section == 25
 
 
 def test_invalid_eval_flush_timeout_raises(monkeypatch):

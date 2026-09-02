@@ -27,6 +27,7 @@ def _config(line_window_size: int = 60, line_window_overlap: int = 15) -> Config
         session_db_path="./data/viva.db", avg_time_per_category_seconds=180,
         question_similarity_threshold=0.90,
         eval_flush_timeout_seconds=60,
+        report_max_items_per_section=10,
     )
 
 

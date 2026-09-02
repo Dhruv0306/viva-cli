@@ -137,6 +137,12 @@ class Config:
     # indefinitely on one stuck model call.
     eval_flush_timeout_seconds: float
 
+    # --- Reporting (Phase 8, docs/system-design/13-phase-8-report-design.md) ---
+    # Cap on strengths/weaknesses items per section after dedup (§13.4/13.6)
+    # -- keeps the top-level report scannable rather than dumping every
+    # did_well/missed/did_wrong entry across a full session.
+    report_max_items_per_section: int
+
     @classmethod
     def load(cls, env_file: str | None = ".env") -> "Config":
         """Load configuration from environment variables.
@@ -235,6 +241,9 @@ class Config:
         # worker before giving up on whatever's left.
         eval_flush_timeout_seconds = _get_positive_float("EVAL_FLUSH_TIMEOUT_SECONDS", "60")
 
+        # docs/system-design/13-phase-8-report-design.md §13.6.
+        report_max_items_per_section = _get_positive_int("REPORT_MAX_ITEMS_PER_SECTION", "10")
+
         return cls(
             llm_model=llm_model,
             embedding_model=embedding_model,
@@ -257,4 +266,5 @@ class Config:
             avg_time_per_category_seconds=avg_time_per_category_seconds,
             question_similarity_threshold=question_similarity_threshold,
             eval_flush_timeout_seconds=eval_flush_timeout_seconds,
+            report_max_items_per_section=report_max_items_per_section,
         )

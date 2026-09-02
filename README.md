@@ -105,8 +105,7 @@ View a past report:
 viva report <session-id> [--format md|json] [--output report.md] [--allow-partial]
 ```
 
-`viva start`/`resume`/`list` are real as of Phase 6. `viva report` is
-still Phase 8 scope -- not implemented yet.
+`viva start`/`resume`/`list`/`report` are all real as of Phase 8.
 
 Full CLI contract, including exit codes: [`docs/system-design/06-cli-contract-and-profile-scaling.md`](docs/system-design/06-cli-contract-and-profile-scaling.md) §6.1.
 
@@ -123,7 +122,7 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-6 (walking skeleton through Session Loop) are implemented.**
+**Phases 0-8 (walking skeleton through Reporting) are implemented.**
 Config now validates every tunable, and an `LLM_MODEL` pressure-test harness
 (`scripts/pressure_test_llm_model.py`) is in place — see
 [`docs/system-design/07-llm-model-pressure-test-results.md`](docs/system-design/07-llm-model-pressure-test-results.md)
@@ -142,14 +141,22 @@ issue found during Phase 4's real-repo testing — see
 Phase 6 added the real `viva start` / `viva resume` / `viva list`
 commands: SQLite session persistence, the Orchestrator driving the full
 pipeline plus the live timed Q&A loop, and the time-budget collapse
-behavior from docs/design.md §7. Evaluation doesn't exist yet — every
-answer is persisted with `eval_status="deferred"` until Phase 7's
-Evaluator lands — see
+behavior from docs/design.md §7 — see
 [`docs/system-design/11-phase-6-session-loop-design.md`](docs/system-design/11-phase-6-session-loop-design.md).
-There's still no real evaluation or report yet -- only a throwaway
-harness that exercises the two riskiest assumptions end-to-end
-(local-model structured-output reliability, and a timer that excludes
-LLM latency):
+Phase 7 replaced the Phase 6 placeholder (every answer persisted with
+`eval_status="deferred"`) with real, grounded, structured per-answer
+evaluation: a fast classification call plus a backgrounded free-text
+feedback call — see
+[`docs/system-design/12-phase-7-evaluator-design.md`](docs/system-design/12-phase-7-evaluator-design.md).
+Phase 8 added the real `viva report` command: aggregation of a
+session's evaluations into strengths/weaknesses/topics-to-revisit,
+rendered as Markdown (default) or JSON — see
+[`docs/system-design/13-phase-8-report-design.md`](docs/system-design/13-phase-8-report-design.md).
+This throwaway `viva demo` harness (from the original walking skeleton,
+docs/plan.md Phase 0) still exercises the two riskiest assumptions
+end-to-end (local-model structured-output reliability, and a timer that
+excludes LLM latency), independent of the real `viva start`/`resume`/
+`list`/`report` pipeline described above:
 
 ```bash
 pip install -e ".[dev]"
