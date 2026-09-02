@@ -1,11 +1,13 @@
 """CLI entrypoint.
 
-`viva start` / `resume` / `list` / `report` (Phase 6/8, docs/system-design/
-06-cli-contract-and-profile-scaling.md §6.1) are the real command surface,
-built on `Orchestrator` (`orchestrator.py`), `RichSessionUI`
-(`session_ui.py`), and `ReportBuilder` (`report.py`). `viva cleanup` is
-still Phase 9 scope. `ingest`/`analyze`/`index`/`questiongen` remain as the
-Phase 2-5 smoke-test harnesses they always were -- not stubs of `start`.
+`viva start` / `resume` / `list` / `report` / `cleanup` (Phase 6/8/9,
+docs/system-design/06-cli-contract-and-profile-scaling.md §6.1) are the
+real command surface, built on `Orchestrator` (`orchestrator.py`),
+`RichSessionUI` (`session_ui.py`), `ReportBuilder` (`report.py`), and
+`run_cleanup` (`cleanup.py`, docs/system-design/
+14-phase-9-polish-design.md). `ingest`/`analyze`/`index`/`questiongen`
+remain as the Phase 2-5 smoke-test harnesses they always were -- not
+stubs of `start`.
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ from rich.table import Table
 
 from viva import __version__
 from viva.analyzer import analyze_repo
+from viva.cleanup import run_cleanup
 from viva.config import Config, ConfigError
 from viva.embedding_client import OllamaEmbeddingClient
 from viva.indexer import index_repo
@@ -561,6 +564,68 @@ def report(
         # swallowed as (mis)parsed markup tags rather than printed
         # verbatim. `viva report`'s stdout must be raw, pipeable text.
         typer.echo(text)
+
+
+@app.command()
+def cleanup(
+    older_than: int = typer.Option(
+        None, "--older-than",
+        help="Remove sessions with no activity in this many days (overrides SESSION_RETENTION_DAYS for this run).",
+    ),
+    purge_all: bool = typer.Option(
+        False, "--all",
+        help="Remove every session regardless of age (full reset).",
+    ),
+) -> None:
+    """Enforce NFR7 retention: remove session/Q&A records, Project Profile
+    JSON files, and Chroma collections past retention -- or everything,
+    with --all (docs/plan.md Phase 9, CLI contract §6.1,
+    docs/system-design/14-phase-9-polish-design.md).
+
+    A Chroma collection is only removed once no remaining session still
+    points at it -- sessions against the same unchanged commit can share
+    one (§14.3), and this must never break another session's still-valid
+    `viva report`.
+    """
+    if older_than is not None and older_than <= 0:
+        console.print(f"[red]--older-than must be positive, got {older_than}[/red]")
+        raise typer.Exit(code=2)
+
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    retention_days = older_than if older_than is not None else config.session_retention_days
+
+    store = SessionStore(config.session_db_path)
+    try:
+        result = run_cleanup(
+            store,
+            VectorStore(config.vector_db_path),
+            older_than_days=retention_days,
+            purge_all=purge_all,
+        )
+    except Exception as exc:  # noqa: BLE001 - top-level command boundary
+        console.print(f"[red]Cleanup failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+    finally:
+        store.close()
+
+    if result.is_empty and result.sessions_retained == 0:
+        console.print("[dim]Nothing to clean up.[/dim]")
+        return
+
+    # Two shorter prints rather than one long line: Rich wraps at the
+    # console width, and a single f-string here has previously split
+    # mid-phrase in a way that made the retained-count hard to spot.
+    console.print(
+        f"[green]Removed {len(result.sessions_removed)} session(s), "
+        f"{len(result.collections_removed)} vector collection(s), "
+        f"{len(result.profiles_removed)} profile file(s).[/green]"
+    )
+    console.print(f"[green]{result.sessions_retained} session(s) retained.[/green]")
 
 
 if __name__ == "__main__":
