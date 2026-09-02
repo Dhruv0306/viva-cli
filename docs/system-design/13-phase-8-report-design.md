@@ -236,6 +236,24 @@ Regression test: `test_coverage_notes_surface_unanswered_records_by_reason`
 in `tests/test_report.py` reproduces the exact 10-answered/1-pending
 shape from the real session.
 
+**Verified against the original real session.** After the fix, `viva
+report 7c74ee0f2ab7` (the exact session that surfaced the bug) and
+`viva report 7c74ee0f2ab7 --format json` were both re-run — the
+Markdown output now shows `1 question planned but not reached before
+the session ended.` under the `Answered: 10/11` line, and the JSON
+payload carries the matching `"coverage_notes"` entry. Full suite
+re-run on the same Windows machine the bug was found on: 391 collected
+(5 more than the pre-fix 386, exactly the new tests, all passing),
+389 passed + 2 skipped vs. this doc's own Linux CI run's 390 passed +
+1 skipped. Traced the one-skip discrepancy before accepting it as
+unrelated: `test_ingest_filters.py`'s
+`test_unreadable_file_counts_as_excluded_binary` creates a symlink to
+exercise the binary-file exclusion path, catches `OSError` and
+self-skips when that fails — Windows refuses symlink creation without
+elevated privileges/Developer Mode (`WinError 1314`), a pre-existing,
+documented environment limitation predating Phase 8 entirely, not a
+regression from this fix.
+
 ## 13.10 Explicitly out of scope
 
 - `viva cleanup` (Phase 9).
