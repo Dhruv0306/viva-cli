@@ -110,10 +110,11 @@ class Report:
   `f"{point} ({cited_file})"` when `cited_file` is present, else just
   `point`) from records classified `partial`/`incorrect`, same dedup/cap.
 - **Topics to revisit**: `category` values from records classified
-  `partial`/`incorrect`/`needs_review`, ranked by frequency (ties broken
+  `partial`/`incorrect`, ranked by frequency (ties broken
   by first-appearance order, matching `qa_records`' implicit rowid
   ordering that Phase 5/6 already rely on elsewhere) — a category name,
-  not a re-statement of individual question feedback.
+  not a re-statement of individual question feedback. `needs_review`
+  records don't feed this either, for the same reason given below.
 - **`needs_review` records** are counted (`needs_review_count`) and
   included in `questions` like any other record, but their
   `did_well`/`missed`/`did_wrong` text is *excluded* from strengths/

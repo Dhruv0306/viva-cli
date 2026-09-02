@@ -15,12 +15,13 @@ a purpose-built aggregate rather than a pass-through of it.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
 from viva.schemas import EvaluationRecord
 from viva.storage.session_store import (
     ANSWERED,
+    ASKED,
     PENDING,
     QARecordRow,
     SKIPPED_DUPLICATE_TARGET,
@@ -37,9 +38,13 @@ _WEAKNESS_CLASSIFICATIONS = {"partial", "incorrect"}
 
 # Human-readable reasons for qa_records that never got an answer (§13.4:
 # these are reported as a coverage note, never silently dropped). Dict
-# order is the order notes are rendered in.
+# order is the order known-reason notes are rendered in; any status not
+# in this map (e.g. a future addition, or ASKED surfacing here would be
+# a bug since it's listed explicitly below) still gets a note via the
+# _UNKNOWN_REASON_TEXT fallback in build() rather than being dropped.
 _UNANSWERED_REASON_TEXT = {
     PENDING: "planned but not reached before the session ended",
+    ASKED: "asked but not yet answered (partial report)",
     SKIPPED_TIME_COLLAPSE: "skipped (time budget collapse)",
     SKIPPED_DUPLICATE_TARGET: "skipped (duplicate target module)",
     SKIPPED_NO_GROUNDING: "skipped (no grounding found)",
@@ -125,23 +130,28 @@ class ReportBuilder:
     ) -> Report:
         answered = [r for r in qa_records if r.status == ANSWERED]
 
-        # §13.4: unanswered qa_records (pending/skipped_*) are never
-        # silently dropped -- they're surfaced as coverage notes instead
-        # of folded into strengths/weaknesses. Root-caused against a real
-        # `--duration 8` session where a planned question was never
-        # reached and simply vanished from the report; see
-        # test_coverage_notes_surface_unanswered_records_by_reason.
+        # §13.4: unanswered qa_records (pending/skipped_*/asked/anything
+        # else) are never silently dropped -- surfaced as coverage notes
+        # instead of folded into strengths/weaknesses. The first version
+        # of this fix only iterated over known statuses in
+        # _UNANSWERED_REASON_TEXT, which reproduced the exact same
+        # silently-dropped-question bug for any status outside that map
+        # (notably ASKED, which is reachable via `viva report
+        # --allow-partial` on an in-progress session) -- caught in code
+        # review, see test_coverage_notes_never_drop_an_unrecognized_status.
         unanswered_counts: dict[str, int] = {}
         for r in qa_records:
             if r.status != ANSWERED:
                 unanswered_counts[r.status] = unanswered_counts.get(r.status, 0) + 1
+        # Known statuses render in _UNANSWERED_REASON_TEXT's order; any
+        # status not in that map still gets a note (sorted for
+        # deterministic output) rather than vanishing.
+        ordered_statuses = [s for s in _UNANSWERED_REASON_TEXT if s in unanswered_counts]
+        ordered_statuses += sorted(s for s in unanswered_counts if s not in _UNANSWERED_REASON_TEXT)
         coverage_notes = [
-            f"{count} question{'s' if count != 1 else ''} {_UNANSWERED_REASON_TEXT.get(status, status)}."
-            for status, count in (
-                (status, unanswered_counts[status])
-                for status in _UNANSWERED_REASON_TEXT
-                if status in unanswered_counts
-            )
+            f"{unanswered_counts[status]} question{'s' if unanswered_counts[status] != 1 else ''} "
+            f"{_UNANSWERED_REASON_TEXT.get(status, f'in status {status!r}')}."
+            for status in ordered_statuses
         ]
 
         classification_counts: dict[str, int] = {}
@@ -283,31 +293,8 @@ def render_markdown(report: Report) -> str:
 
 def render_json(report: Report) -> str:
     """Renders `report` as FR26's `--format json` alternative for
-    downstream tooling. `Report`'s dataclass shape is the schema (§13.5)."""
-    payload = {
-        "session_id": report.session_id,
-        "repo_slug": report.repo_slug,
-        "commit_sha": report.commit_sha,
-        "status": report.status,
-        "generated_at": report.generated_at,
-        "total_questions": report.total_questions,
-        "answered_count": report.answered_count,
-        "classification_counts": report.classification_counts,
-        "strengths": report.strengths,
-        "weaknesses": report.weaknesses,
-        "topics_to_revisit": report.topics_to_revisit,
-        "needs_review_count": report.needs_review_count,
-        "coverage_notes": report.coverage_notes,
-        "questions": [
-            {
-                "question_id": q.question_id,
-                "category": q.category,
-                "question_text": q.question_text,
-                "classification": q.classification,
-                "summary": q.summary,
-                "needs_review": q.needs_review,
-            }
-            for q in report.questions
-        ],
-    }
-    return json.dumps(payload, indent=2)
+    downstream tooling. `Report`'s dataclass shape is the schema (§13.5)
+    -- `asdict()` recursively converts `Report` (and its nested
+    `QuestionSummary` entries) into a plain dict field-by-field, in
+    declaration order, with no separate schema to hand-maintain."""
+    return json.dumps(asdict(report), indent=2)

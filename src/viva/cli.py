@@ -555,7 +555,12 @@ def report(
         output.write_text(text, encoding="utf-8")
         console.print(f"[green]Report written to {output}[/green]")
     else:
-        console.print(text)
+        # Not console.print(text): Rich markup parsing would corrupt the
+        # report body -- summaries/quoted code containing "[...]" (e.g.
+        # "the [correct] classification", a Markdown link) get silently
+        # swallowed as (mis)parsed markup tags rather than printed
+        # verbatim. `viva report`'s stdout must be raw, pipeable text.
+        typer.echo(text)
 
 
 if __name__ == "__main__":

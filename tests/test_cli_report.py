@@ -136,3 +136,43 @@ def test_report_output_writes_to_file(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert out_path.exists()
     assert "# Viva Report" in out_path.read_text(encoding="utf-8")
+
+
+def test_report_stdout_is_not_corrupted_by_bracketed_content(monkeypatch, tmp_path):
+    """Copilot review catch: the un-fixed code printed the report body
+    via Rich's console.print(), which parses `[...]` as markup tags --
+    a summary like "the [correct] classification" or a Markdown link
+    "[architecture](src/viva/orchestrator.py)" got silently swallowed
+    rather than printed verbatim (confirmed directly: Rich drops the
+    bracketed text with no error, no warning). `viva report`'s stdout
+    must be raw, pipeable text.
+    """
+    monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
+    db_path = str(tmp_path / "viva.db")
+    monkeypatch.setenv("SESSION_DB_PATH", db_path)
+    store = SessionStore(db_path)
+    store.create_session("sess1", "https://github.com/o/r", "main", "demo", 1800)
+    store.set_pipeline_artifacts(
+        "sess1", repo_slug="o/r", commit_sha="abc123def456",
+        collection_name="o--r-abc123def456", profile_path="/tmp/p.json",
+    )
+    from viva.questiongen.models import QuestionPlanItem
+
+    store.save_plan("sess1", [QuestionPlanItem(id="q1", category="architecture", target_module=None)])
+    store.record_question_asked("sess1", "q1", "How does the Orchestrator work?", [])
+    store.record_answer("sess1", "q1", "It mediates every component.")
+    record = EvaluationRecord(
+        classification="partial",
+        summary="Correctly named the [mediator] pattern -- see [architecture](src/viva/orchestrator.py) for details.",
+        cited_file="src/viva/orchestrator.py",
+        did_well=[], missed=[], did_wrong=[], improvement="None needed.", needs_review=False,
+    )
+    store.set_eval_complete("sess1", "q1", record.model_dump_json(), needs_review=False)
+    store.update_status("sess1", "COMPLETE")
+    store.close()
+
+    result = runner.invoke(app, ["report", "sess1"])
+
+    assert result.exit_code == 0
+    assert "[mediator]" in result.stdout
+    assert "[architecture](src/viva/orchestrator.py)" in result.stdout

@@ -256,6 +256,61 @@ def test_render_json_includes_coverage_notes():
     assert payload["coverage_notes"] == ["1 question planned but not reached before the session ended."]
 
 
+def test_coverage_notes_covers_asked_status_for_allow_partial_reports():
+    """Copilot review catch: --allow-partial can render a report while a
+    session is still IN_PROGRESS, where a qa_record can legitimately be
+    at status='asked' (question shown, not yet answered). The first fix
+    for the pending/skipped_* case only iterated over statuses in the
+    known-reasons map, silently dropping 'asked' the exact same way the
+    original bug dropped 'pending' -- see
+    test_coverage_notes_never_drop_an_unrecognized_status for the
+    general case this closes.
+    """
+    session = _session(status="IN_PROGRESS")
+    qa_records = [
+        _qa("q1", "rag", "answered", _record("correct")),
+        _qa("q2", "architecture", "asked", None, question_text="Q2 text?", answer_text=None, answered_at=None, eval_status="deferred"),
+    ]
+
+    report = ReportBuilder().build(session, qa_records)
+
+    assert report.coverage_notes == ["1 question asked but not yet answered (partial report)."]
+
+
+def test_coverage_notes_never_drop_an_unrecognized_status():
+    """A status outside the known pending/asked/skipped_* set (a stand-in
+    for any future qa_records status this module doesn't know about yet)
+    must still surface a note rather than silently vanishing -- the
+    exact failure mode the coverage_notes feature exists to prevent."""
+    session = _session()
+    qa_records = [
+        _qa("q1", "rag", "answered", _record("correct")),
+        _qa("q2", "architecture", "some_future_status", None, question_text=None, answer_text=None, asked_at=None, answered_at=None, eval_status="deferred"),
+    ]
+
+    report = ReportBuilder().build(session, qa_records)
+
+    assert report.coverage_notes == ["1 question in status 'some_future_status'."]
+
+
+def test_coverage_notes_order_known_reasons_first_then_unknown_sorted():
+    session = _session()
+    qa_records = [
+        _qa("q1", "rag", "answered", _record("correct")),
+        _qa("q2", "a", "zzz_unknown", None, question_text=None, answer_text=None, asked_at=None, answered_at=None, eval_status="deferred"),
+        _qa("q3", "a", "pending", None, question_text=None, answer_text=None, asked_at=None, answered_at=None, eval_status="deferred"),
+        _qa("q4", "a", "aaa_unknown", None, question_text=None, answer_text=None, asked_at=None, answered_at=None, eval_status="deferred"),
+    ]
+
+    report = ReportBuilder().build(session, qa_records)
+
+    assert report.coverage_notes == [
+        "1 question planned but not reached before the session ended.",
+        "1 question in status 'aaa_unknown'.",
+        "1 question in status 'zzz_unknown'.",
+    ]
+
+
 def test_dedup_is_case_insensitive_and_capped(monkeypatch=None):
     session = _session()
     qa_records = [
