@@ -76,5 +76,14 @@ history of what was tried and rejected along the way.
   individually), the single-`Report`-dataclass Markdown/JSON dual-render
   approach, and the `SUMMARIZING` state's new integrity-check role.
 
+- **[14-phase-9-polish-design.md](14-phase-9-polish-design.md)** — the
+  Phase 9 Polish implementation design: an audit of `plan.md`'s Phase 9
+  list against what Phases 0–8 already shipped (config validation,
+  resume support, and bad-URL/timeout error handling all already done),
+  narrowing real scope to `viva cleanup` (NFR7); the survivor-based
+  Chroma-collection reference-counting decision (no session still
+  pointing at a collection may have it deleted out from under it); and
+  why `updated_at`, not `created_at`, is the retention clock.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
