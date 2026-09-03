@@ -155,3 +155,41 @@ def test_get_by_ids_some_ids_missing_from_existing_collection(tmp_path):
     results = store.get_by_ids(name, ["c1", "c2"])
 
     assert [r["id"] for r in results] == ["c1"]
+
+
+# -- delete_collection (docs/plan.md Phase 9, NFR7,
+# docs/system-design/14-phase-9-polish-design.md Sec14.7) --------------------
+
+
+def test_delete_collection_removes_an_existing_collection(tmp_path):
+    store = VectorStore(str(tmp_path / "chroma"))
+    name = collection_name("owner/repo", "abc123def456")
+    store.upsert_chunks(name, [_chunk("c1", "def foo(): ...")], [[0.1, 0.2, 0.3]])
+    assert store.collection_exists(name) is True
+
+    store.delete_collection(name)
+
+    assert store.collection_exists(name) is False
+
+
+def test_delete_collection_missing_name_is_a_noop(tmp_path):
+    store = VectorStore(str(tmp_path / "chroma"))
+    name = collection_name("owner/repo", "abc123def456")
+
+    # No prior collection under this name -- should not raise.
+    store.delete_collection(name)
+
+    assert store.collection_exists(name) is False
+
+
+def test_delete_collection_does_not_affect_other_collections(tmp_path):
+    store = VectorStore(str(tmp_path / "chroma"))
+    name_a = collection_name("owner/repo-a", "commitaaa111")
+    name_b = collection_name("owner/repo-b", "commitbbb222")
+    store.upsert_chunks(name_a, [_chunk("c1", "def foo(): ...")], [[0.1, 0.2, 0.3]])
+    store.upsert_chunks(name_b, [_chunk("c2", "def bar(): ...")], [[0.4, 0.5, 0.6]])
+
+    store.delete_collection(name_a)
+
+    assert store.collection_exists(name_a) is False
+    assert store.collection_exists(name_b) is True

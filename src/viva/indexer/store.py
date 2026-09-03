@@ -42,6 +42,18 @@ class VectorStore:
         already indexed, so re-embedding is skipped entirely."""
         return any(c.name == name for c in self._client.list_collections())
 
+    def delete_collection(self, name: str) -> None:
+        """Removes a Chroma collection entirely -- used by `viva cleanup`
+        (docs/plan.md Phase 9, NFR7,
+        docs/system-design/14-phase-9-polish-design.md Sec14.7). No-op if
+        the collection doesn't already exist, mirroring
+        `collection_exists`'s existing check-before-act pattern rather
+        than letting Chroma raise on a double-delete or an
+        already-cleaned-up collection.
+        """
+        if self.collection_exists(name):
+            self._client.delete_collection(name)
+
     def upsert_chunks(self, name: str, chunks: list[Chunk], embeddings: list[list[float]]) -> None:
         if not chunks:
             return

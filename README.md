@@ -105,7 +105,14 @@ View a past report:
 viva report <session-id> [--format md|json] [--output report.md] [--allow-partial]
 ```
 
-`viva start`/`resume`/`list`/`report` are all real as of Phase 8.
+Remove session/Q&A records, Project Profile JSON files, and Chroma
+collections past retention (NFR7), or everything with `--all`:
+
+```bash
+viva cleanup [--older-than <days>] [--all]
+```
+
+`viva start`/`resume`/`list`/`report`/`cleanup` are all real as of Phase 9.
 
 Full CLI contract, including exit codes: [`docs/system-design/06-cli-contract-and-profile-scaling.md`](docs/system-design/06-cli-contract-and-profile-scaling.md) §6.1.
 
@@ -122,7 +129,17 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-8 (walking skeleton through Reporting) are implemented.**
+**Phases 0-9 (walking skeleton through Polish) are implemented.**
+Phase 9 audited the rest of its own to-do list against what Phases 0-8
+already shipped (config validation, resume-session support, and
+bad-URL/model-timeout error handling all turned out to already be
+done) and implemented the one real gap: `viva cleanup`, enforcing NFR7
+retention by removing session/Q&A records, Project Profile JSON files,
+and Chroma collections past their age, with reference-counted
+collection deletion so a collection shared by more than one session
+against the same commit is never removed while another session still
+depends on it — see
+[`docs/system-design/14-phase-9-polish-design.md`](docs/system-design/14-phase-9-polish-design.md).
 Config now validates every tunable, and an `LLM_MODEL` pressure-test harness
 (`scripts/pressure_test_llm_model.py`) is in place — see
 [`docs/system-design/07-llm-model-pressure-test-results.md`](docs/system-design/07-llm-model-pressure-test-results.md)
