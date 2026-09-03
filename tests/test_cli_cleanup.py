@@ -110,9 +110,17 @@ def test_cleanup_older_than_zero_exits_2(monkeypatch, tmp_path):
     assert result.exit_code == 2
 
 
-def test_cleanup_missing_llm_model_exits_2(monkeypatch, tmp_path):
+def test_cleanup_missing_llm_model_exits_2(mocker, monkeypatch, tmp_path):
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    # A real .env file on the machine running this test (e.g. a dev
+    # checkout with .env.example copied to .env, per the README) would
+    # otherwise refill LLM_MODEL right back in -- load_dotenv() doesn't
+    # override an explicitly-set env var, but monkeypatch.delenv leaves
+    # it *unset*, which is exactly what load_dotenv fills in from disk.
+    # Same fix test_cli_session.py::test_start_missing_config_exits_2
+    # already applies for this exact reason.
+    mocker.patch("viva.config.load_dotenv")
 
     result = runner.invoke(app, ["cleanup"])
 
