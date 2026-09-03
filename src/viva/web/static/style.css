@@ -1,0 +1,117 @@
+/* Minimal styling for `viva serve` (design doc \u00a715.6) -- no CSS
+   framework, just enough to be legible and not look unstyled. */
+
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --border: #2a2f3a;
+  --text: #e6e8eb;
+  --text-dim: #9aa1ac;
+  --accent: #4f8cff;
+  --accent-hover: #6da0ff;
+  --danger: #e0554f;
+  --success: #4fae6a;
+  --radius: 8px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  padding: 1.5rem 2rem 0.5rem;
+}
+
+header h1 { margin: 0; font-size: 1.4rem; }
+.subtitle { color: var(--text-dim); margin: 0.2rem 0 0; font-size: 0.9rem; }
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+}
+
+.card h2 { margin-top: 0; font-size: 1.05rem; }
+
+label {
+  display: block;
+  margin: 0.6rem 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+label.checkbox { display: flex; align-items: center; gap: 0.5rem; }
+label.checkbox input { width: auto; }
+
+.hint { font-weight: normal; color: var(--text-dim); font-size: 0.8rem; }
+
+input[type="text"],
+input[type="number"],
+textarea {
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+textarea { resize: vertical; }
+
+button {
+  margin-top: 0.9rem;
+  padding: 0.55rem 1.1rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+button:hover { background: var(--accent-hover); }
+button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+button.secondary:hover { background: var(--border); }
+
+table { width: 100%; border-collapse: collapse; margin-top: 0.8rem; font-size: 0.85rem; }
+th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); }
+th { color: var(--text-dim); font-weight: 500; }
+
+.live-header { display: flex; justify-content: space-between; align-items: baseline; }
+.timer { font-variant-numeric: tabular-nums; font-size: 1.1rem; color: var(--accent); }
+.question-meta { color: var(--text-dim); font-size: 0.8rem; margin-bottom: 0.2rem; }
+.question-text { font-size: 1.05rem; margin: 0.2rem 0 1rem; }
+
+.result {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.8rem;
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.banner { padding: 0.7rem 1rem; border-radius: 6px; font-size: 0.85rem; }
+.banner-error { background: rgba(224, 85, 79, 0.15); border: 1px solid var(--danger); color: #ffb3af; }
+
+a { color: var(--accent); }
