@@ -87,7 +87,26 @@ Each phase is independently testable and produces a working, demoable slice.
 - Config validation, resume-session support.
 - Repo/index cleanup and retention policy implemented and tested (NFR7) —
   do not leave this implicit; it has no other phase owner.
-- Stretch: simple web UI.
+- ~~Stretch: simple web UI.~~ **Deferred.** Audited out of Phase 9's real
+  scope in `docs/system-design/14-phase-9-polish-design.md` §14.1; picked
+  up as its own phase below rather than reopening a merged phase.
+
+## Phase 10 — Web UI
+- A local FastAPI server (`viva serve`) exposing the same operations as
+  the CLI contract (`docs/system-design/06-cli-contract-and-profile-
+  scaling.md` §6.1) — start, resume, list, report, cleanup — plus the
+  live question/answer loop, fronted by a single static HTML+JS page
+  (no frontend framework/build step).
+- Design doc: `docs/system-design/15-phase-10-web-ui-design.md`. Key
+  decision: a queue-backed `WebSessionUI` (new `SessionUI` implementation)
+  bridges the Orchestrator's blocking `read_answer()` call to HTTP
+  request/response by running each live session's `Orchestrator.start`/
+  `.resume` call on a background thread — no change to `Orchestrator`
+  or the `SessionUI` interface itself.
+- **Exit criteria:** a full timed viva run end-to-end through the browser
+  (start → live Q&A → report), plus `viva list`/`viva resume`/`viva
+  cleanup` all reachable from the UI, validated against a real local
+  Ollama instance — not just `TestClient`-mocked coverage.
 
 ## Cross-Cutting: Testing
 - A small fixture set of real "golden repos" (a few small, varied-language
