@@ -628,5 +628,36 @@ def cleanup(
     console.print(f"[green]{result.sessions_retained} session(s) retained.[/green]")
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Address to bind the local web server to."),
+    port: int = typer.Option(8000, "--port", help="Port to bind the local web server to."),
+) -> None:
+    """Run the local web UI (docs/plan.md Phase 10, docs/system-design/
+    15-phase-10-web-ui-design.md) over the same Orchestrator/SessionStore/
+    ReportBuilder/run_cleanup every other command already uses -- not a
+    daemon, runs until interrupted, same posture as `viva start`.
+
+    Binds to 127.0.0.1 by default: this is a local single-user tool with
+    the same trust boundary the CLI itself already has, not a hardened
+    multi-user service (design doc \u00a715.2).
+    """
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    # Imported lazily, not at module load time: every other command in
+    # this file pays zero import cost for fastapi/uvicorn -- only running
+    # `viva serve` itself does (design doc \u00a715.12 item 1).
+    import uvicorn
+
+    from viva.web.app import create_app
+
+    console.print(f"[green]Starting viva web UI on http://{host}:{port}[/green]")
+    uvicorn.run(create_app(config), host=host, port=port)
+
+
 if __name__ == "__main__":
     app()
