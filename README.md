@@ -112,7 +112,20 @@ collections past retention (NFR7), or everything with `--all`:
 viva cleanup [--older-than <days>] [--all]
 ```
 
-`viva start`/`resume`/`list`/`report`/`cleanup` are all real as of Phase 9.
+Or run the local web UI instead of the CLI, over the same
+Orchestrator/SessionStore underneath:
+
+```bash
+viva serve [--host 127.0.0.1] [--port 8000]
+```
+
+Open `http://127.0.0.1:8000` for a browser page that starts/resumes
+sessions, answers questions live, and views reports -- the same
+operations as `viva start`/`resume`/`list`/`report`/`cleanup` above, not
+a different feature set. See
+[`docs/system-design/15-phase-10-web-ui-design.md`](docs/system-design/15-phase-10-web-ui-design.md).
+
+`viva start`/`resume`/`list`/`report`/`cleanup`/`serve` are all real as of Phase 10.
 
 Full CLI contract, including exit codes: [`docs/system-design/06-cli-contract-and-profile-scaling.md`](docs/system-design/06-cli-contract-and-profile-scaling.md) §6.1.
 
@@ -129,7 +142,18 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-9 (walking skeleton through Polish) are implemented.**
+**Phases 0-10 (walking skeleton through the web UI) are implemented.**
+Phase 10 added `viva serve`: a local FastAPI server exposing the same
+start/resume/list/report/cleanup operations as the CLI, plus the live
+question/answer loop, fronted by a single static HTML+JS page (no
+frontend framework or build step). The one real design problem --
+`Orchestrator.start()`/`.resume()` block on `SessionUI.read_answer()`,
+which can't map onto an HTTP request/response cycle -- is solved with a
+second `SessionUI` implementation, `WebSessionUI`, backed by a
+`queue.Queue`: the Orchestrator's blocking call runs on a background
+thread, never an HTTP request thread, and `Orchestrator` itself is
+unchanged — see
+[`docs/system-design/15-phase-10-web-ui-design.md`](docs/system-design/15-phase-10-web-ui-design.md).
 Phase 9 audited the rest of its own to-do list against what Phases 0-8
 already shipped (config validation, resume-session support, and
 bad-URL/model-timeout error handling all turned out to already be
