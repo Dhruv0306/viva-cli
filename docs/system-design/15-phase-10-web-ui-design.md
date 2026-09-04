@@ -325,3 +325,36 @@ on them. Revisit if real usage disagrees:
    toolchain" framing; a `?format=json`/raw-Markdown-download link sits
    alongside it for anyone who wants it rendered properly in their own
    editor.
+
+## 15.13 Real-world bugs found during Phase 10 testing
+
+**Static assets 404'd even though the page itself loaded.** Found
+running a real `viva serve` on Windows (Dhruv's machine, this session):
+`GET /` returned `200`, but `GET /static/style.css` and
+`GET /static/app.js` both returned `404` -- the page loaded unstyled and
+non-interactive. Root cause: `app.py` originally mounted the static
+directory with `app.mount("/", StaticFiles(directory=..., html=True),
+name="static")`. `html=True` does make that mount serve `index.html` at
+`/`, which is why `GET /` worked -- but it does not also register a
+`/static` prefix anywhere. `index.html` itself has always referenced its
+assets as absolute `/static/style.css` and `/static/app.js` paths (see
+`static/index.html`, unchanged since it was written) -- there was simply
+no mount point matching those paths at all, a path-prefix mismatch
+between where the assets were *mounted* and where the page *asked for*
+them, not a missing-file problem.
+
+Fixed: `app.py` now mounts `StaticFiles(directory=..., html=False)` at
+`/static` (matching what `index.html` has always asked for), and adds a
+dedicated `GET /` route returning `FileResponse(_STATIC_DIR /
+"index.html")` explicitly, rather than relying on `StaticFiles`'
+`html=True` fallback to cover the root path implicitly.
+
+Regression test:
+`test_static_assets_referenced_by_index_html_are_served` in
+`tests/test_web_app.py`, added and confirmed to fail against the
+pre-fix code first (`404` on both asset requests, reproducing the
+real terminal output exactly), then confirmed to pass against the fix.
+`test_root_serves_index_html` (already existing) only ever checked
+`GET /` itself, which is exactly why it didn't catch this -- it passed
+on both the buggy and fixed code, since `GET /`'s behavior never
+actually changed.

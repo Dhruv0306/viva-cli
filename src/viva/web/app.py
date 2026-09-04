@@ -21,7 +21,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -180,8 +180,21 @@ def create_app(config: Config) -> FastAPI:
             store.close()
         return {**asdict(result), "is_empty": result.is_empty}
 
-    # Mounted last, at the root -- API routes above always match first;
-    # this only ever handles what none of them did (index.html, app.js,
-    # style.css).
-    app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")
+    @app.get("/", include_in_schema=False)
+    def index() -> FileResponse:
+        return FileResponse(_STATIC_DIR / "index.html")
+
+    # index.html references its assets as absolute /static/... paths
+    # (static/index.html), so the mount point has to be /static, not /
+    # -- mounting a StaticFiles instance at "/" with html=True does serve
+    # index.html at "/" too, but it does *not* also make style.css/app.js
+    # reachable at /static/style.css and /static/app.js; there's no
+    # /static prefix registered anywhere in that setup, so those 404
+    # (as reported: 200 on GET /, 404 on GET /static/style.css and
+    # /static/app.js -- the browser loading index.html successfully and
+    # then failing to fetch the assets it references is exactly what a
+    # missing /static mount looks like). Mounted after the /api/* and /
+    # routes above -- API routes always match first regardless of mount
+    # order, but this keeps the "most specific first" reading order.
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     return app

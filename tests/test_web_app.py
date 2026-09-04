@@ -353,3 +353,20 @@ def test_root_serves_index_html(mocker, tmp_path):
 
     assert response.status_code == 200
     assert "viva-cli" in response.text
+
+
+def test_static_assets_referenced_by_index_html_are_served(mocker, tmp_path):
+    # Regression test for a real bug: app.py used to mount StaticFiles at
+    # "/" (html=True), which serves index.html at "/" but does *not*
+    # register a /static prefix -- so index.html's own <link>/<script>
+    # references to /static/style.css and /static/app.js 404'd, even
+    # though GET / itself returned 200. Confirmed against a real
+    # `viva serve` run (this session): 200 on GET /, 404 on both asset
+    # requests.
+    client = _app_client(mocker, tmp_path)
+
+    css = client.get("/static/style.css")
+    js = client.get("/static/app.js")
+
+    assert css.status_code == 200
+    assert js.status_code == 200
