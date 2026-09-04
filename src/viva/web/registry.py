@@ -32,11 +32,18 @@ from viva.web.web_session_ui import WebSessionUI
 # either Orchestrator.start()/resume() to report a real session_id
 # (WebSessionUI.session_started -- see web_session_ui.py) or fail its own
 # local validation before ever reaching that point. Both outcomes only
-# involve local SQLite reads/writes, never an LLM/network call, so this
-# resolves in milliseconds in practice -- this bound is a generous safety
-# margin against something being stuck, not an expected wait (design doc
-# \u00a715.3).
-_SESSION_ID_WAIT_SECONDS = 10.0
+# involve local SQLite reads/writes, never an LLM/network call or repo
+# analysis -- session_started() fires before Orchestrator.start() ever
+# clones/analyzes anything (design doc \u00a715.3) -- so this resolves in
+# milliseconds in practice regardless of repo size or how slow the local
+# model is. Bumped from an original 10s to a much more generous 120s as
+# headroom against exactly that "slower local model, bigger repo"
+# concern anyway: it costs nothing (this wait is never actually
+# exercised for anywhere near that long), and it's the one genuine
+# timeout construct that exists anywhere in the web layer -- everywhere
+# else, repo analysis runs on its own background thread with no
+# deadline at all, same as it always has for the CLI.
+_SESSION_ID_WAIT_SECONDS = 120.0
 _POLL_INTERVAL_SECONDS = 0.02
 
 

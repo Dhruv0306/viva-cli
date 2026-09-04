@@ -365,3 +365,40 @@ real terminal output exactly), then confirmed to pass against the fix.
 `GET /` itself, which is exactly why it didn't catch this -- it passed
 on both the buggy and fixed code, since `GET /`'s behavior never
 actually changed.
+
+## 15.14 Post-merge refinements
+
+Small, non-architectural follow-ups made after the initial merge, on
+real feedback:
+
+- **Named "viva-web".** The browser interface's page `<title>`/`<h1>`,
+  the FastAPI app's own `title=`, and the `viva serve` startup banner
+  all say "viva-web" now, distinct from "viva-cli" (the whole project).
+  No behavior change. See the naming note at the top of this doc.
+- **Favicon.** `static/favicon.svg` (a small terminal-chevron + cursor-
+  dot mark, matching `style.css`'s existing dark-panel/accent-blue
+  palette) plus a `<link rel="icon">` and an explicit
+  `GET /favicon.ico` route -- browsers request `/favicon.ico` directly
+  regardless of the `<link>` tag, so both are needed. §15.13 covers this
+  as a small user-visible fix (a 404 in the server log on every page
+  load), not an architectural bug.
+- **`SessionRegistry`'s session-id wait bumped from 10s to 120s**
+  (`registry.py`'s `_SESSION_ID_WAIT_SECONDS`). Raised on request,
+  against a concern that a slower local model analyzing a larger repo
+  could need more time. Worth being precise about what this constant
+  actually bounds, since the concern and the mechanism don't quite
+  line up: it only waits for `WebSessionUI.session_started()`, which
+  `Orchestrator.start()`/`.resume()` call *before* cloning or analysis
+  ever begins (§15.3) -- so it was never actually gated by repo size or
+  model speed, and resolves in milliseconds regardless. The person's
+  actual answer-time budget (`viva_duration_minutes`) is unaffected
+  either way: `AnswerTimer` doesn't start until the entire setup
+  pipeline (clone/analyze/index/plan) has already finished
+  (`orchestrator.py`'s `_run_live_session`, unchanged since Phase 6),
+  and question-generation latency between questions is wrapped in
+  `timer.excluding()` (FR17) -- both true on the CLI already, unchanged
+  by this phase. The bump was made anyway: it's the one genuine timeout
+  construct in the whole web layer, costs nothing since it's never
+  exercised anywhere near that long, and 120s is a reasonable insurance
+  margin against something unrelated going wrong (a slow disk, SQLite
+  contention) rather than against slow analysis specifically.
