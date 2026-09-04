@@ -443,3 +443,21 @@ real feedback:
   page. Added a small "Clear output" button next to it
   (`static/index.html`/`app.js`) that hides the result and itself --
   purely a frontend affordance, no API change.
+- **Sessions table overflow, and general spacing.** Root cause of the
+  overflow: `table` had no `table-layout`/width containment and no
+  scroll container of its own, so a long `session_id` or repo URL cell
+  could force the table wider than its `.card`, bleeding past the
+  page's own layout -- and `style.css` had no `@media` rules at all, so
+  nothing adapted on a narrow viewport either. Fixed at the source: the
+  sessions table is now wrapped in a `.table-scroll` container
+  (`overflow-x: auto`, scoped to just that element) with
+  `table-layout: fixed` and per-cell `text-overflow: ellipsis`, the
+  `session_id`/repo cells are truncated in `app.js` with the full value
+  in a `title` tooltip, `body` gained `overflow-x: hidden` as a backstop,
+  and a `@media (max-width: 480px)` block tightens padding/gaps on small
+  screens. Also increased spacing throughout (`main`'s gap between
+  cards, `.card` internal padding, label margins) on the general
+  "spacing needs adjustment" feedback -- a readability/polish pass, not
+  a correctness fix, so no regression test; verified by hand-tracing the
+  CSS against the markup for both the table-overflow scenario (a long
+  session id/URL) and a narrow (480px) viewport.
