@@ -184,6 +184,19 @@ def create_app(config: Config) -> FastAPI:
     def index() -> FileResponse:
         return FileResponse(_STATIC_DIR / "index.html")
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> FileResponse:
+        # Browsers request /favicon.ico directly on first load, regardless
+        # of the <link rel="icon"> tag in index.html (which points at
+        # /static/favicon.svg) -- without this route that request 404s
+        # even though the page itself renders fine, exactly what showed
+        # up in a real `viva serve` run's log (this session). Serving the
+        # same SVG at the literal /favicon.ico path (with an explicit
+        # media_type, since FileResponse would otherwise guess one from
+        # the .ico extension) works in every current browser -- none of
+        # them actually require the legacy ICO binary format.
+        return FileResponse(_STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
+
     # index.html references its assets as absolute /static/... paths
     # (static/index.html), so the mount point has to be /static, not /
     # -- mounting a StaticFiles instance at "/" with html=True does serve

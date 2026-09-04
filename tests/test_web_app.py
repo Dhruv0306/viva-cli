@@ -370,3 +370,16 @@ def test_static_assets_referenced_by_index_html_are_served(mocker, tmp_path):
 
     assert css.status_code == 200
     assert js.status_code == 200
+
+
+def test_favicon_served_at_root_favicon_ico(mocker, tmp_path):
+    # Browsers request /favicon.ico directly, independent of index.html's
+    # <link rel="icon"> tag -- without this route it 404s even though
+    # GET / itself works fine (confirmed in a real `viva serve` run).
+    client = _app_client(mocker, tmp_path)
+
+    response = client.get("/favicon.ico")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert b"<svg" in response.content

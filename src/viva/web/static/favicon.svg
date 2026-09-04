@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- viva-web favicon: a terminal prompt chevron (viva-cli's heritage)
+       plus a cursor dot, in the same dark panel + accent-blue palette
+       as static/style.css (--panel #171a21, --accent #4f8cff). -->
+  <rect width="32" height="32" rx="7" fill="#171a21" />
+  <path d="M9 11 L15 16 L9 21" fill="none" stroke="#4f8cff"
+        stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="22" cy="21" r="2.1" fill="#4f8cff" />
+</svg>
