@@ -3,6 +3,13 @@
 > Part of the full system-design reference. See `README.md` in this folder
 > for the complete set of parts.
 
+**Naming:** the browser interface `viva serve` runs is called **viva-web**
+throughout this doc, the app's page title/header, and the FastAPI app's
+own `title=`. `viva-cli` remains the name of the whole project/package;
+`viva-web` is what a person sees on screen once they're in the browser,
+the same way `viva start`/`viva report`/etc. are commands *within*
+`viva-cli` rather than separate products.
+
 ## 15.1 Scope and renumbering
 
 `docs/plan.md`'s Phase 9 entry ends with "Stretch: simple web UI."
