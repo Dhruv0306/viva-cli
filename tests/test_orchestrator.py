@@ -306,6 +306,53 @@ def test_resume_raises_for_failed_session(tmp_path):
         orch.resume("sess1")
 
 
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        ("INGESTING", False),
+        ("ANALYZING", False),
+        ("INDEXING", False),
+        ("PLANNING", False),
+        ("FAILED", False),
+        ("COMPLETE", False),
+        ("IN_PROGRESS", True),
+        ("TIME_EXPIRED", True),
+        ("QUESTIONS_EXHAUSTED", True),
+        ("FINALIZING_EVALS", True),
+        ("SUMMARIZING", True),
+    ],
+)
+def test_is_resumable_matches_what_resume_itself_accepts(tmp_path, status, expected):
+    # Regression test: is_resumable() exists specifically so callers like
+    # the web UI's session list don't have to duplicate resume()'s own
+    # status checks (see is_resumable()'s docstring) -- this test is what
+    # keeps that promise honest. It runs the same status through both
+    # is_resumable() and an actual orch.resume() call and asserts they
+    # agree, so the two can never silently drift apart.
+    assert orchestrator_module.is_resumable(status) is expected
+
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.update_status("sess1", status)
+
+    if expected:
+        # Resumable statuses should get past resume()'s validation and
+        # into the live loop (which then immediately raises TimerNotStartedError
+        # from FakeSessionUI's stubbed-out read_answer, since this test
+        # isn't exercising a real run -- reaching that point is exactly
+        # what proves validation didn't reject it).
+        with pytest.raises(Exception) as exc_info:  # noqa: PT011 - any exception past validation proves is_resumable() agreed with resume()
+            orch.resume("sess1")
+        assert not isinstance(
+            exc_info.value, (SessionNotFoundError, SessionAlreadyCompleteError, SessionNotResumableError)
+        )
+    else:
+        with pytest.raises((SessionAlreadyCompleteError, SessionNotResumableError)):
+            orch.resume("sess1")
+
+
 def test_resume_continues_pending_items(tmp_path, monkeypatch):
     config = _config(tmp_path)
     _patch_pipeline(monkeypatch)

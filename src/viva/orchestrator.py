@@ -49,8 +49,24 @@ _LOOP_EXIT_STATUSES = {"TIME_EXPIRED", "QUESTIONS_EXHAUSTED"}
 
 # Statuses before IN_PROGRESS that Phase 6 doesn't attempt to resume into --
 # see docs/system-design/11-phase-6-session-loop-design.md "Known
-# limitations / deliberate scope-narrowing" for why.
-_NOT_RESUMABLE_PRE_SESSION_STATUSES = {"INGESTING", "ANALYZING", "INDEXING", "PLANNING"}
+# limitations / deliberate scope-narrowing" for why. Public (no leading
+# underscore) since Phase 10's web UI needs the same set to decide
+# whether to offer a "Resume" button at all -- see is_resumable() below.
+NOT_RESUMABLE_PRE_SESSION_STATUSES = {"INGESTING", "ANALYZING", "INDEXING", "PLANNING"}
+
+
+def is_resumable(status: str) -> bool:
+    """Whether `Orchestrator.resume()` would accept a session in this
+    status, without actually calling it. Single source of truth for
+    "can this session be resumed" so callers that only need a yes/no
+    answer -- e.g. the web UI deciding whether to show a Resume button
+    (docs/system-design/15-phase-10-web-ui-design.md) -- don't have to
+    duplicate `resume()`'s own status checks and risk drifting out of
+    sync with them if the state machine changes. `resume()` itself keeps
+    its own explicit branching below (COMPLETE vs. FAILED vs. pre-session
+    each need a different error message), it doesn't call this."""
+    return status not in ({"COMPLETE", "FAILED"} | NOT_RESUMABLE_PRE_SESSION_STATUSES)
+
 
 # Bounded number of ranked candidates tried per round before accepting
 # whichever came closest (see _run_live_session) -- keeps the worst-case
@@ -82,7 +98,7 @@ class SessionAlreadyCompleteError(OrchestratorError):
 
 class SessionNotResumableError(OrchestratorError):
     """Raised for a session that crashed before reaching `IN_PROGRESS` --
-    see `_NOT_RESUMABLE_PRE_SESSION_STATUSES`."""
+    see `NOT_RESUMABLE_PRE_SESSION_STATUSES`."""
 
 
 class Orchestrator:
@@ -213,7 +229,7 @@ class Orchestrator:
                 f"Session {session_id} failed before completing setup: {record.error_message}. "
                 "Start a new session instead."
             )
-        if record.status in _NOT_RESUMABLE_PRE_SESSION_STATUSES:
+        if record.status in NOT_RESUMABLE_PRE_SESSION_STATUSES:
             raise SessionNotResumableError(
                 f"Session {session_id} was interrupted during {record.status} pipeline setup, "
                 "before the live Q&A session began, and can't be resumed in-place -- "
