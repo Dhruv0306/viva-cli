@@ -132,10 +132,18 @@
       const out = document.getElementById("cleanup-result");
       out.hidden = false;
       out.textContent = JSON.stringify(result, null, 2);
+      document.getElementById("cleanup-clear").hidden = false;
       refreshSessions();
     } catch (err) {
       showError(`Cleanup failed: ${err.message}`);
     }
+  });
+
+  document.getElementById("cleanup-clear").addEventListener("click", () => {
+    const out = document.getElementById("cleanup-result");
+    out.hidden = true;
+    out.textContent = "";
+    document.getElementById("cleanup-clear").hidden = true;
   });
 
   async function resumeSession(sessionId) {

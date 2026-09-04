@@ -402,3 +402,9 @@ real feedback:
   exercised anywhere near that long, and 120s is a reasonable insurance
   margin against something unrelated going wrong (a slow disk, SQLite
   contention) rather than against slow analysis specifically.
+- **"Clear output" button on the cleanup panel.** `POST /api/cleanup`'s
+  JSON result was shown in a `<pre>` that, once populated, stayed on
+  screen indefinitely with no way to dismiss it short of reloading the
+  page. Added a small "Clear output" button next to it
+  (`static/index.html`/`app.js`) that hides the result and itself --
+  purely a frontend affordance, no API change.
