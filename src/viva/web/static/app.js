@@ -62,16 +62,23 @@
       tbody.innerHTML = "";
       for (const s of sessions) {
         const tr = document.createElement("tr");
-        const resumable = s.status !== "COMPLETE" && s.status !== "FAILED";
+        const shortId = s.session_id.length > 12 ? `${s.session_id.slice(0, 10)}\u2026` : s.session_id;
+        const repoLabel = s.repo_slug || s.repo_url;
         tr.innerHTML = `
-          <td>${s.session_id}</td>
-          <td>${s.repo_slug || s.repo_url}</td>
+          <td title="${s.session_id}">${shortId}</td>
+          <td title="${repoLabel}">${repoLabel}</td>
           <td>${s.status}</td>
           <td>${s.updated_at}</td>
           <td></td>
         `;
         const actionCell = tr.lastElementChild;
-        if (resumable) {
+        // s.resumable comes straight from Orchestrator.resume()'s own
+        // validation (is_resumable() in orchestrator.py) -- not
+        // re-derived here, so this can't drift out of sync with what
+        // /resume will actually accept the way it used to (a session
+        // interrupted mid-setup, e.g. status ANALYZING, used to still
+        // show a "Resume" button that could only ever 409).
+        if (s.resumable) {
           const btn = document.createElement("button");
           btn.textContent = "Resume";
           btn.className = "secondary";
@@ -84,6 +91,10 @@
           btn.onclick = () => viewReport(s.session_id);
           actionCell.appendChild(btn);
         }
+        // Neither resumable nor COMPLETE (interrupted mid-setup, or
+        // FAILED) -- nothing can be done with it from here besides
+        // starting a new session, so no button at all rather than one
+        // that's guaranteed to fail.
         tbody.appendChild(tr);
       }
     } catch (err) {

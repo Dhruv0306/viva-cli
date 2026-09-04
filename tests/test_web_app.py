@@ -225,6 +225,31 @@ def test_list_sessions_reads_real_store(mocker, tmp_path):
     assert ids == ["sess1"]
 
 
+def test_list_sessions_resumable_field_matches_orchestrator_validation(mocker, tmp_path):
+    # Regression test: the sessions list used to compute "can this be
+    # resumed" purely on the frontend (status != COMPLETE/FAILED), which
+    # didn't match Orchestrator.resume()'s own, stricter validation --
+    # a session interrupted mid-setup (e.g. ANALYZING) showed a "Resume"
+    # button that could only ever 409 (confirmed against a real
+    # `viva serve` run's log, this session). `resumable` now comes
+    # straight from orchestrator.is_resumable(), the same check
+    # resume() itself applies.
+    config = _config(tmp_path)
+    store = SessionStore(config.session_db_path)
+    store.create_session("mid-setup", "https://github.com/o/r", None, None, 1800)
+    store.update_status("mid-setup", "ANALYZING")
+    store.create_session("live", "https://github.com/o/r", None, None, 1800)
+    store.update_status("live", "IN_PROGRESS")
+    store.close()
+    mocker.patch("viva.web.app.SessionRegistry", return_value=_FakeRegistry(config))
+    client = TestClient(create_app(config))
+
+    response = client.get("/api/sessions")
+
+    resumable_by_id = {s["session_id"]: s["resumable"] for s in response.json()}
+    assert resumable_by_id == {"mid-setup": False, "live": True}
+
+
 # -- GET /api/sessions/{id}/report (real SessionStore/ReportBuilder) --------
 
 def _seed_completed_session(db_path: str) -> None:

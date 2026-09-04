@@ -366,6 +366,41 @@ real terminal output exactly), then confirmed to pass against the fix.
 on both the buggy and fixed code, since `GET /`'s behavior never
 actually changed.
 
+**"Resume" offered for sessions that could only ever 409.** Found from
+a real `viva serve` log: repeated `POST /sessions/{id}/resume` ->
+`409 Conflict` on the same session, every time it was clicked. Root
+cause: `app.js`'s session list decided whether to show a "Resume"
+button purely from `status != COMPLETE && status != FAILED` --
+but `Orchestrator.resume()` also refuses a session interrupted during
+`INGESTING`/`ANALYZING`/`INDEXING`/`PLANNING` (crashed before the live
+Q&A session ever began -- `11-phase-6-session-loop-design.md`'s "Known
+limitations", unchanged, Phase 6 behavior). A session whose local LLM
+analysis got interrupted -- exactly the kind of thing more likely with
+a bigger repo -- sat in the sessions list with a "Resume" button that
+was guaranteed to fail no matter how many times it was clicked, and the
+list never explained why.
+
+Fixed at the source rather than re-deriving the same status list a
+second time in JS: `orchestrator.py` gained `is_resumable(status)`, a
+public function mirroring exactly what `resume()`'s own validation
+accepts (the pre-session-statuses constant it checks against was
+renamed from `_NOT_RESUMABLE_PRE_SESSION_STATUSES` to
+`NOT_RESUMABLE_PRE_SESSION_STATUSES` to make it a legitimate
+cross-module dependency rather than reaching into a private name).
+`GET /api/sessions` now includes a server-computed `resumable` field
+per session, and `app.js` uses that instead of guessing -- a session
+that can't be resumed shows its status with no action button at all,
+rather than one that's guaranteed to fail.
+
+Regression tests: `test_is_resumable_matches_what_resume_itself_accepts`
+in `test_orchestrator.py` (11 parametrized statuses, each checked
+against both `is_resumable()` and an actual `orch.resume()` call, so
+the two can't silently drift apart again) and
+`test_list_sessions_resumable_field_matches_orchestrator_validation`
+in `test_web_app.py` (confirmed to fail against the pre-fix `app.py`
+first with a `KeyError` on the missing field, then pass against the
+fix).
+
 ## 15.14 Post-merge refinements
 
 Small, non-architectural follow-ups made after the initial merge, on

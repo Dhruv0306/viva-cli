@@ -33,6 +33,7 @@ from viva.orchestrator import (
     SessionAlreadyCompleteError,
     SessionNotFoundError,
     SessionNotResumableError,
+    is_resumable,
 )
 from viva.report import ReportBuilder, render_json, render_markdown
 from viva.storage import SessionStore
@@ -126,7 +127,13 @@ def create_app(config: Config) -> FastAPI:
             sessions = store.list_sessions(status)
         finally:
             store.close()
-        return [asdict(s) for s in sessions]
+        # is_resumable() mirrors Orchestrator.resume()'s own validation
+        # (orchestrator.py) -- without it, the frontend previously had
+        # to guess at resumability from the raw status string and
+        # offered a "Resume" button for sessions resume() would always
+        # 409 on (interrupted before the live Q&A session began; see
+        # design doc \u00a715.14).
+        return [{**asdict(s), "resumable": is_resumable(s.status)} for s in sessions]
 
     @app.get("/api/sessions/{session_id}/report")
     def report(session_id: str, format: str = "md", allow_partial: bool = False):
