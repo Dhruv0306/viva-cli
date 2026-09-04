@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 
-from viva.report import ReportBuilder, render_json, render_markdown
+from viva.report import ReportBuilder, render_html, render_json, render_markdown
 from viva.schemas import EvaluationRecord, MissedPoint
 from viva.storage.session_store import QARecordRow, SessionRecord
 
@@ -356,3 +356,62 @@ def test_render_json_round_trips_report_shape():
     assert payload["answered_count"] == 1
     assert payload["questions"][0]["question_id"] == "q1"
     assert payload["questions"][0]["classification"] == "partial"
+
+
+def test_render_html_includes_header_and_sections():
+    session = _session()
+    qa_records = [_qa("q1", "rag", "answered", _record("correct", did_well=["Good grasp of chunking."]))]
+    report = ReportBuilder().build(session, qa_records)
+
+    rendered = render_html(report)
+
+    assert "<h1>Viva Report" in rendered
+    assert "owner/repo" in rendered
+    assert "<h2>Strengths</h2>" in rendered
+    assert "Good grasp of chunking." in rendered
+    assert "<h2>Weaknesses</h2>" in rendered
+    assert "None noted." in rendered  # weaknesses section is empty here
+    assert "<h2>Topics to Revisit</h2>" in rendered
+    assert "<h2>Question-by-Question</h2>" in rendered
+    assert "<table" in rendered
+    # No <html>/<head>/<body> wrapper -- meant to be embedded in an
+    # existing page (report.py's render_html() docstring).
+    assert "<html" not in rendered.lower()
+
+
+def test_render_html_escapes_llm_derived_text():
+    # Regression test: every string in a Report can originate from LLM
+    # output grounded in the analyzed repo's own content -- a repo
+    # crafted to prompt-inject HTML/script into an LLM's answer must not
+    # be able to run script in whoever's browser views the report.
+    session = _session()
+    qa_records = [
+        _qa(
+            "q1", "rag", "answered",
+            _record(
+                "correct",
+                summary='<script>alert(1)</script>',
+                did_well=['<img src=x onerror="alert(2)">'],
+            ),
+            question_text='<script>alert(3)</script>',
+        )
+    ]
+    report = ReportBuilder().build(session, qa_records)
+
+    rendered = render_html(report)
+
+    assert "<script>" not in rendered
+    assert "<img" not in rendered  # only the escaped &lt;img...&gt; form should appear
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered
+    assert "&lt;img src=x onerror=" in rendered
+
+
+def test_render_html_marks_needs_review_rows():
+    session = _session()
+    qa_records = [_qa("q1", "rag", "answered", None)]  # -> needs_review, per ReportBuilder.build
+    report = ReportBuilder().build(session, qa_records)
+
+    rendered = render_html(report)
+
+    assert 'class="needs-review"' in rendered
+    assert "needs review" in rendered
