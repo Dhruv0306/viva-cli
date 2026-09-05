@@ -12,6 +12,8 @@ persisted -- there's nothing worth mocking there either.
 """
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
+
 from fastapi.testclient import TestClient
 
 from viva.config import Config
@@ -446,3 +448,22 @@ def test_favicon_served_at_root_favicon_ico(mocker, tmp_path):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/svg+xml")
     assert b"<svg" in response.content
+
+
+def test_favicon_svg_is_well_formed_xml(mocker, tmp_path):
+    # Regression test for a real bug: a double hyphen inside an XML/SVG
+    # comment makes the whole file invalid XML per spec (only allowed as
+    # the opening/closing comment delimiters, never in the body) -- but
+    # FastAPI/StaticFiles happily serves the raw bytes over HTTP
+    # regardless, since serving never validates well-formedness. The
+    # favicon.ico/.svg 404 fix's own routes/status/content-type all
+    # checked out fine while the actual SVG content was silently
+    # invalid -- some browsers' SVG decoders refuse to render a
+    # malformed file with no network-visible error at all, which is
+    # exactly what happened here: confirmed for real with a strict XML
+    # parser raising "not well-formed" at the exact double hyphen.
+    client = _app_client(mocker, tmp_path)
+
+    response = client.get("/static/favicon.svg")
+
+    ET.fromstring(response.content)  # raises ParseError if malformed

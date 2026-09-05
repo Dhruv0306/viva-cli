@@ -449,6 +449,35 @@ test: `docs/system-design/12-phase-7-evaluator-design.md` §12.10 (that's
 the bug's actual home; this doc only records that Phase 10 is what
 surfaced it).
 
+**Favicon 404 was fixed, but the icon still didn't render.** After
+§12's favicon fix (mount at `/static`, explicit `/favicon.ico` route),
+the network layer was entirely correct -- both requests returned `200`/
+`304` with the right content-type -- but the icon itself never
+displayed in the browser. Root cause: `static/favicon.svg`'s own
+comment used a double hyphen as a stylistic separator (this project's
+usual convention in Python comments), which is invalid inside an XML/
+SVG comment body under the XML spec (a double hyphen is only permitted
+as the comment's opening/closing delimiters). FastAPI/`StaticFiles`
+serve raw bytes and never validate well-formedness, so the file loaded
+over HTTP with no error at all -- some browsers' SVG-decoding pipeline
+is stricter than that and silently refused to render the malformed
+file. Confirmed directly: parsing the original file with a strict XML
+parser reproduces the exact same "not well-formed" error a browser's
+own decoder would hit.
+
+Fixed by rewriting the comment without a double hyphen anywhere in its
+body (the file's actual visual design was also improved at the same
+time -- a bright accent-blue background with a dark mark, rather than
+a dark background with a blue mark, since a dark-on-near-black icon
+reads as an empty blob at real favicon size (16px) regardless of
+whether it's rendering correctly, and that was worth fixing too even
+though it wasn't the root cause of it not appearing at all).
+
+Regression test: `test_favicon_svg_is_well_formed_xml` in
+`test_web_app.py`, using the standard library's `xml.etree
+.ElementTree` parser (no new dependency) -- confirmed to fail against
+the original file with the exact same parse error before fixing.
+
 ## 15.14 Post-merge refinements
 
 Small, non-architectural follow-ups made after the initial merge, on
