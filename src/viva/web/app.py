@@ -35,7 +35,7 @@ from viva.orchestrator import (
     SessionNotResumableError,
     is_resumable,
 )
-from viva.report import ReportBuilder, render_json, render_markdown
+from viva.report import ReportBuilder, render_html, render_json, render_markdown
 from viva.storage import SessionStore
 from viva.web.registry import SessionRegistry
 
@@ -136,9 +136,9 @@ def create_app(config: Config) -> FastAPI:
         return [{**asdict(s), "resumable": is_resumable(s.status)} for s in sessions]
 
     @app.get("/api/sessions/{session_id}/report")
-    def report(session_id: str, format: str = "md", allow_partial: bool = False):
-        if format not in ("md", "json"):
-            raise HTTPException(status_code=400, detail="format must be 'md' or 'json'")
+    def report(session_id: str, format: str = "md", allow_partial: bool = False, download: bool = False):
+        if format not in ("md", "json", "html"):
+            raise HTTPException(status_code=400, detail="format must be 'md', 'json', or 'html'")
 
         store = SessionStore(config.session_db_path)
         try:
@@ -164,8 +164,22 @@ def create_app(config: Config) -> FastAPI:
             session, qa_records, max_items_per_section=config.report_max_items_per_section,
         )
         if format == "json":
-            return PlainTextResponse(content=render_json(built_report), media_type="application/json")
-        return PlainTextResponse(content=render_markdown(built_report), media_type="text/markdown")
+            text, media_type, ext = render_json(built_report), "application/json", "json"
+        elif format == "html":
+            text, media_type, ext = render_html(built_report), "text/html", "html"
+        else:
+            text, media_type, ext = render_markdown(built_report), "text/markdown", "md"
+
+        headers = None
+        if download:
+            # Triggers an actual file save instead of the browser
+            # rendering/navigating to the response inline -- what the
+            # web UI's "Download .md"/"Download .json" buttons link
+            # straight at (static/app.js). Not offered for format=html,
+            # which is only ever fetched for on-screen rendering.
+            slug = (session.repo_slug or session.session_id).replace("/", "-")
+            headers = {"Content-Disposition": f'attachment; filename="report-{slug}.{ext}"'}
+        return PlainTextResponse(content=text, media_type=media_type, headers=headers)
 
     @app.post("/api/cleanup")
     def cleanup(body: CleanupRequest) -> dict:

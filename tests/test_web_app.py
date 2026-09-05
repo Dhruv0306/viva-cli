@@ -335,6 +335,44 @@ def test_report_json_format(mocker, tmp_path):
     assert response.json()["session_id"] == "sess1"
 
 
+def test_report_html_format(mocker, tmp_path):
+    config = _config(tmp_path)
+    _seed_completed_session(config.session_db_path)
+    mocker.patch("viva.web.app.SessionRegistry", return_value=_FakeRegistry(config))
+    client = TestClient(create_app(config))
+
+    response = client.get("/api/sessions/sess1/report?format=html")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<h1>Viva Report" in response.text
+    assert "<html" not in response.text.lower()  # fragment, not a full page
+
+
+def test_report_download_sets_content_disposition(mocker, tmp_path):
+    config = _config(tmp_path)
+    _seed_completed_session(config.session_db_path)
+    mocker.patch("viva.web.app.SessionRegistry", return_value=_FakeRegistry(config))
+    client = TestClient(create_app(config))
+
+    md_response = client.get("/api/sessions/sess1/report?format=md&download=true")
+    json_response = client.get("/api/sessions/sess1/report?format=json&download=true")
+
+    assert md_response.headers["content-disposition"] == 'attachment; filename="report-o-r.md"'
+    assert json_response.headers["content-disposition"] == 'attachment; filename="report-o-r.json"'
+
+
+def test_report_without_download_has_no_content_disposition(mocker, tmp_path):
+    config = _config(tmp_path)
+    _seed_completed_session(config.session_db_path)
+    mocker.patch("viva.web.app.SessionRegistry", return_value=_FakeRegistry(config))
+    client = TestClient(create_app(config))
+
+    response = client.get("/api/sessions/sess1/report?format=md")
+
+    assert "content-disposition" not in response.headers
+
+
 # -- POST /api/cleanup (real SessionStore/VectorStore) -----------------------
 
 def test_cleanup_invalid_older_than_returns_400(mocker, tmp_path):
