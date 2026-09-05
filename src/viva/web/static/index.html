@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<!--
+  Single-page frontend for `viva serve` (docs/plan.md Phase 10,
+  docs/system-design/15-phase-10-web-ui-design.md \u00a715.6).
+
+  Deliberately no framework/build step -- vanilla HTML/CSS/JS served
+  straight off disk by FastAPI's StaticFiles, per the design doc's
+  "no new frontend toolchain" framing (\u00a715.2). app.js swaps between
+  the three views below by toggling their `hidden` attribute; there's
+  no client-side router.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>viva-web</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img class="logo" src="/static/favicon.svg" alt="" width="28" height="28" />
+      <h1>viva-web</h1>
+    </div>
+    <p class="subtitle">The browser interface for viva-cli — a local, code-grounded viva on your own repo.</p>
+  </header>
+
+  <main>
+    <section id="error-banner" class="banner banner-error" hidden></section>
+
+    <!-- View 1: start a session / browse existing ones -->
+    <section id="view-start">
+      <div class="card">
+        <h2>Start a viva</h2>
+        <form id="start-form">
+          <label>
+            Repo URL
+            <input type="text" id="start-repo-url" placeholder="https://github.com/owner/repo" required />
+          </label>
+          <label>
+            Branch <span class="hint">(optional)</span>
+            <input type="text" id="start-branch" placeholder="main" />
+          </label>
+          <label>
+            Duration (minutes) <span class="hint">(optional)</span>
+            <input type="number" id="start-duration" min="1" />
+          </label>
+          <label>
+            Session name <span class="hint">(optional)</span>
+            <input type="text" id="start-session-name" />
+          </label>
+          <button type="submit">Start</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Sessions</h2>
+        <button id="refresh-sessions" type="button" class="secondary">Refresh</button>
+        <div class="table-scroll">
+          <table id="sessions-table">
+            <thead>
+              <tr><th>Session</th><th>Repo</th><th>Status</th><th>Updated</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Cleanup</h2>
+        <p class="hint">Removes sessions/index data past retention (NFR7). Same as <code>viva cleanup</code>.</p>
+        <form id="cleanup-form">
+          <label>
+            Older than (days) <span class="hint">(optional -- defaults to the configured retention)</span>
+            <input type="number" id="cleanup-older-than" min="1" />
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="cleanup-all" />
+            Remove everything, regardless of age
+          </label>
+          <button type="submit" class="secondary">Run cleanup</button>
+        </form>
+        <pre id="cleanup-result" class="result" hidden></pre>
+        <button id="cleanup-clear" type="button" class="secondary" hidden>Clear output</button>
+      </div>
+    </section>
+
+    <!-- View 2: the live question/answer loop -->
+    <section id="view-live" hidden>
+      <div class="card">
+        <div class="live-header">
+          <h2>Session <span id="live-session-id"></span></h2>
+          <span id="live-timer" class="timer"></span>
+        </div>
+        <p id="live-detail" class="hint"></p>
+        <div id="live-question-block" hidden>
+          <p class="question-meta"><span id="live-category"></span> &middot; question <span id="live-question-number"></span></p>
+          <p id="live-question-text" class="question-text"></p>
+          <textarea id="live-answer" rows="6" placeholder="Type your answer... (Alt+Enter or the button submits)"></textarea>
+          <button id="live-submit" type="button">Submit answer</button>
+        </div>
+        <div id="live-complete-block" hidden>
+          <p>Session complete.</p>
+          <button id="live-view-report" type="button">View report</button>
+        </div>
+        <button id="live-back" type="button" class="secondary">Back to sessions</button>
+      </div>
+    </section>
+
+    <!-- View 3: the rendered report -->
+    <section id="view-report" hidden>
+      <div class="card">
+        <div class="live-header">
+          <h2>Report</h2>
+          <div class="report-actions">
+            <a id="report-download-md" class="btn secondary" download>Download .md</a>
+            <a id="report-download-json" class="btn secondary" download>Download .json</a>
+          </div>
+        </div>
+        <div id="report-body" class="result report"></div>
+        <button id="report-back" type="button" class="secondary">Back to sessions</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

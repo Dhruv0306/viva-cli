@@ -1,0 +1,192 @@
+/* Minimal styling for `viva serve` (design doc \u00a715.6) -- no CSS
+   framework, just enough to be legible and not look unstyled. */
+
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --border: #2a2f3a;
+  --text: #e6e8eb;
+  --text-dim: #9aa1ac;
+  --accent: #4f8cff;
+  --accent-hover: #6da0ff;
+  --danger: #e0554f;
+  --success: #4fae6a;
+  --radius: 8px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  /* Belt-and-braces: nothing below should ever force horizontal
+     scroll on the page itself -- the sessions table gets its own
+     scroll container (.table-scroll) instead, see below. */
+  overflow-x: hidden;
+}
+
+header {
+  padding: 1.5rem 2rem 0.5rem;
+}
+
+.brand { display: flex; align-items: center; gap: 0.6rem; }
+.logo { display: block; border-radius: 6px; flex-shrink: 0; }
+header h1 { margin: 0; font-size: 1.4rem; }
+.subtitle { color: var(--text-dim); margin: 0.2rem 0 0; font-size: 0.9rem; }
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem 1.75rem;
+}
+
+.card h2 { margin: 0 0 0.9rem; font-size: 1.05rem; }
+
+label {
+  display: block;
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+label.checkbox { display: flex; align-items: center; gap: 0.5rem; }
+label.checkbox input { width: auto; }
+
+.hint { font-weight: normal; color: var(--text-dim); font-size: 0.8rem; }
+
+input[type="text"],
+input[type="number"],
+textarea {
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+textarea { resize: vertical; }
+
+.table-scroll {
+  /* The sessions table is the one place a single cell (a full repo URL,
+     a long session id) can realistically be wider than the card --
+     scope the scrolling to just this element instead of letting it
+     force the whole page wider (that was the actual overflow: the
+     table had no scroll container of its own, so a long cell pushed
+     past the .card's edge). */
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
+  margin-top: 0.8rem;
+  font-size: 0.85rem;
+  table-layout: fixed;
+}
+th, td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+th { color: var(--text-dim); font-weight: 500; }
+th:last-child, td:last-child { width: 5.5rem; white-space: normal; }
+
+.live-header { display: flex; justify-content: space-between; align-items: baseline; }
+.timer { font-variant-numeric: tabular-nums; font-size: 1.1rem; color: var(--accent); }
+.question-meta { color: var(--text-dim); font-size: 0.8rem; margin-bottom: 0.2rem; }
+.question-text { font-size: 1.05rem; margin: 0.2rem 0 1rem; }
+
+.result {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.8rem;
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+/* Report view (.result.report, static/index.html) -- rendered HTML from
+   report.py's render_html(), replacing the old raw-Markdown <pre> text.
+   Overrides the sessions-table rules above for its own <table>: the
+   report's "Summary" column holds full sentences meant to be read, not
+   compact data meant to be scanned, so it should wrap rather than
+   truncate. */
+.report h1 { font-size: 1.15rem; margin: 0 0 0.9rem; }
+.report h2 {
+  font-size: 0.95rem; color: var(--accent);
+  margin: 1.25rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.report section:first-of-type h2 { margin-top: 0; }
+.report dl.report-meta {
+  display: grid; grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem; margin: 0 0 1rem; font-size: 0.85rem;
+}
+.report dl.report-meta dt { color: var(--text-dim); }
+.report dl.report-meta dd { margin: 0; }
+.report ul { margin: 0; padding-left: 1.2rem; }
+.report li { margin: 0.25rem 0; }
+.report .report-empty { color: var(--text-dim); font-style: italic; margin: 0; }
+.report .report-coverage-notes { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 1rem; }
+.report table {
+  table-layout: auto;
+  min-width: 0;
+}
+.report table th, .report table td {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  vertical-align: top;
+}
+.report table tr.needs-review td:nth-child(2) { color: var(--danger); }
+
+.report-actions { display: flex; gap: 0.6rem; }
+
+.banner { padding: 0.7rem 1rem; border-radius: 6px; font-size: 0.85rem; }
+.banner-error { background: rgba(224, 85, 79, 0.15); border: 1px solid var(--danger); color: #ffb3af; }
+
+a { color: var(--accent); }
+
+button, a.btn {
+  display: inline-block;
+  text-decoration: none;
+  margin-top: 0.9rem;
+  padding: 0.55rem 1.1rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+button:hover, a.btn:hover { background: var(--accent-hover); }
+button.secondary, a.btn.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+button.secondary:hover, a.btn.secondary:hover { background: var(--border); }
+
+@media (max-width: 480px) {
+  header { padding: 1.1rem 1rem 0.4rem; }
+  main { padding: 1rem 1rem 2.5rem; gap: 1.25rem; }
+  .card { padding: 1.1rem 1.25rem; }
+  .live-header { flex-direction: column; align-items: flex-start; gap: 0.3rem; }
+}
