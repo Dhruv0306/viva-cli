@@ -110,9 +110,12 @@
       <div class="card">
         <div class="live-header">
           <h2>Report</h2>
-          <a id="report-json-link" href="#" target="_blank">raw JSON</a>
+          <div class="report-actions">
+            <a id="report-download-md" class="btn secondary" download>Download .md</a>
+            <a id="report-download-json" class="btn secondary" download>Download .json</a>
+          </div>
         </div>
-        <pre id="report-body" class="result"></pre>
+        <div id="report-body" class="result report"></div>
         <button id="report-back" type="button" class="secondary">Back to sessions</button>
       </div>
     </section>

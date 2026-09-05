@@ -80,21 +80,6 @@ textarea {
 
 textarea { resize: vertical; }
 
-button {
-  margin-top: 0.9rem;
-  padding: 0.55rem 1.1rem;
-  background: var(--accent);
-  border: none;
-  border-radius: 6px;
-  color: white;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-
-button:hover { background: var(--accent-hover); }
-button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
-button.secondary:hover { background: var(--border); }
-
 .table-scroll {
   /* The sessions table is the one place a single cell (a full repo URL,
      a long session id) can realistically be wider than the card --
@@ -140,10 +125,62 @@ th:last-child, td:last-child { width: 5.5rem; white-space: normal; }
   overflow: auto;
 }
 
+/* Report view (.result.report, static/index.html) -- rendered HTML from
+   report.py's render_html(), replacing the old raw-Markdown <pre> text.
+   Overrides the sessions-table rules above for its own <table>: the
+   report's "Summary" column holds full sentences meant to be read, not
+   compact data meant to be scanned, so it should wrap rather than
+   truncate. */
+.report h1 { font-size: 1.15rem; margin: 0 0 0.9rem; }
+.report h2 {
+  font-size: 0.95rem; color: var(--accent);
+  margin: 1.25rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.report section:first-of-type h2 { margin-top: 0; }
+.report dl.report-meta {
+  display: grid; grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem; margin: 0 0 1rem; font-size: 0.85rem;
+}
+.report dl.report-meta dt { color: var(--text-dim); }
+.report dl.report-meta dd { margin: 0; }
+.report ul { margin: 0; padding-left: 1.2rem; }
+.report li { margin: 0.25rem 0; }
+.report .report-empty { color: var(--text-dim); font-style: italic; margin: 0; }
+.report .report-coverage-notes { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 1rem; }
+.report table {
+  table-layout: auto;
+  min-width: 0;
+}
+.report table th, .report table td {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  vertical-align: top;
+}
+.report table tr.needs-review td:nth-child(2) { color: var(--danger); }
+
+.report-actions { display: flex; gap: 0.6rem; }
+
 .banner { padding: 0.7rem 1rem; border-radius: 6px; font-size: 0.85rem; }
 .banner-error { background: rgba(224, 85, 79, 0.15); border: 1px solid var(--danger); color: #ffb3af; }
 
 a { color: var(--accent); }
+
+button, a.btn {
+  display: inline-block;
+  text-decoration: none;
+  margin-top: 0.9rem;
+  padding: 0.55rem 1.1rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+button:hover, a.btn:hover { background: var(--accent-hover); }
+button.secondary, a.btn.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+button.secondary:hover, a.btn.secondary:hover { background: var(--border); }
 
 @media (max-width: 480px) {
   header { padding: 1.1rem 1rem 0.4rem; }

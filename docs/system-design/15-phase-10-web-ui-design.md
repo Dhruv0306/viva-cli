@@ -461,3 +461,18 @@ real feedback:
   a correctness fix, so no regression test; verified by hand-tracing the
   CSS against the markup for both the table-overflow scenario (a long
   session id/URL) and a narrow (480px) viewport.
+- **Report view renders real HTML, with explicit download buttons.**
+  Overrides the original §15.12 item 3 decision (`<pre>`-as-plaintext,
+  zero new frontend dependency) on request. `report.py` gained
+  `render_html()`, a third renderer alongside `render_markdown`/
+  `render_json`, built from the same structured `Report` object (no
+  Markdown-parsing step to get wrong or keep in sync) and used by
+  `GET /report?format=html`. Every string in it is `html.escape()`-d
+  before embedding, since a `Report`'s content can originate from LLM
+  output grounded in the analyzed repo -- a repo crafted to
+  prompt-inject HTML/script into an answer must not be able to run
+  script in whoever views the report. The report view's old "raw JSON"
+  link is now two explicit download buttons
+  (`GET /report?format=md|json&download=true`, which sets
+  `Content-Disposition: attachment` server-side so the browser saves a
+  file instead of navigating to it).

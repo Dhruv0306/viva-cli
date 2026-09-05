@@ -287,10 +287,13 @@
     clearError();
     stopPolling();
     try {
-      const text = await api(`/api/sessions/${encodeURIComponent(sessionId)}/report?format=md&allow_partial=true`);
-      document.getElementById("report-body").textContent = text;
-      document.getElementById("report-json-link").href =
-        `/api/sessions/${encodeURIComponent(sessionId)}/report?format=json&allow_partial=true`;
+      const reportPath = `/api/sessions/${encodeURIComponent(sessionId)}/report`;
+      const htmlFragment = await api(`${reportPath}?format=html&allow_partial=true`);
+      document.getElementById("report-body").innerHTML = htmlFragment;
+      document.getElementById("report-download-md").href =
+        `${reportPath}?format=md&allow_partial=true&download=true`;
+      document.getElementById("report-download-json").href =
+        `${reportPath}?format=json&allow_partial=true&download=true`;
       showView("report");
     } catch (err) {
       showError(`Couldn't load report: ${err.message}`);
