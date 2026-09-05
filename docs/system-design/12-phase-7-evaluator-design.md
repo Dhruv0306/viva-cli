@@ -201,3 +201,46 @@ updates, not a behavior change, in:
 - Multi-worker/parallel evaluation — one background thread is sufficient
   at expected local-model throughput and avoids the SQLite multi-writer
   problem outright.
+
+## 12.10 Real-world bug found later (Phase 10 testing): `classify()`'s latency wasn't excluded
+
+Found well after this phase merged, during Phase 10 (web UI) testing —
+see `docs/system-design/15-phase-10-web-ui-design.md` §15.13 for the
+user-visible symptom (the web UI's countdown resumed lower than where
+it had been frozen, once per question) that led here. The actual bug is
+in `orchestrator.py`'s live loop, not the web UI: `self.ui.read_answer()`
+returns, `record_answer()` persists the answer, and then
+`_maybe_queue_followup()` is called directly — which calls
+`self.classification_provider.classify()`. §12.2 above already
+establishes that `classify()` makes a real, synchronous LLM call (the
+fast classification half of the two-call split); FR17/FR24 both require
+that latency not count against the person's timed session, the same as
+`generate_question()`'s latency already doesn't (wrapped in
+`timer.excluding()` at its own call sites in the same loop). The call to
+`_maybe_queue_followup()` was never wrapped the same way — an oversight
+in this phase, not a deliberate choice: nothing in this doc's design
+discussion (§12.2's restructuring, §12.4's backgrounding) argued
+`classify()`'s latency should count differently from
+`generate_question()`'s.
+
+Silent on the CLI: `RichSessionUI` only renders a live countdown while
+actually blocked in `read_answer()`, not during the gap between
+questions, so the extra unexcluded time was never visible there --
+though it was still being spent for real, meaning every session using a
+real `Evaluator` got slightly less actual think-time than its configured
+`viva_duration_minutes`, silently, on every answer. The web UI's more
+literal countdown display (freeze-then-resume,
+`15-phase-10-web-ui-design.md` §15.13) is what finally made it visible
+enough to report.
+
+Fixed: the call to `_maybe_queue_followup()` in `orchestrator.py`'s live
+loop is now wrapped in `timer.excluding()`, matching
+`generate_question()`'s existing pattern exactly.
+
+Regression test: `test_classification_latency_is_excluded_from_the_answer_timer`
+in `test_orchestrator.py` — injects a `ClassificationProvider` whose
+`classify()` sleeps a known duration, and asserts the drop in
+`timer.remaining()` between two consecutive `read_answer()` calls is
+much smaller than that sleep. Confirmed to fail against the pre-fix
+code first (the drop matched the sleep almost exactly), then pass
+against the fix.

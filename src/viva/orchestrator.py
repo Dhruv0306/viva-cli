@@ -380,7 +380,16 @@ class Orchestrator:
             answer_text = self.ui.read_answer(timer)
             self.store.record_answer(session_id, selected_item.question_id, answer_text)
 
-            self._maybe_queue_followup(session_id, selected_item, answer_text)
+            # FR17/FR24: evaluation latency must not consume the
+            # person's timed session, the same as generate_question()'s
+            # latency above. classify() (ClassificationProvider, e.g.
+            # Evaluator) makes a real, synchronous LLM call -- without
+            # this, its duration silently ate into the next question's
+            # remaining time budget on every single answer (reported
+            # from real use: the web UI's countdown visibly resumed
+            # lower than where it had been frozen, once per question).
+            with timer.excluding():
+                self._maybe_queue_followup(session_id, selected_item, answer_text)
 
         self.store.update_status(session_id, "FINALIZING_EVALS")
         # docs/system-design/12-phase-7-evaluator-design.md §12.6: drain

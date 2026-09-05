@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -627,6 +628,63 @@ class _SpyClassificationProvider(ClassificationProvider):
 
     def flush(self, timeout):
         self.flush_calls.append(timeout)
+
+
+class _SlowClassificationProvider(ClassificationProvider):
+    """`classify()` sleeps for a measurable duration before returning --
+    simulates a real (local, potentially slow) LLM classification call,
+    without needing a real Evaluator/LLM client wired up."""
+
+    def __init__(self, sleep_seconds: float) -> None:
+        self.sleep_seconds = sleep_seconds
+        self.call_count = 0
+
+    def classify(self, question_id, answer_text):
+        self.call_count += 1
+        time.sleep(self.sleep_seconds)
+        return None
+
+
+class _TimerSnapshottingUI(FakeSessionUI):
+    """Same as FakeSessionUI, but records `timer.remaining()` at every
+    `read_answer()` call -- used to observe whether time spent between
+    two questions (classification, question generation) leaked into the
+    person's answer-time budget."""
+
+    def __init__(self, answers):
+        super().__init__(answers)
+        self.remaining_snapshots: list[float] = []
+
+    def read_answer(self, timer):
+        self.remaining_snapshots.append(timer.remaining())
+        return super().read_answer(timer)
+
+
+def test_classification_latency_is_excluded_from_the_answer_timer(tmp_path, monkeypatch):
+    # Regression test, reported from real use via the web UI (whose
+    # countdown made this newly visible): classify() -- a real,
+    # synchronous LLM call made directly in the live loop
+    # (_maybe_queue_followup) -- must not count against the person's
+    # timed session, same as generate_question()'s latency already
+    # doesn't (FR17/FR24). It wasn't wrapped in timer.excluding(), so
+    # real time spent classifying an answer silently ate into the next
+    # question's remaining time budget, every single question.
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    slow_classifier = _SlowClassificationProvider(sleep_seconds=0.3)
+    ui = _TimerSnapshottingUI(["a1", "a2"])
+    orch, _store = _make_orchestrator(tmp_path, config, ui, classification_provider=slow_classifier)
+
+    orch.start("https://github.com/owner/repo")
+
+    assert slow_classifier.call_count == 2
+    assert len(ui.remaining_snapshots) == 2
+    drop = ui.remaining_snapshots[0] - ui.remaining_snapshots[1]
+    # Only near-instant fake generate_question/embedding calls and
+    # trivial bookkeeping separate the two read_answer() calls --
+    # classify()'s 0.3s sleep must not show up in this drop if it's
+    # correctly excluded.
+    assert drop < 0.15
 
 
 def test_summarizing_forces_stray_evals_to_needs_review(tmp_path):

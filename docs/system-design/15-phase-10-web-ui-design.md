@@ -434,6 +434,21 @@ pre-fix code (two `snapshot()` calls 0.1s apart returned different
 values while frozen, when they should have matched exactly) before
 fixing.
 
+**Resumed countdown was lower than where it had been frozen -- a real
+core bug, not a web-UI one.** Once the above was fixed, the freeze
+itself turned out to be correct but the *value it resumed at* still
+wasn't -- reported from real use, noticed on every single question.
+Traced to `orchestrator.py`, not this package: `_maybe_queue_followup()`
+(which calls `ClassificationProvider.classify()`, a real synchronous LLM
+call) was never wrapped in `timer.excluding()` the way
+`generate_question()`'s calls already were, so its latency silently
+counted against the person's timed session on every answer -- a Phase 7
+oversight the CLI never surfaced because `RichSessionUI` doesn't render
+a countdown during that gap at all. Full write-up, fix, and regression
+test: `docs/system-design/12-phase-7-evaluator-design.md` §12.10 (that's
+the bug's actual home; this doc only records that Phase 10 is what
+surfaced it).
+
 ## 15.14 Post-merge refinements
 
 Small, non-architectural follow-ups made after the initial merge, on
