@@ -20,6 +20,13 @@
   let liveSessionId = null;
   let lastRemaining = null;
   let lastRemainingAt = null;
+  // Only "awaiting_answer" is time the person is actually being timed on
+  // (AnswerTimer.excluding(), timer.py -- the backend already excludes
+  // everything else: LLM generation, classification, follow-up planning
+  // between questions). Tracked here so tickTimer_() can freeze the
+  // on-screen countdown during that gap instead of ticking straight
+  // through it as if the person were still being timed.
+  let currentStage = null;
 
   function showView(name) {
     for (const [key, el] of Object.entries(views)) {
@@ -176,6 +183,7 @@
     document.getElementById("live-complete-block").hidden = true;
     document.getElementById("live-answer").value = "";
     lastRemaining = null;
+    currentStage = null;
     showView("live");
     stopPolling();
     pollTimer = setInterval(pollState, POLL_INTERVAL_MS);
@@ -203,6 +211,17 @@
       el.textContent = "";
       return;
     }
+    if (currentStage !== "awaiting_answer") {
+      // Not the person's turn to be timed right now (working/starting/
+      // complete/error/time_expired) -- freeze the display at the last
+      // known value instead of ticking through wall-clock time the
+      // backend's own AnswerTimer.excluding() already isn't counting
+      // against them. The next poll's fresh remaining_seconds
+      // re-baselines lastRemaining/lastRemainingAt once the next
+      // question actually starts the clock again.
+      el.textContent = formatSeconds(lastRemaining);
+      return;
+    }
     const elapsed = (Date.now() - lastRemainingAt) / 1000;
     el.textContent = formatSeconds(lastRemaining - elapsed);
   }
@@ -220,6 +239,7 @@
   }
 
   function renderLiveState(state) {
+    currentStage = state.stage;
     document.getElementById("live-detail").textContent = state.detail || "";
 
     if (state.remaining_seconds != null) {
