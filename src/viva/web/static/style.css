@@ -31,6 +31,8 @@ header {
   padding: 1.5rem 2rem 0.5rem;
 }
 
+.brand { display: flex; align-items: center; gap: 0.6rem; }
+.logo { display: block; border-radius: 6px; flex-shrink: 0; }
 header h1 { margin: 0; font-size: 1.4rem; }
 .subtitle { color: var(--text-dim); margin: 0.2rem 0 0; font-size: 0.9rem; }
 

@@ -553,3 +553,10 @@ real feedback:
   (`GET /report?format=md|json&download=true`, which sets
   `Content-Disposition: attachment` server-side so the browser saves a
   file instead of navigating to it).
+- **Logo next to the "viva-web" header text.** Reuses
+  `static/favicon.svg` directly (`<img src="/static/favicon.svg">`)
+  rather than duplicating the mark's SVG markup inline -- one drawn
+  asset, referenced wherever it's needed, already cached from the
+  favicon fix. `.brand` (new) is a small flex row wrapping the image
+  and the `<h1>`; `alt=""` since the adjacent heading text already
+  conveys the same information.
