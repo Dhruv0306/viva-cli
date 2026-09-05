@@ -401,6 +401,39 @@ in `test_web_app.py` (confirmed to fail against the pre-fix `app.py`
 first with a `KeyError` on the missing field, then pass against the
 fix).
 
+**Countdown kept ticking after the answer was already submitted.**
+Reported from real use: the on-screen clock didn't stop once a
+question was answered, and kept counting down through the gap before
+the next question appeared. The backend's actual time budget was
+never wrong -- `AnswerTimer.excluding()` (`timer.py`) already excludes
+classification/question-generation LLM time from what counts against
+the person -- but two things surfaced that gap as if it still counted:
+`WebSessionUI.snapshot()` returned a live `timer.remaining()` read
+regardless of stage, which (since `excluding()` only subtracts elapsed
+time back out once its block *finishes*, not while one is still in
+flight) could visibly tick down before self-correcting; and
+`static/app.js`'s client-side `tickTimer_()` interpolated the
+displayed number every second unconditionally, with no notion of
+"stage" at all, so it kept ticking straight through the "processing"
+gap between polls too.
+
+Fixed at both layers: `WebSessionUI` now freezes `remaining_seconds`
+at the instant an answer is recorded (`read_answer()`) and reports
+that frozen value from `snapshot()` for as long as the stage isn't
+`awaiting_answer`, rather than a live clock read; the freeze clears
+(clock resumes for real) once `ask_question()` fires for the next
+question. `app.js` tracks the current stage and only interpolates the
+display between polls while `awaiting_answer`, holding steady
+otherwise.
+
+Regression tests:
+`test_snapshot_freezes_remaining_seconds_once_answer_is_recorded` and
+`test_snapshot_resumes_live_ticking_once_next_question_is_asked` in
+`test_web_session_ui.py`; the first confirmed to fail against the
+pre-fix code (two `snapshot()` calls 0.1s apart returned different
+values while frozen, when they should have matched exactly) before
+fixing.
+
 ## 15.14 Post-merge refinements
 
 Small, non-architectural follow-ups made after the initial merge, on

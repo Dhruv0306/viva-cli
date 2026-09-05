@@ -10,6 +10,8 @@ The real background-thread wiring is `registry.py`'s job, covered in
 """
 from __future__ import annotations
 
+import time
+
 from viva.session_ui import SessionSummary
 from viva.timer import AnswerTimer
 from viva.web.web_session_ui import (
@@ -128,6 +130,40 @@ def test_snapshot_includes_remaining_seconds_once_a_timer_is_known():
     remaining = ui.snapshot()["remaining_seconds"]
     assert remaining is not None
     assert 0 < remaining <= 60.0
+
+
+def test_snapshot_freezes_remaining_seconds_once_answer_is_recorded():
+    # Regression test: the web UI's countdown used to keep ticking
+    # through the gap between an answer being recorded and the next
+    # question appearing, even though AnswerTimer.excluding() (timer.py)
+    # already excludes that gap from the person's real time budget --
+    # reported from real use ("the clock ... keeps on going"). Fixed by
+    # freezing what snapshot() reports whenever the person isn't
+    # actually being timed, rather than reading the live clock.
+    ui = WebSessionUI()
+    ui.ask_question("Q", "design", 1)
+    ui.submit_answer("an answer")
+    ui.read_answer(_started_timer())  # -> stage WORKING, clock frozen
+
+    first = ui.snapshot()["remaining_seconds"]
+    time.sleep(0.1)
+    second = ui.snapshot()["remaining_seconds"]
+
+    assert first == second
+
+
+def test_snapshot_resumes_live_ticking_once_next_question_is_asked():
+    ui = WebSessionUI()
+    ui.ask_question("Q1", "design", 1)
+    ui.submit_answer("an answer")
+    ui.read_answer(_started_timer())  # -> frozen
+    ui.ask_question("Q2", "design", 2)  # -> the clock starts again for real
+
+    first = ui.snapshot()["remaining_seconds"]
+    time.sleep(0.1)
+    second = ui.snapshot()["remaining_seconds"]
+
+    assert second < first  # ticking live now, not frozen
 
 
 def test_session_complete_sets_summary_and_clears_question():

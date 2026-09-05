@@ -61,6 +61,18 @@ class WebSessionUI(SessionUI):
         self._state = WebSessionState()
         self._id_ready = threading.Event()
         self._timer: AnswerTimer | None = None
+        # Captured the instant an answer is recorded (read_answer,
+        # below) and reported by snapshot() in place of a live
+        # timer.remaining() read for as long as the person isn't
+        # actually being timed (stage != awaiting_answer). AnswerTimer
+        # itself already excludes classification/question-generation
+        # LLM time from the person's real budget (timer.py's
+        # excluding()) -- but exclusion is only subtracted back out
+        # once that block *finishes*, so a live remaining() read taken
+        # while one is still in flight would visibly (if briefly) tick
+        # down before self-correcting. Freezing what's displayed here
+        # avoids that -- see snapshot().
+        self._frozen_remaining: float | None = None
         # Set by registry.py's shutdown() so a thread still blocked in
         # read_answer() (server process exiting mid-session) doesn't hang
         # shutdown indefinitely -- read_answer polls this every 0.5s
@@ -80,6 +92,7 @@ class WebSessionUI(SessionUI):
         self._update(stage=STAGE_WORKING, detail=f"{stage} complete -- {detail}")
 
     def ask_question(self, question_text: str, category: str, question_number: int) -> None:
+        self._frozen_remaining = None  # the clock resumes for real now
         self._update(
             stage=STAGE_AWAITING_ANSWER,
             detail=None,
@@ -98,6 +111,12 @@ class WebSessionUI(SessionUI):
                 if self._shutdown.is_set():
                     answer = ""
                     break
+        # Freeze the displayed remaining-time at exactly this instant
+        # (see _frozen_remaining above) -- stops the web UI's countdown
+        # from visibly ticking through the gap between this answer being
+        # recorded and the next question appearing, even though that gap
+        # already doesn't count against the person's real time budget.
+        self._frozen_remaining = timer.remaining()
         # The Orchestrator never calls the UI again between an answer
         # being recorded and either the next ask_question() or
         # session_complete() -- classification/follow-up planning happen
@@ -153,6 +172,20 @@ class WebSessionUI(SessionUI):
     def snapshot(self) -> dict:
         with self._lock:
             state = self._state
+        if state.stage == STAGE_AWAITING_ANSWER:
+            # Live clock read while it's actually the person's turn --
+            # a frozen field would go stale second-to-second here, which
+            # is the one stage where "stale" is wrong (FR17 requires a
+            # live countdown while someone is being timed).
+            remaining = self._timer.remaining() if self._timer is not None else None
+        else:
+            # Not the person's turn to be timed right now -- report the
+            # value frozen at the moment their last answer was recorded
+            # (read_answer(), above) rather than a live read, which could
+            # otherwise visibly tick down before self-correcting once an
+            # in-flight excluding() block finishes (see
+            # _frozen_remaining's docstring in __init__).
+            remaining = self._frozen_remaining
         return {
             "session_id": state.session_id,
             "stage": state.stage,
@@ -162,11 +195,7 @@ class WebSessionUI(SessionUI):
             "question_number": state.question_number,
             "error_message": state.error_message,
             "summary": state.summary,
-            # Computed fresh on every snapshot (not baked into
-            # WebSessionState) -- it's a live clock read, and a frozen
-            # dataclass field would go stale between polls even though
-            # nothing else about the state changed.
-            "remaining_seconds": self._timer.remaining() if self._timer is not None else None,
+            "remaining_seconds": remaining,
         }
 
     def request_shutdown(self) -> None:
