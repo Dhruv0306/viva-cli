@@ -14,6 +14,7 @@ a purpose-built aggregate rather than a pass-through of it.
 """
 from __future__ import annotations
 
+import html
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -298,3 +299,78 @@ def render_json(report: Report) -> str:
     `QuestionSummary` entries) into a plain dict field-by-field, in
     declaration order, with no separate schema to hand-maintain."""
     return json.dumps(asdict(report), indent=2)
+
+
+def _esc(text: str) -> str:
+    return html.escape(text, quote=False)
+
+
+def _render_html_section(heading: str, items: list[str]) -> str:
+    if not items:
+        body = '<p class="report-empty">None noted.</p>'
+    else:
+        body = "<ul>" + "".join(f"<li>{_esc(item)}</li>" for item in items) + "</ul>"
+    return f"<section><h2>{_esc(heading)}</h2>{body}</section>"
+
+
+def render_html(report: Report) -> str:
+    """Renders `report` as a self-contained HTML fragment (no
+    `<html>`/`<head>`/`<body>` -- meant to be embedded in an existing
+    page, e.g. viva-web's report view, docs/system-design/
+    15-phase-10-web-ui-design.md §15.15) for display, and as a `<table>`/
+    `<dl>`/`<ul>` structure instead of the Markdown table `render_markdown`
+    produces.
+
+    Built directly from the same structured `Report` object
+    `render_markdown`/`render_json` already use, not by parsing
+    `render_markdown`'s output -- there's no Markdown-parsing step to get
+    wrong or keep in sync as `Report`'s shape evolves.
+
+    Every string here can originate from LLM output grounded in the
+    analyzed repo's own content (a question's category/classification/
+    summary, a strengths/weaknesses point, coverage notes derived from
+    persisted question text) -- `html.escape()` is applied to all of it
+    before embedding, since a repo crafted to prompt-inject HTML/script
+    content into an LLM's answer should not be able to run script in
+    whoever's browser is viewing the report."""
+    title = _esc(report.repo_slug or report.session_id)
+    parts: list[str] = [f"<article><h1>Viva Report — {title}</h1>"]
+
+    parts.append('<dl class="report-meta">')
+    parts.append(f"<dt>Session</dt><dd>{_esc(report.session_id)}</dd>")
+    parts.append(f"<dt>Commit</dt><dd>{_esc(report.commit_sha or '(unknown)')}</dd>")
+    parts.append(f"<dt>Status</dt><dd>{_esc(report.status)}</dd>")
+    parts.append(f"<dt>Generated</dt><dd>{_esc(report.generated_at)}</dd>")
+    parts.append(
+        f"<dt>Answered</dt><dd>{report.answered_count}/{report.total_questions} "
+        f"(needs review: {report.needs_review_count})</dd>"
+    )
+    parts.append("</dl>")
+
+    if report.coverage_notes:
+        parts.append('<ul class="report-coverage-notes">')
+        parts.extend(f"<li>{_esc(note)}</li>" for note in report.coverage_notes)
+        parts.append("</ul>")
+
+    parts.append(_render_html_section("Strengths", report.strengths))
+    parts.append(_render_html_section("Weaknesses", report.weaknesses))
+    parts.append(_render_html_section("Topics to Revisit", report.topics_to_revisit))
+
+    parts.append("<section><h2>Question-by-Question</h2>")
+    parts.append(
+        '<table class="report-questions"><thead><tr>'
+        "<th>Category</th><th>Classification</th><th>Summary</th>"
+        "</tr></thead><tbody>"
+    )
+    for q in report.questions:
+        classification = f"{q.classification} (needs review)" if q.needs_review else q.classification
+        row_class = ' class="needs-review"' if q.needs_review else ""
+        parts.append(
+            f"<tr{row_class}><td>{_esc(q.category)}</td>"
+            f"<td>{_esc(classification)}</td>"
+            f"<td>{_esc(q.summary)}</td></tr>"
+        )
+    parts.append("</tbody></table></section>")
+
+    parts.append("</article>")
+    return "".join(parts)

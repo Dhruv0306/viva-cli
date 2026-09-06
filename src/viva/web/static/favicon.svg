@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- viva-web favicon: a terminal prompt chevron (viva-cli's heritage)
+       plus a cursor dot. Solid bright accent-blue background with a
+       dark mark on top, not a dark background with a blue mark (the
+       original design; see 15-phase-10-web-ui-design.md, section
+       15.14, for why that one wasn't visible in practice): at actual
+       favicon size (16px in most browser tabs) a dark-on-near-black
+       icon reads as an empty blob against most browser chrome, light
+       or dark mode, regardless of whether it's loading correctly.
+       High contrast against both is what actually matters at that
+       size, not matching style.css's own dark theme. Explicit
+       width/height (not just viewBox) for broader renderer
+       compatibility.
+
+       Note for future edits: an XML/SVG comment must never contain a
+       double hyphen anywhere in its body, only as the opening and
+       closing delimiters. An earlier version of this comment used a
+       double hyphen as a stylistic separator, matching this project's
+       usual Python-comment style, and that alone made the file
+       invalid XML, which some browsers' SVG decoders silently refused
+       to render even though the file still served over HTTP with no
+       error at all, since serving is just bytes and never validates
+       well-formedness. Confirmed with cairosvg, which raised an exact
+       "not well-formed" parse error pointing right at it. -->
+  <rect width="32" height="32" rx="7" fill="#4f8cff" />
+  <path d="M10 11 L16 16 L10 21" fill="none" stroke="#0f1115"
+        stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="23" cy="21" r="2.4" fill="#0f1115" />
+</svg>
