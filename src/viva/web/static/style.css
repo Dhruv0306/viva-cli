@@ -1,192 +1,339 @@
-/* Minimal styling for `viva serve` (design doc \u00a715.6) -- no CSS
-   framework, just enough to be legible and not look unstyled. */
+/*
+  "Viva room" visual identity for `viva serve`'s web UI.
+
+  Design tokens (see the design doc's redesign write-up for the full
+  reasoning): a tinted dark neutral, not near-black, with two deliberate
+  accents doing different jobs -- amber for time/action (the countdown
+  is the single highest-stakes moment in this product), teal for
+  structure/category. Monospace for the wordmark and headings (ties to
+  the code/terminal subject matter); system sans for actual form
+  fields and reading text. Left-aligned, developer-tool layout, not a
+  centered marketing stack. No new dependency or font CDN -- every
+  typeface here is a system stack, consistent with this project staying
+  fully local.
+
+  app.js sets exactly one class name itself (`secondary`, on
+  dynamically created Resume/Report buttons) and otherwise only
+  toggles the native `hidden` attribute -- this file is free to change
+  everything else, but must keep supporting `.secondary` and must never
+  let a `display` rule outrank `[hidden]` (see the rule right after the
+  custom properties for why).
+*/
 
 :root {
-  --bg: #0f1115;
-  --panel: #171a21;
-  --border: #2a2f3a;
-  --text: #e6e8eb;
-  --text-dim: #9aa1ac;
-  --accent: #4f8cff;
-  --accent-hover: #6da0ff;
-  --danger: #e0554f;
-  --success: #4fae6a;
-  --radius: 8px;
+  --bg: #14161d;
+  --surface: #1b1e27;
+  --surface-raised: #232732;
+  --border: #2d3140;
+  --text: #e9e6df;
+  --text-dim: #8d92a3;
+  --accent: #e8a33e;
+  --accent-hover: #f0b458;
+  --accent-teal: #59c2c0;
+  --danger: #e2645a;
+  --success: #6fbf7c;
+  --radius: 6px;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, "Roboto Mono", monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
+
+/* Author styles otherwise beat the UA stylesheet's [hidden] rule
+   regardless of specificity or source order once any of the flex/grid
+   `display` rules below apply to the same element -- this keeps
+   `element.hidden = true` (set throughout app.js) authoritative no
+   matter what else targets that element. */
+[hidden] { display: none !important; }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
   background: var(--bg);
   color: var(--text);
-  /* Belt-and-braces: nothing below should ever force horizontal
-     scroll on the page itself -- the sessions table gets its own
-     scroll container (.table-scroll) instead, see below. */
   overflow-x: hidden;
 }
 
-header {
-  padding: 1.5rem 2rem 0.5rem;
+/* -- Identity bar --------------------------------------------------------- */
+
+.topbar {
+  padding: 1.4rem 2rem 1.1rem;
+  border-bottom: 1px solid var(--border);
 }
 
-.brand { display: flex; align-items: center; gap: 0.6rem; }
-.logo { display: block; border-radius: 6px; flex-shrink: 0; }
-header h1 { margin: 0; font-size: 1.4rem; }
-.subtitle { color: var(--text-dim); margin: 0.2rem 0 0; font-size: 0.9rem; }
+.brand { display: flex; align-items: center; gap: 0.55rem; }
+.logo { display: block; flex-shrink: 0; }
+
+.topbar h1 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 1.15rem;
+  letter-spacing: 0.01em;
+}
+
+.subtitle {
+  color: var(--text-dim);
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+  max-width: 46ch;
+}
+
+/* -- Layout ---------------------------------------------------------------- */
 
 main {
-  max-width: 720px;
+  max-width: 760px;
   margin: 0 auto;
-  padding: 1.25rem 1.5rem 3rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.75rem;
+  padding: 1.75rem 1.5rem 3rem;
 }
 
-.card {
-  background: var(--panel);
+.stack { display: flex; flex-direction: column; gap: 1.5rem; }
+
+.panel {
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.5rem 1.75rem;
+  padding: 1.4rem 1.6rem;
 }
 
-.card h2 { margin: 0 0 0.9rem; font-size: 1.05rem; }
+/* The one structural device that marks the live view as the timed
+   zone -- not repeated on every panel (the "Start a viva" panel
+   already signals itself as the primary action via its amber button;
+   an accent bar there too would be the same signal twice). */
+.panel-live { border-left: 3px solid var(--accent); }
+
+.panel h2 {
+  margin: 0 0 1rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.panel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.2rem;
+}
+.panel-header h2 { margin-bottom: 0; }
+
+/* -- Forms ------------------------------------------------------------------ */
 
 label {
   display: block;
-  margin: 0.75rem 0;
-  font-size: 0.85rem;
+  margin: 0.85rem 0;
+  font-size: 0.82rem;
   color: var(--text-dim);
 }
 
-label.checkbox { display: flex; align-items: center; gap: 0.5rem; }
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 1rem;
+}
+.field-row label { margin: 0.85rem 0; }
+
+label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  align-self: end;
+  padding-bottom: 0.1rem;
+}
 label.checkbox input { width: auto; }
 
-.hint { font-weight: normal; color: var(--text-dim); font-size: 0.8rem; }
+.hint { font-weight: normal; color: var(--text-dim); font-size: 0.78rem; }
 
 input[type="text"],
 input[type="number"],
 textarea {
   width: 100%;
-  margin-top: 0.3rem;
-  padding: 0.5rem 0.6rem;
+  margin-top: 0.35rem;
+  padding: 0.55rem 0.65rem;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--text);
   font-size: 0.95rem;
-  font-family: inherit;
+  font-family: var(--font-sans);
+}
+input:focus-visible, textarea:focus-visible, button:focus-visible, a.btn:focus-visible {
+  outline: 2px solid var(--accent-teal);
+  outline-offset: 1px;
 }
 
-textarea { resize: vertical; }
+textarea { resize: vertical; font-family: var(--font-mono); font-size: 0.9rem; }
 
-.table-scroll {
-  /* The sessions table is the one place a single cell (a full repo URL,
-     a long session id) can realistically be wider than the card --
-     scope the scrolling to just this element instead of letting it
-     force the whole page wider (that was the actual overflow: the
-     table had no scroll container of its own, so a long cell pushed
-     past the .card's edge). */
-  overflow-x: auto;
+/* -- Buttons ----------------------------------------------------------------- */
+
+button, a.btn {
+  display: inline-block;
+  text-decoration: none;
+  margin-top: 1rem;
+  padding: 0.55rem 1.05rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: #1a1305;
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background-color 120ms ease;
 }
+button:hover, a.btn:hover { background: var(--accent-hover); }
+button.secondary, a.btn.secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 500;
+}
+button.secondary:hover, a.btn.secondary:hover { background: var(--surface-raised); }
 
-table {
+/* -- Sessions ledger --------------------------------------------------------- */
+
+.table-scroll { overflow-x: auto; }
+
+table.ledger {
   width: 100%;
   min-width: 420px;
   border-collapse: collapse;
-  margin-top: 0.8rem;
+  margin-top: 0.6rem;
   font-size: 0.85rem;
   table-layout: fixed;
 }
-th, td {
+table.ledger th, table.ledger td {
   text-align: left;
-  padding: 0.4rem 0.5rem;
+  padding: 0.5rem 0.5rem;
   border-bottom: 1px solid var(--border);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-th { color: var(--text-dim); font-weight: 500; }
-th:last-child, td:last-child { width: 5.5rem; white-space: normal; }
+table.ledger th {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: none;
+  border-bottom: 1px solid var(--border);
+}
+table.ledger td:first-child { font-family: var(--font-mono); color: var(--text-dim); }
+table.ledger th:last-child, table.ledger td:last-child { width: 5.5rem; white-space: normal; }
+table.ledger tbody tr:hover { background: var(--surface-raised); }
 
-.live-header { display: flex; justify-content: space-between; align-items: baseline; }
-.timer { font-variant-numeric: tabular-nums; font-size: 1.1rem; color: var(--accent); }
-.question-meta { color: var(--text-dim); font-size: 0.8rem; margin-bottom: 0.2rem; }
-.question-text { font-size: 1.05rem; margin: 0.2rem 0 1rem; }
+/* -- Live session ------------------------------------------------------------- */
+
+.live-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.mono-dim { font-family: var(--font-mono); color: var(--text-dim); font-weight: 400; font-size: 0.85rem; }
+
+/* The countdown is the one deliberate moment of real visual weight in
+   the app -- everything around it stays quiet. */
+.timer {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 2rem;
+  font-weight: 600;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.question-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin: 0.2rem 0 0.6rem;
+}
+.pill {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(89, 194, 192, 0.14);
+  color: var(--accent-teal);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.question-text {
+  font-size: 1.1rem;
+  line-height: 1.5;
+  margin: 0 0 1.1rem;
+}
+
+/* -- Report ------------------------------------------------------------------- */
 
 .result {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.8rem;
+  border-radius: 4px;
+  padding: 0.9rem 1rem;
   white-space: pre-wrap;
   font-size: 0.85rem;
   max-height: 60vh;
   overflow: auto;
 }
 
-/* Report view (.result.report, static/index.html) -- rendered HTML from
-   report.py's render_html(), replacing the old raw-Markdown <pre> text.
-   Overrides the sessions-table rules above for its own <table>: the
-   report's "Summary" column holds full sentences meant to be read, not
-   compact data meant to be scanned, so it should wrap rather than
-   truncate. */
-.report h1 { font-size: 1.15rem; margin: 0 0 0.9rem; }
+.report h1 {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  margin: 0 0 1rem;
+  color: var(--text);
+}
 .report h2 {
-  font-size: 0.95rem; color: var(--accent);
-  margin: 1.25rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.03em;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-teal);
+  margin: 1.3rem 0 0.5rem;
 }
 .report section:first-of-type h2 { margin-top: 0; }
 .report dl.report-meta {
-  display: grid; grid-template-columns: auto 1fr;
-  gap: 0.2rem 0.75rem; margin: 0 0 1rem; font-size: 0.85rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
 }
 .report dl.report-meta dt { color: var(--text-dim); }
-.report dl.report-meta dd { margin: 0; }
+.report dl.report-meta dd { margin: 0; font-family: var(--font-mono); }
 .report ul { margin: 0; padding-left: 1.2rem; }
-.report li { margin: 0.25rem 0; }
+.report li { margin: 0.3rem 0; }
 .report .report-empty { color: var(--text-dim); font-style: italic; margin: 0; }
 .report .report-coverage-notes { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 1rem; }
 .report table {
-  table-layout: auto;
-  min-width: 0;
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
 }
 .report table th, .report table td {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
+  text-align: left;
+  padding: 0.5rem 0.5rem;
+  border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
+.report table th { color: var(--text-dim); font-weight: 500; font-size: 0.75rem; }
 .report table tr.needs-review td:nth-child(2) { color: var(--danger); }
 
 .report-actions { display: flex; gap: 0.6rem; }
 
-.banner { padding: 0.7rem 1rem; border-radius: 6px; font-size: 0.85rem; }
-.banner-error { background: rgba(224, 85, 79, 0.15); border: 1px solid var(--danger); color: #ffb3af; }
+/* -- Misc ---------------------------------------------------------------------- */
 
-a { color: var(--accent); }
+.banner { padding: 0.7rem 1rem; border-radius: 4px; font-size: 0.85rem; }
+.banner-error { background: rgba(226, 100, 90, 0.12); border: 1px solid var(--danger); color: #f3a49d; }
 
-button, a.btn {
-  display: inline-block;
-  text-decoration: none;
-  margin-top: 0.9rem;
-  padding: 0.55rem 1.1rem;
-  background: var(--accent);
-  border: none;
-  border-radius: 6px;
-  color: white;
-  font-size: 0.9rem;
-  cursor: pointer;
+a { color: var(--accent-teal); }
+code { font-family: var(--font-mono); font-size: 0.85em; color: var(--text); }
+
+@media (max-width: 560px) {
+  .topbar { padding: 1.1rem 1.1rem 0.9rem; }
+  main { padding: 1.25rem 1rem 2.5rem; }
+  .panel { padding: 1.1rem 1.25rem; }
+  .field-row { grid-template-columns: 1fr; }
+  .live-header { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
+  .timer { font-size: 1.6rem; }
 }
-button:hover, a.btn:hover { background: var(--accent-hover); }
-button.secondary, a.btn.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
-button.secondary:hover, a.btn.secondary:hover { background: var(--border); }
 
-@media (max-width: 480px) {
-  header { padding: 1.1rem 1rem 0.4rem; }
-  main { padding: 1rem 1rem 2.5rem; gap: 1.25rem; }
-  .card { padding: 1.1rem 1.25rem; }
-  .live-header { flex-direction: column; align-items: flex-start; gap: 0.3rem; }
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
 }

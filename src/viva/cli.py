@@ -633,7 +633,7 @@ def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Address to bind the local web server to."),
     port: int = typer.Option(8000, "--port", help="Port to bind the local web server to."),
 ) -> None:
-    """Run viva-web, the local browser interface (docs/plan.md Phase 10,
+    """Run viva room, the local browser interface (docs/plan.md Phase 10,
     docs/system-design/15-phase-10-web-ui-design.md) over the same
     Orchestrator/SessionStore/ReportBuilder/run_cleanup every other
     command already uses -- not a daemon, runs until interrupted, same
@@ -656,7 +656,7 @@ def serve(
 
     from viva.web.app import create_app
 
-    console.print(f"[green]Starting viva-web on http://{host}:{port}[/green]")
+    console.print(f"[green]Starting viva room on http://{host}:{port}[/green]")
     uvicorn.run(create_app(config), host=host, port=port)
 
 

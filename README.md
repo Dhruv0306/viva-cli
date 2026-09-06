@@ -112,7 +112,7 @@ collections past retention (NFR7), or everything with `--all`:
 viva cleanup [--older-than <days>] [--all]
 ```
 
-Or run viva-web instead of the CLI -- the local browser interface, over
+Or run viva room instead of the CLI -- the local browser interface, over
 the same Orchestrator/SessionStore underneath:
 
 ```bash
@@ -142,8 +142,8 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-10 (walking skeleton through viva-web) are implemented.**
-Phase 10 added `viva serve`, which runs viva-web: a local FastAPI server
+**Phases 0-10 (walking skeleton through viva room) are implemented.**
+Phase 10 added `viva serve`, which runs viva room: a local FastAPI server
 exposing the same
 start/resume/list/report/cleanup operations as the CLI, plus the live
 question/answer loop, fronted by a single static HTML+JS page (no

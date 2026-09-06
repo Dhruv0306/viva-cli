@@ -1,29 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <!-- viva-web favicon: a terminal prompt chevron (viva-cli's heritage)
-       plus a cursor dot. Solid bright accent-blue background with a
-       dark mark on top, not a dark background with a blue mark (the
-       original design; see 15-phase-10-web-ui-design.md, section
-       15.14, for why that one wasn't visible in practice): at actual
-       favicon size (16px in most browser tabs) a dark-on-near-black
-       icon reads as an empty blob against most browser chrome, light
-       or dark mode, regardless of whether it's loading correctly.
-       High contrast against both is what actually matters at that
-       size, not matching style.css's own dark theme. Explicit
-       width/height (not just viewBox) for broader renderer
-       compatibility.
-
-       Note for future edits: an XML/SVG comment must never contain a
-       double hyphen anywhere in its body, only as the opening and
-       closing delimiters. An earlier version of this comment used a
-       double hyphen as a stylistic separator, matching this project's
-       usual Python-comment style, and that alone made the file
-       invalid XML, which some browsers' SVG decoders silently refused
-       to render even though the file still served over HTTP with no
-       error at all, since serving is just bytes and never validates
-       well-formedness. Confirmed with cairosvg, which raised an exact
-       "not well-formed" parse error pointing right at it. -->
-  <rect width="32" height="32" rx="7" fill="#4f8cff" />
-  <path d="M10 11 L16 16 L10 21" fill="none" stroke="#0f1115"
-        stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="23" cy="21" r="2.4" fill="#0f1115" />
+  <!-- viva room mark: a stopwatch, tying the identity to the live
+       countdown, the single most characteristic moment in this
+       product, rather than the previous terminal-chevron mark. Bright
+       amber badge with a dark mark on top, not a dark badge with a
+       bright mark, for visibility at real favicon size (16px in most
+       browser tabs): confirmed by rendering both this file and the
+       earlier design at 16px before choosing this treatment. Every
+       comment in this file was written and checked to contain no
+       double hyphen anywhere in its body, since that alone is enough
+       to make an XML file invalid even though a browser would still
+       download it over HTTP with no visible error at all. -->
+  <rect width="32" height="32" rx="7" fill="#e8a33e" />
+  <line x1="16" y1="5" x2="16" y2="8" stroke="#1b1e27" stroke-width="2.4" stroke-linecap="round" />
+  <circle cx="16" cy="18" r="9" fill="none" stroke="#1b1e27" stroke-width="2.4" />
+  <line x1="16" y1="18" x2="16" y2="12.5" stroke="#1b1e27" stroke-width="2.2" stroke-linecap="round" />
+  <line x1="16" y1="18" x2="20" y2="18" stroke="#1b1e27" stroke-width="2.2" stroke-linecap="round" />
 </svg>

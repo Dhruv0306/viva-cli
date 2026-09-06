@@ -417,7 +417,7 @@ def test_root_serves_index_html(mocker, tmp_path):
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "viva-web" in response.text
+    assert "viva room" in response.text
 
 
 def test_static_assets_referenced_by_index_html_are_served(mocker, tmp_path):
