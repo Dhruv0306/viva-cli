@@ -15,9 +15,24 @@ from viva.cli import app
 
 runner = CliRunner()
 
+# typer.rich_utils forces colored/boxed Rich rendering for --help output
+# whenever it detects GITHUB_ACTIONS, FORCE_COLOR, or PY_COLORS in the
+# environment (assumed to be for nicer-looking CI logs) -- which is
+# exactly the environment this test suite runs in on CI, and turns
+# result.output into ANSI escape codes plus box-drawing characters
+# instead of the plain text a naive substring check expects (reported
+# from a real CI run: this test passed locally, where none of those
+# env vars are set, then failed on GitHub Actions). Typer's own
+# documented escape hatch, _TYPER_FORCE_DISABLE_TERMINAL, unconditionally
+# overrides all three triggers back off -- passed as part of this
+# invoke's env rather than as a suite-wide fixture, since this is the
+# only test in the project that asserts on rendered --help content at
+# all.
+_PLAIN_TERMINAL_ENV = {"_TYPER_FORCE_DISABLE_TERMINAL": "1"}
+
 
 def test_serve_help_lists_host_and_port_options():
-    result = runner.invoke(app, ["serve", "--help"])
+    result = runner.invoke(app, ["serve", "--help"], env=_PLAIN_TERMINAL_ENV)
 
     assert result.exit_code == 0
     assert "--host" in result.output

@@ -478,6 +478,32 @@ Regression test: `test_favicon_svg_is_well_formed_xml` in
 .ElementTree` parser (no new dependency) -- confirmed to fail against
 the original file with the exact same parse error before fixing.
 
+**CI-only test failure: `--help` output assertion broke on GitHub
+Actions, passed everywhere else.** `test_serve_help_lists_host_and_
+port_options` (`test_cli_serve.py`) passed locally in every manual run
+but failed on the actual GitHub Actions matrix with `AssertionError:
+assert '--host' in '...'`, the right-hand side being a wall of ANSI
+escape codes and box-drawing characters instead of plain text. Traced
+to `typer.rich_utils.FORCE_TERMINAL`: Typer forces colored, boxed Rich
+rendering for `--help` output whenever it detects the `GITHUB_ACTIONS`,
+`FORCE_COLOR`, or `PY_COLORS` environment variable -- presumably so
+manually-triggered workflow runs get nicer-looking logs -- and GitHub
+Actions always sets `GITHUB_ACTIONS=true` on its runners. Locally, none
+of those variables are set, so Rich correctly detects the non-tty pipe
+`CliRunner` captures output through and renders plain text; reproduced
+the exact failure locally by setting `GITHUB_ACTIONS=true` before
+running the test.
+
+Fixed using Typer's own documented escape hatch:
+`_TYPER_FORCE_DISABLE_TERMINAL`, passed as part of the `invoke()` call's
+own `env` (scoped to this one test, not a suite-wide fixture, since it's
+the only test in the project that asserts on rendered `--help` content
+at all) unconditionally overrides all three triggers back off. Verified
+by reproducing the failure with each of `GITHUB_ACTIONS=true` and
+`FORCE_COLOR=1` individually, confirming both are fixed, and running the
+full suite under `GITHUB_ACTIONS=true` to confirm no other test in the
+project is sensitive to it.
+
 ## 15.14 Post-merge refinements
 
 Small, non-architectural follow-ups made after the initial merge, on
