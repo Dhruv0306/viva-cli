@@ -39,6 +39,9 @@ def _config(tmp_path):
         session_db_path=str(tmp_path / "viva.db"), avg_time_per_category_seconds=90,
         question_similarity_threshold=0.85, eval_flush_timeout_seconds=5.0,
         report_max_items_per_section=10,
+        voice_enabled=False, stt_model_size="base", tts_voice="en_US-lessac-medium",
+        voice_cache_dir="./data/voice_models", voice_max_answer_seconds=120,
+        voice_silence_timeout_seconds=2.5,
     )
 
 
