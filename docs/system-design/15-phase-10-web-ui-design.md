@@ -3,12 +3,16 @@
 > Part of the full system-design reference. See `README.md` in this folder
 > for the complete set of parts.
 
-**Naming:** the browser interface `viva serve` runs is called **viva-web**
-throughout this doc, the app's page title/header, and the FastAPI app's
-own `title=`. `viva-cli` remains the name of the whole project/package;
-`viva-web` is what a person sees on screen once they're in the browser,
-the same way `viva start`/`viva report`/etc. are commands *within*
-`viva-cli` rather than separate products.
+**Naming:** the browser interface `viva serve` runs was originally
+called **viva-web** throughout Phase 10's initial build (sections 15.1
+through 15.14 below use that name throughout, as a historical record of
+what was actually decided and built at the time -- not rewritten here).
+It was renamed to **viva room** as part of a visual redesign; see
+section 15.15 for the rename and the redesign itself. Either name,
+`viva-cli` remains the name of the whole project/package -- the web
+interface's own name is what a person sees on screen once they're in
+the browser, the same way `viva start`/`viva report`/etc. are commands
+*within* `viva-cli` rather than separate products.
 
 ## 15.1 Scope and renumbering
 
@@ -586,3 +590,68 @@ real feedback:
   favicon fix. `.brand` (new) is a small flex row wrapping the image
   and the `<h1>`; `alt=""` since the adjacent heading text already
   conveys the same information.
+
+## 15.15 Redesign: "viva room"
+
+A visual redesign and rename, requested separately from the feature
+work above -- **no functional code changed**: `app.js` is untouched
+(zero-diff) end to end, `orchestrator.py`/`registry.py`/`web_session_
+ui.py`/every route in `app.py` are unchanged. The only Python edited is
+two cosmetic string literals (`app.py`'s `FastAPI(title=...)`, `cli.py`'s
+`serve` docstring and startup banner text) plus the one existing test
+assertion that checks the page mentions the app's own name -- updating
+that assertion to the new name is keeping a test in sync with an
+intentional rename, not a functional change to what it verifies.
+
+**Why rename again.** "viva-web" was always a placeholder-grade name
+(sections 15.1 through 15.14 use it throughout, left as-is above as the
+historical record of what Phase 10 was actually built and named at the
+time). Renamed to **viva room** -- evoking the literal room an oral
+exam happens in, distinct from `viva-cli` (the project) and from the
+generic "-web" suffix it replaces.
+
+**The anti-pattern being corrected.** The original visual design was a
+close match for one of the most common tells of generic, AI-generated
+UI: a near-black background (`#0f1115`) with a single bright accent
+(`#4f8cff`) doing every job -- buttons, links, the timer, category
+labels, all one color. Corrected with a tinted dark neutral (`#14161d`,
+not near-black) and two accents used for different jobs: amber
+(`#e8a33e`) for time/action -- the live countdown is the single
+highest-stakes, most characteristic moment in this entire product, so
+it now gets real visual weight (large tabular-figure numerals) instead
+of a small inline label -- and teal (`#59c2c0`) for structure/category
+(the "pill" question-category badge, links). Typography now pairs a
+monospace face for the wordmark and headings (ties the identity to the
+code/terminal subject matter this whole tool lives in) against the
+existing system-sans stack for actual form fields and body text --
+two typefaces with clearly distinct roles, per `frontend-design`'s own
+guidance against a single undifferentiated typeface doing everything.
+Layout moved from a centered single-column card stack (a marketing-page
+convention) to a left-aligned developer-tool layout (closer to GitHub
+or an IDE panel), and the sessions list became a ledger (hairline row
+dividers, monospace session-id column) instead of another identical
+rounded card -- avoiding the "SaaS-card kit" pattern of chopping every
+section into visually identical containers regardless of what kind of
+content each actually holds. No new font CDN or external asset --
+every typeface is a system stack, keeping the whole page working fully
+offline, consistent with this project staying local-first end to end.
+
+**New favicon/logo.** Replaced the terminal-chevron mark with a
+stopwatch, tying the identity directly to the live countdown rather
+than to viva-cli's terminal heritage (which the wordmark's own
+monospace typeface already carries). Kept the bright-badge/dark-mark
+treatment learned from the previous favicon bug (section 15.13): a
+dark-on-dark icon is unrecoverably low-contrast at real favicon size
+regardless of whether it renders at all. Checked for XML well-
+formedness before shipping this time, specifically for the double-
+hyphen mistake documented in section 15.13 -- confirmed by rendering
+the file at 16px and 32px before committing, not just by reading the
+markup.
+
+**How this was verified without changing functional code.** Every
+existing web-layer test (`test_web_app.py`, `test_web_session_ui.py`,
+`test_web_registry.py`, `test_cli_serve.py`) still passes unmodified
+except the one page-content assertion already mentioned -- since none
+of them assert on CSS classes, layout, or color, only on API behavior,
+status codes, and the presence of specific ids/data, all of which are
+unchanged. `app.js`'s diff against the pre-redesign version is empty.

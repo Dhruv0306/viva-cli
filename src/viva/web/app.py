@@ -66,7 +66,7 @@ def create_app(config: Config) -> FastAPI:
         yield
         registry.shutdown()
 
-    app = FastAPI(title="viva-web", lifespan=lifespan)
+    app = FastAPI(title="viva room", lifespan=lifespan)
 
     # -- live session lifecycle (start/resume/state/answer) --------------------
 

@@ -112,7 +112,7 @@ collections past retention (NFR7), or everything with `--all`:
 viva cleanup [--older-than <days>] [--all]
 ```
 
-Or run viva-web instead of the CLI -- the local browser interface, over
+Or run viva room instead of the CLI -- the local browser interface, over
 the same Orchestrator/SessionStore underneath:
 
 ```bash
@@ -124,6 +124,29 @@ sessions, answers questions live, and views reports -- the same
 operations as `viva start`/`resume`/`list`/`report`/`cleanup` above, not
 a different feature set. See
 [`docs/system-design/15-phase-10-web-ui-design.md`](docs/system-design/15-phase-10-web-ui-design.md).
+
+<table>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/start-and-sessions.png" alt="Viva Room: start a viva form and the sessions ledger" />
+<br /><sub>Start a viva, and the sessions ledger</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/live-question.png" alt="Viva Room: a live question with the countdown timer" />
+<br /><sub>Live Q&amp;A, with the countdown timer</sub>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/sessions-ledger.png" alt="Viva Room: the sessions ledger with resumable/report actions" />
+<br /><sub>Sessions in different states -- only a resumable session offers Resume</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/report.png" alt="Viva Room: a rendered viva report" />
+<br /><sub>The rendered report, with download buttons</sub>
+</td>
+</tr>
+</table>
 
 `viva start`/`resume`/`list`/`report`/`cleanup`/`serve` are all real as of Phase 10.
 
@@ -142,8 +165,8 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-10 (walking skeleton through viva-web) are implemented.**
-Phase 10 added `viva serve`, which runs viva-web: a local FastAPI server
+**Phases 0-10 (walking skeleton through viva room) are implemented.**
+Phase 10 added `viva serve`, which runs viva room: a local FastAPI server
 exposing the same
 start/resume/list/report/cleanup operations as the CLI, plus the live
 question/answer loop, fronted by a single static HTML+JS page (no
