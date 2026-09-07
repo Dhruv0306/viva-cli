@@ -30,6 +30,18 @@ dev = [
     "pytest-mock>=3.14,<4.0",
     "httpx2>=2.0,<3.0",
 ]
+# Phase 11 (docs/system-design/16-phase-11-voice-io-design.md): kept as an
+# optional extra rather than a base dependency -- these pull in native
+# audio libraries (PortAudio via sounddevice) and multi-hundred-MB models,
+# which most people running `viva start` without voice mode never need.
+# `viva.voice_io` imports all three lazily so the base install and test
+# suite never require this extra.
+voice = [
+    "faster-whisper>=1.0,<2.0",
+    "piper-tts>=1.2,<2.0",
+    "sounddevice>=0.4,<1.0",
+    "numpy>=1.26,<3.0",
+]
 
 [project.scripts]
 viva = "viva.cli:app"
