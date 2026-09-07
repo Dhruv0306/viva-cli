@@ -125,6 +125,29 @@ operations as `viva start`/`resume`/`list`/`report`/`cleanup` above, not
 a different feature set. See
 [`docs/system-design/15-phase-10-web-ui-design.md`](docs/system-design/15-phase-10-web-ui-design.md).
 
+<table>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/start-and-sessions.png" alt="Viva Room: start a viva form and the sessions ledger" />
+<br /><sub>Start a viva, and the sessions ledger</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/live-question.png" alt="Viva Room: a live question with the countdown timer" />
+<br /><sub>Live Q&amp;A, with the countdown timer</sub>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/sessions-ledger.png" alt="Viva Room: the sessions ledger with resumable/report actions" />
+<br /><sub>Sessions in different states -- only a resumable session offers Resume</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/report.png" alt="Viva Room: a rendered viva report" />
+<br /><sub>The rendered report, with download buttons</sub>
+</td>
+</tr>
+</table>
+
 `viva start`/`resume`/`list`/`report`/`cleanup`/`serve` are all real as of Phase 10.
 
 Full CLI contract, including exit codes: [`docs/system-design/06-cli-contract-and-profile-scaling.md`](docs/system-design/06-cli-contract-and-profile-scaling.md) §6.1.
