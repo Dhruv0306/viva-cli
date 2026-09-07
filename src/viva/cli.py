@@ -42,11 +42,14 @@ from viva.questiongen import generate_all
 from viva.report import ReportBuilder, render_json, render_markdown
 from viva.session_ui import RichSessionUI
 from viva.storage import SessionStore
+from viva.voice_io import VoiceDependencyError, setup_models
 
 app = typer.Typer(
     help="viva-cli: a local-LLM RAG tool for a code-grounded project viva.",
     no_args_is_help=True,
 )
+voice_app = typer.Typer(help="Voice I/O setup (Phase 11).")
+app.add_typer(voice_app, name="voice")
 console = Console()
 
 
@@ -626,6 +629,43 @@ def cleanup(
         f"{len(result.profiles_removed)} profile file(s).[/green]"
     )
     console.print(f"[green]{result.sessions_retained} session(s) retained.[/green]")
+
+
+@voice_app.command("setup")
+def voice_setup(
+    stt_model: str = typer.Option(None, "--stt-model", help="Whisper model size to pull (overrides STT_MODEL_SIZE for this run)."),
+    tts_voice: str = typer.Option(None, "--tts-voice", help="Piper voice ID to pull (overrides TTS_VOICE for this run)."),
+) -> None:
+    """Pull the local speech-to-text model and text-to-speech voice used
+    by voice mode (docs/system-design/16-phase-11-voice-io-design.md
+    \u00a716.5), so `viva start --` with VOICE_ENABLED=true never stalls
+    mid-session on a first-run download.
+
+    Requires the 'voice' extra: `pip install -e ".[voice]"`.
+    """
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    resolved_stt_model = stt_model or config.stt_model_size
+    resolved_tts_voice = tts_voice or config.tts_voice
+
+    console.print(
+        f"[cyan]Pulling STT model '{resolved_stt_model}' and TTS voice "
+        f"'{resolved_tts_voice}' into {config.voice_cache_dir}...[/cyan]"
+    )
+    try:
+        setup_models(resolved_stt_model, resolved_tts_voice, config.voice_cache_dir)
+    except VoiceDependencyError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2)
+    except Exception as exc:  # noqa: BLE001 - top-level command boundary
+        console.print(f"[red]Voice setup failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+
+    console.print("[green]Voice models ready. Set VOICE_ENABLED=true to use them.[/green]")
 
 
 @app.command()

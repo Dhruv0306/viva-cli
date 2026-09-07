@@ -184,6 +184,19 @@ def _play_pcm(pcm: bytes, sample_rate: int) -> None:
         raise VoiceIOError(f"Playback failed: {exc}") from exc
 
 
+def setup_models(stt_model_size: str, tts_voice: str, cache_dir: str) -> None:
+    """Pulls (or confirms already-cached) the STT model and TTS voice
+    into `cache_dir`. The public entrypoint behind `viva voice setup`
+    (design doc §16.5) -- callers outside this module use this instead
+    of the private `_load_whisper_model`/`_load_piper_voice` loaders
+    directly, so `LocalVoiceIO` stays the only thing that touches those.
+
+    Raises VoiceDependencyError if the `voice` extra isn't installed.
+    """
+    _load_whisper_model(stt_model_size, cache_dir)
+    _load_piper_voice(tts_voice, cache_dir)
+
+
 class LocalVoiceIO(VoiceIO):
     """Real `VoiceIO`: faster-whisper for transcription, Piper for
     synthesis, `sounddevice` for capture/playback. Models are loaded
