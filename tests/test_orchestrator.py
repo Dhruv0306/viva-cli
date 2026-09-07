@@ -690,6 +690,47 @@ def test_classification_latency_is_excluded_from_the_answer_timer(tmp_path, monk
     assert drop < 0.15
 
 
+class _SlowAskQuestionUI(_TimerSnapshottingUI):
+    """Same as _TimerSnapshottingUI, but ask_question() itself sleeps --
+    stands in for a voice-enabled SessionUI spending real time
+    synthesizing and playing the question aloud before the person starts
+    answering (design doc §16.4)."""
+
+    def __init__(self, answers, sleep_seconds: float) -> None:
+        super().__init__(answers)
+        self.sleep_seconds = sleep_seconds
+
+    def ask_question(self, question_text, category, question_number):
+        time.sleep(self.sleep_seconds)
+        super().ask_question(question_text, category, question_number)
+
+
+def test_ask_question_latency_is_excluded_from_the_answer_timer(tmp_path, monkeypatch):
+    # Regression test for the same class of bug
+    # test_classification_latency_is_excluded_from_the_answer_timer
+    # guards against, extended to Phase 11's voice mode
+    # (docs/system-design/16-phase-11-voice-io-design.md §16.4): a
+    # voice-enabled SessionUI can spend several real seconds
+    # synthesizing and playing a question aloud inside ask_question(),
+    # before the person has started answering at all. That must not
+    # count against their answering time, same as generate_question()'s
+    # and classify()'s latency already don't.
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    ui = _SlowAskQuestionUI(["a1", "a2"], sleep_seconds=0.3)
+    orch, _store = _make_orchestrator(tmp_path, config, ui)
+
+    orch.start("https://github.com/owner/repo")
+
+    assert len(ui.remaining_snapshots) == 2
+    drop = ui.remaining_snapshots[0] - ui.remaining_snapshots[1]
+    # Only the second ask_question()'s 0.3s "speaking" sleep, plus
+    # near-instant fake generate_question/embedding calls and trivial
+    # bookkeeping, separate the two read_answer() calls -- the sleep
+    # must not show up in this drop if it's correctly excluded.
+    assert drop < 0.15
+
+
 def test_summarizing_forces_stray_evals_to_needs_review(tmp_path):
     """docs/system-design/13-phase-8-report-design.md §13.3: even though
     Evaluator.flush()'s bounded timeout should already leave every

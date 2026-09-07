@@ -246,3 +246,16 @@ class LocalVoiceIO(VoiceIO):
         segments, _info = model.transcribe(samples, language="en")
         text = " ".join(segment.text.strip() for segment in segments).strip()
         return text or None
+
+    def ensure_ready(self) -> None:
+        """Loads and caches both the STT model and TTS voice right now,
+        rather than lazily on the first speak()/transcribe() call.
+
+        Used at session construction (cli.py's `_build_session_ui`) so a
+        missing `voice` extra or an un-pulled model surfaces once, before
+        any ingest work starts, and the whole session can fall back to
+        text mode up front rather than failing awkwardly on the first
+        question (design doc §16.6).
+        """
+        self._whisper()
+        self._piper()

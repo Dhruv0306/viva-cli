@@ -42,7 +42,7 @@ from viva.questiongen import generate_all
 from viva.report import ReportBuilder, render_json, render_markdown
 from viva.session_ui import RichSessionUI
 from viva.storage import SessionStore
-from viva.voice_io import VoiceDependencyError, setup_models
+from viva.voice_io import LocalVoiceIO, VoiceDependencyError, setup_models
 
 app = typer.Typer(
     help="viva-cli: a local-LLM RAG tool for a code-grounded project viva.",
@@ -401,9 +401,44 @@ def _profile_to_dict(profile: ProjectProfile) -> dict:
     return asdict(profile)
 
 
+def _build_session_ui(config: Config) -> RichSessionUI:
+    """Constructs the RichSessionUI `start`/`resume` use, wiring in voice
+    mode when VOICE_ENABLED=true (docs/system-design/
+    16-phase-11-voice-io-design.md §16.6).
+
+    Both models are warmed up here, before any ingest work starts,
+    rather than lazily on the first question -- a missing `voice` extra
+    or an un-pulled model surfaces once, up front, and the whole session
+    falls back to text mode rather than failing awkwardly mid-question.
+    """
+    if not config.voice_enabled:
+        return RichSessionUI(console)
+
+    voice = LocalVoiceIO(
+        stt_model_size=config.stt_model_size,
+        tts_voice=config.tts_voice,
+        cache_dir=config.voice_cache_dir,
+    )
+    try:
+        voice.ensure_ready()
+    except VoiceDependencyError as exc:
+        console.print(
+            f"[yellow]Voice mode unavailable ({exc}) -- falling back to text for this "
+            "session.[/yellow]"
+        )
+        return RichSessionUI(console)
+
+    return RichSessionUI(
+        console,
+        voice=voice,
+        voice_max_answer_seconds=config.voice_max_answer_seconds,
+        voice_silence_timeout_seconds=config.voice_silence_timeout_seconds,
+    )
+
+
 def _build_orchestrator(config: Config) -> tuple[Orchestrator, SessionStore]:
     store = SessionStore(config.session_db_path)
-    orchestrator = Orchestrator(config=config, session_store=store, ui=RichSessionUI(console))
+    orchestrator = Orchestrator(config=config, session_store=store, ui=_build_session_ui(config))
     return orchestrator, store
 
 

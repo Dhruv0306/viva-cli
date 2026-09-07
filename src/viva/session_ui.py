@@ -37,6 +37,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from viva.timer import AnswerTimer
+from viva.voice_io import VoiceIO, VoiceIOError
 
 
 @dataclass(frozen=True)
@@ -96,8 +97,24 @@ def _submit_key_bindings() -> KeyBindings:
 
 
 class RichSessionUI(SessionUI):
-    def __init__(self, console: Console | None = None) -> None:
+    def __init__(
+        self,
+        console: Console | None = None,
+        voice: VoiceIO | None = None,
+        voice_max_answer_seconds: float = 120.0,
+        voice_silence_timeout_seconds: float = 2.5,
+    ) -> None:
+        """`voice`, if given, enables Phase 11 voice mode (docs/system-
+        design/16-phase-11-voice-io-design.md): `ask_question()` speaks
+        the question aloud (in addition to printing it, not instead of),
+        and `read_answer()` records and transcribes a spoken answer
+        instead of prompting for typed input. `None` (the default) keeps
+        text-only behavior exactly as before this phase.
+        """
         self._console = console or Console()
+        self._voice = voice
+        self._voice_max_answer_seconds = voice_max_answer_seconds
+        self._voice_silence_timeout_seconds = voice_silence_timeout_seconds
 
     def session_started(self, session_id: str) -> None:
         self._console.print(f"[bold]Session started:[/bold] {session_id}")
@@ -116,11 +133,78 @@ class RichSessionUI(SessionUI):
         self._console.print(
             Panel(question_text, title=f"Question {question_number} [{category}]")
         )
+        if self._voice is not None:
+            try:
+                self._voice.speak(question_text)
+            except VoiceIOError as exc:
+                # Playback failure doesn't disable voice mode for the
+                # rest of the session (§16.6) -- the question is already
+                # on screen either way, so this is a degraded-but-fine
+                # continuation, not a fallback trigger.
+                self._console.print(f"[yellow]Couldn't speak the question aloud: {exc}[/yellow]")
+            self._console.print(
+                "[dim]Recording will start automatically -- speak your answer, "
+                "or stay silent to type instead.[/dim]"
+            )
+        else:
+            self._console.print(
+                "[dim]Type your answer (Enter for a new line). Press Alt+Enter to submit.[/dim]"
+            )
+
+    def _read_answer_by_voice(self, timer: AnswerTimer) -> str | None:
+        """Records and transcribes a spoken answer. Returns None (rather
+        than raising) on any of the three fallback triggers design doc
+        §16.6 lists -- silence, empty transcription, or a hardware
+        failure -- so `read_answer()` can fall through to the typed-input
+        path for this one question without disabling voice mode for the
+        rest of the session.
+        """
+        assert self._voice is not None
+        max_seconds = min(self._voice_max_answer_seconds, timer.remaining())
+        if max_seconds <= 0:
+            return None
+
+        self._console.print("[cyan]\U0001f3a4 Recording... speak your answer.[/cyan]")
+        try:
+            # Not wrapped in timer.excluding() -- recording is the
+            # person's answering time, the same as typing would be
+            # (§16.4's correction to the pre-implementation plan).
+            audio = self._voice.record(max_seconds, self._voice_silence_timeout_seconds)
+        except VoiceIOError as exc:
+            self._console.print(f"[red]Recording failed: {exc}[/red]")
+            return None
+
+        if audio is None:
+            self._console.print("[yellow]No speech detected.[/yellow]")
+            return None
+
+        with timer.excluding():
+            try:
+                answer_text = self._voice.transcribe(audio)
+            except VoiceIOError as exc:
+                self._console.print(f"[red]Transcription failed: {exc}[/red]")
+                return None
+
+        if not answer_text:
+            self._console.print("[yellow]Could not transcribe any speech.[/yellow]")
+            return None
+
+        word_count = len(answer_text.split())
+        plural = "" if word_count == 1 else "s"
         self._console.print(
-            "[dim]Type your answer (Enter for a new line). Press Alt+Enter to submit.[/dim]"
+            f"[green]\u2713 Answer transcribed ({word_count} word{plural}):[/green] {answer_text}"
         )
+        return answer_text
 
     def read_answer(self, timer: AnswerTimer) -> str:
+        if self._voice is not None:
+            answer = self._read_answer_by_voice(timer)
+            if answer is not None:
+                return answer
+            self._console.print("[yellow]Falling back to typed input for this question.[/yellow]")
+        return self._read_answer_by_text(timer)
+
+    def _read_answer_by_text(self, timer: AnswerTimer) -> str:
         """`prompt_toolkit` owns the whole input region -- the bottom
         toolbar and the multi-line buffer are rendered coherently by the
         same event loop, so (unlike the two prior implementations) there
