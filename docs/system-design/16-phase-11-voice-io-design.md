@@ -223,5 +223,24 @@ directly needed updating in the same patch as the field additions —
 
 ## 16.9 Real-world bugs found during testing
 
-(Populated as issues surface during Windows testing, per the project's
-established workflow — none logged yet as of this patch series.)
+- **`[voice]` swallowed by Rich markup, dropping the fix instruction
+  from error output.** `VoiceDependencyError`'s message text includes
+  the literal string `pip install -e ".[voice]"` (correct — that's the
+  real extras syntax), but every `console.print(f"[red]{exc}[/red]")`
+  call site fed that text straight into Rich's markup parser, which
+  treats `[voice]` as an unrecognized style tag and silently strips it.
+  Reported from a real Windows run of `viva voice setup` before the
+  `voice` extra was installed: the printed message read `Run pip
+  install -e "." and \`viva voice setup\` first.` — missing exactly the
+  `[voice]` the person needed to fix the problem, so the suggested
+  command failed the same way again. Root cause traced to Rich's markup
+  parser rather than anything wrong with the extras syntax itself or
+  `VoiceDependencyError`'s construction. Fixed by wrapping every
+  dynamic value interpolated into a markup-tagged `console.print()` call
+  in `cli.py` and `session_ui.py` with `rich.markup.escape()`, scoped to
+  the voice-related call sites this phase touches. The same
+  `f"[red]...{exc}...[/red]"` pattern exists elsewhere in `cli.py`
+  predating this phase (e.g. clone/analysis/indexing failure messages)
+  and is equally vulnerable to any exception text that happens to
+  contain a bracket — out of scope to fix here since none of those
+  paths are part of Phase 11, but worth a follow-up sweep.

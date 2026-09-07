@@ -34,6 +34,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 
 from viva.timer import AnswerTimer
@@ -141,7 +142,7 @@ class RichSessionUI(SessionUI):
                 # rest of the session (§16.6) -- the question is already
                 # on screen either way, so this is a degraded-but-fine
                 # continuation, not a fallback trigger.
-                self._console.print(f"[yellow]Couldn't speak the question aloud: {exc}[/yellow]")
+                self._console.print(f"[yellow]Couldn't speak the question aloud: {escape(str(exc))}[/yellow]")
             self._console.print(
                 "[dim]Recording will start automatically -- speak your answer, "
                 "or stay silent to type instead.[/dim]"
@@ -171,7 +172,7 @@ class RichSessionUI(SessionUI):
             # (§16.4's correction to the pre-implementation plan).
             audio = self._voice.record(max_seconds, self._voice_silence_timeout_seconds)
         except VoiceIOError as exc:
-            self._console.print(f"[red]Recording failed: {exc}[/red]")
+            self._console.print(f"[red]Recording failed: {escape(str(exc))}[/red]")
             return None
 
         if audio is None:
@@ -182,7 +183,7 @@ class RichSessionUI(SessionUI):
             try:
                 answer_text = self._voice.transcribe(audio)
             except VoiceIOError as exc:
-                self._console.print(f"[red]Transcription failed: {exc}[/red]")
+                self._console.print(f"[red]Transcription failed: {escape(str(exc))}[/red]")
                 return None
 
         if not answer_text:

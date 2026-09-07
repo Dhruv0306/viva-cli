@@ -17,6 +17,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from viva import __version__
@@ -423,8 +424,8 @@ def _build_session_ui(config: Config) -> RichSessionUI:
         voice.ensure_ready()
     except VoiceDependencyError as exc:
         console.print(
-            f"[yellow]Voice mode unavailable ({exc}) -- falling back to text for this "
-            "session.[/yellow]"
+            f"[yellow]Voice mode unavailable ({escape(str(exc))}) -- falling back to text "
+            "for this session.[/yellow]"
         )
         return RichSessionUI(console)
 
@@ -694,10 +695,10 @@ def voice_setup(
     try:
         setup_models(resolved_stt_model, resolved_tts_voice, config.voice_cache_dir)
     except VoiceDependencyError as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=2)
     except Exception as exc:  # noqa: BLE001 - top-level command boundary
-        console.print(f"[red]Voice setup failed:[/red] {exc}")
+        console.print(f"[red]Voice setup failed:[/red] {escape(str(exc))}")
         raise typer.Exit(code=1)
 
     console.print("[green]Voice models ready. Set VOICE_ENABLED=true to use them.[/green]")

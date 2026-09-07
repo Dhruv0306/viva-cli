@@ -75,3 +75,28 @@ def test_voice_setup_missing_extra_exits_2(mocker, monkeypatch, tmp_path):
 
     assert result.exit_code == 2
     assert "voice" in result.output.lower()
+
+
+def test_voice_setup_missing_extra_message_is_not_mangled_by_rich_markup(mocker, monkeypatch, tmp_path):
+    # Regression test for a real-world bug (docs/system-design/
+    # 16-phase-11-voice-io-design.md §16.9): the VoiceDependencyError
+    # text contains a literal "[voice]" (from `pip install -e ".[voice]"`
+    # in the message itself), which Rich's markup parser was silently
+    # swallowing as an unrecognized tag before this was escaped --
+    # console.print(f"[red]{exc}[/red]") turned "...-e \".[voice]\" and..."
+    # into "...-e \".\" and...", dropping the exact instruction the user
+    # needed to fix the problem.
+    monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
+    monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    mocker.patch(
+        "viva.cli.setup_models",
+        side_effect=VoiceDependencyError(
+            'faster-whisper is not installed. Run pip install -e ".[voice]" and '
+            "`viva voice setup` first."
+        ),
+    )
+
+    result = runner.invoke(app, ["voice", "setup"])
+
+    assert result.exit_code == 2
+    assert 'pip install -e ".[voice]"' in result.output
