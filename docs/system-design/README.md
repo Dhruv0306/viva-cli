@@ -85,5 +85,14 @@ history of what was tried and rejected along the way.
   pointing at a collection may have it deleted out from under it); and
   why `updated_at`, not `created_at`, is the retention clock.
 
+- **[16-phase-11-voice-io-design.md](16-phase-11-voice-io-design.md)** —
+  the Phase 11 Voice I/O implementation design: the faster-whisper/Piper
+  engine choices and why the browser's native `SpeechRecognition` API was
+  rejected as non-local, the `VoiceIO` thin-interface component and its
+  lazy-import testing seam, the `record()`/`transcribe()` split that lets
+  spoken answering time count toward the clock while STT/TTS compute is
+  excluded (correcting an earlier plan to pause the countdown instead),
+  and the CLI-first scope with web UI voice deferred to a follow-up phase.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

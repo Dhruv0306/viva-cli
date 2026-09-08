@@ -20,6 +20,7 @@ Explaining your own project out loud — to an interviewer, a thesis committee, 
 - 📄 **Structured per-question feedback** — summary, what you did well, what you missed, what you got wrong, and how to improve, for every question
 - 💻 **Zero cost** — entirely local inference via Ollama, no external API calls required
 - 💾 **Crash-resumable** — session state is persisted continuously; an interrupted viva can be resumed
+- 🎤 **Voice mode** — speak your answers and have questions read aloud, entirely local (faster-whisper + Piper), with automatic fallback to typed input
 
 ## How it works
 
@@ -79,6 +80,12 @@ SESSION_DB_PATH=./data/viva.db
 AVG_TIME_PER_CATEGORY_SECONDS=180
 QUESTION_SIMILARITY_THRESHOLD=0.90
 EVAL_FLUSH_TIMEOUT_SECONDS=60
+VOICE_ENABLED=false
+STT_MODEL_SIZE=small
+TTS_VOICE=en_US-lessac-medium
+VOICE_CACHE_DIR=./data/voice_models
+VOICE_MAX_ANSWER_SECONDS=120
+VOICE_SILENCE_TIMEOUT_SECONDS=2.5
 ```
 
 ## Usage
@@ -124,6 +131,19 @@ sessions, answers questions live, and views reports -- the same
 operations as `viva start`/`resume`/`list`/`report`/`cleanup` above, not
 a different feature set. See
 [`docs/system-design/15-phase-10-web-ui-design.md`](docs/system-design/15-phase-10-web-ui-design.md).
+
+Speak your answers instead of typing, and have questions read aloud
+(CLI only for now -- see
+[`docs/system-design/16-phase-11-voice-io-design.md`](docs/system-design/16-phase-11-voice-io-design.md)):
+
+```bash
+pip install -e ".[voice]"
+viva voice setup [--stt-model small] [--tts-voice en_US-lessac-medium]
+```
+
+Then set `VOICE_ENABLED=true` in `.env` before `viva start`/`resume`.
+Falls back to typed input automatically if nothing's heard, or if a
+model/microphone/speaker isn't available.
 
 <table>
 <tr>

@@ -70,6 +70,9 @@ def _config(tmp_path, **overrides) -> Config:
         avg_time_per_category_seconds=1, question_similarity_threshold=0.90,
         eval_flush_timeout_seconds=1,
         report_max_items_per_section=10,
+        voice_enabled=False, stt_model_size="base", tts_voice="en_US-lessac-medium",
+        voice_cache_dir="./data/voice_models", voice_max_answer_seconds=120,
+        voice_silence_timeout_seconds=2.5,
     )
     values.update(overrides)
     return Config(**values)
@@ -684,6 +687,47 @@ def test_classification_latency_is_excluded_from_the_answer_timer(tmp_path, monk
     # trivial bookkeeping separate the two read_answer() calls --
     # classify()'s 0.3s sleep must not show up in this drop if it's
     # correctly excluded.
+    assert drop < 0.15
+
+
+class _SlowAskQuestionUI(_TimerSnapshottingUI):
+    """Same as _TimerSnapshottingUI, but ask_question() itself sleeps --
+    stands in for a voice-enabled SessionUI spending real time
+    synthesizing and playing the question aloud before the person starts
+    answering (design doc §16.4)."""
+
+    def __init__(self, answers, sleep_seconds: float) -> None:
+        super().__init__(answers)
+        self.sleep_seconds = sleep_seconds
+
+    def ask_question(self, question_text, category, question_number):
+        time.sleep(self.sleep_seconds)
+        super().ask_question(question_text, category, question_number)
+
+
+def test_ask_question_latency_is_excluded_from_the_answer_timer(tmp_path, monkeypatch):
+    # Regression test for the same class of bug
+    # test_classification_latency_is_excluded_from_the_answer_timer
+    # guards against, extended to Phase 11's voice mode
+    # (docs/system-design/16-phase-11-voice-io-design.md §16.4): a
+    # voice-enabled SessionUI can spend several real seconds
+    # synthesizing and playing a question aloud inside ask_question(),
+    # before the person has started answering at all. That must not
+    # count against their answering time, same as generate_question()'s
+    # and classify()'s latency already don't.
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    ui = _SlowAskQuestionUI(["a1", "a2"], sleep_seconds=0.3)
+    orch, _store = _make_orchestrator(tmp_path, config, ui)
+
+    orch.start("https://github.com/owner/repo")
+
+    assert len(ui.remaining_snapshots) == 2
+    drop = ui.remaining_snapshots[0] - ui.remaining_snapshots[1]
+    # Only the second ask_question()'s 0.3s "speaking" sleep, plus
+    # near-instant fake generate_question/embedding calls and trivial
+    # bookkeeping, separate the two read_answer() calls -- the sleep
+    # must not show up in this drop if it's correctly excluded.
     assert drop < 0.15
 
 

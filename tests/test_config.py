@@ -28,6 +28,12 @@ def _clean_env(monkeypatch):
         "QUESTION_SIMILARITY_THRESHOLD",
         "EVAL_FLUSH_TIMEOUT_SECONDS",
         "REPORT_MAX_ITEMS_PER_SECTION",
+        "VOICE_ENABLED",
+        "STT_MODEL_SIZE",
+        "TTS_VOICE",
+        "VOICE_CACHE_DIR",
+        "VOICE_MAX_ANSWER_SECONDS",
+        "VOICE_SILENCE_TIMEOUT_SECONDS",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -61,6 +67,12 @@ def test_defaults_applied(monkeypatch):
     assert config.question_similarity_threshold == 0.90
     assert config.eval_flush_timeout_seconds == 60
     assert config.report_max_items_per_section == 10
+    assert config.voice_enabled is False
+    assert config.stt_model_size == "small"
+    assert config.tts_voice == "en_US-lessac-medium"
+    assert config.voice_cache_dir == "./data/voice_models"
+    assert config.voice_max_answer_seconds == 120
+    assert config.voice_silence_timeout_seconds == 2.5
 
 
 def test_invalid_report_max_items_per_section_raises(monkeypatch):
@@ -243,3 +255,75 @@ def test_empty_vector_db_path_raises(monkeypatch):
     monkeypatch.setenv("VECTOR_DB_PATH", "   ")
     with pytest.raises(ConfigError, match="VECTOR_DB_PATH"):
         Config.load(env_file=None)
+
+
+def test_voice_enabled_accepts_true(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    config = Config.load(env_file=None)
+    assert config.voice_enabled is True
+
+
+def test_voice_enabled_invalid_value_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("VOICE_ENABLED", "maybe")
+    with pytest.raises(ConfigError, match="VOICE_ENABLED"):
+        Config.load(env_file=None)
+
+
+def test_stt_model_size_accepts_a_valid_size(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("STT_MODEL_SIZE", "small")
+    config = Config.load(env_file=None)
+    assert config.stt_model_size == "small"
+
+
+def test_stt_model_size_rejects_unknown_size(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("STT_MODEL_SIZE", "extra-large")
+    with pytest.raises(ConfigError, match="STT_MODEL_SIZE"):
+        Config.load(env_file=None)
+
+
+def test_empty_tts_voice_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("TTS_VOICE", "   ")
+    with pytest.raises(ConfigError, match="TTS_VOICE"):
+        Config.load(env_file=None)
+
+
+def test_tts_voice_accepts_any_nonempty_value(monkeypatch):
+    # Deliberately not validated against Piper's voice catalog -- see
+    # config.py's field comment and GITHUB_TOKEN's precedent above.
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("TTS_VOICE", "en_GB-alan-medium")
+    config = Config.load(env_file=None)
+    assert config.tts_voice == "en_GB-alan-medium"
+
+
+def test_empty_voice_cache_dir_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("VOICE_CACHE_DIR", "   ")
+    with pytest.raises(ConfigError, match="VOICE_CACHE_DIR"):
+        Config.load(env_file=None)
+
+
+def test_invalid_voice_max_answer_seconds_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("VOICE_MAX_ANSWER_SECONDS", "0")
+    with pytest.raises(ConfigError, match="VOICE_MAX_ANSWER_SECONDS"):
+        Config.load(env_file=None)
+
+
+def test_invalid_voice_silence_timeout_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("VOICE_SILENCE_TIMEOUT_SECONDS", "-1")
+    with pytest.raises(ConfigError, match="VOICE_SILENCE_TIMEOUT_SECONDS"):
+        Config.load(env_file=None)
+
+
+def test_voice_silence_timeout_accepts_a_custom_value(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("VOICE_SILENCE_TIMEOUT_SECONDS", "4")
+    config = Config.load(env_file=None)
+    assert config.voice_silence_timeout_seconds == 4

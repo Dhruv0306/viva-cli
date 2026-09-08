@@ -376,7 +376,16 @@ class Orchestrator:
             self.store.record_question_asked(
                 session_id, selected_item.question_id, question_text, grounding_chunk_ids
             )
-            self.ui.ask_question(question_text, selected_item.category, question_number)
+            # FR17/FR24, same reasoning as the timer.excluding() below:
+            # ask_question() is a no-op-latency print in text mode, but a
+            # voice-enabled SessionUI (docs/system-design/
+            # 16-phase-11-voice-io-design.md §16.4) can spend several
+            # real seconds synthesizing and playing the question aloud
+            # here, before the person has started answering at all --
+            # that's not their answering time any more than printing the
+            # question text already wasn't.
+            with timer.excluding():
+                self.ui.ask_question(question_text, selected_item.category, question_number)
             answer_text = self.ui.read_answer(timer)
             self.store.record_answer(session_id, selected_item.question_id, answer_text)
 

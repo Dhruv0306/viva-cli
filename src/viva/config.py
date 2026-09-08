@@ -75,6 +75,18 @@ def _get_positive_float(name: str, default: str) -> float:
     return value
 
 
+def _get_bool(name: str, default: str) -> bool:
+    raw = os.getenv(name, default).strip().lower()
+    if raw in ("true", "1", "yes", "on"):
+        return True
+    if raw in ("false", "0", "no", "off"):
+        return False
+    raise ConfigError(f"{name} must be a boolean (true/false), got {raw!r}")
+
+
+_WHISPER_MODEL_SIZES = frozenset({"tiny", "base", "small", "medium", "large", "large-v3"})
+
+
 def _get_optional_positive_int(name: str) -> int | None:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -142,6 +154,27 @@ class Config:
     # -- keeps the top-level report scannable rather than dumping every
     # did_well/missed/did_wrong entry across a full session.
     report_max_items_per_section: int
+
+    # --- Voice I/O (Phase 11, docs/system-design/16-phase-11-voice-io-design.md) ---
+    voice_enabled: bool
+    # Validated against faster-whisper's known model sizes (§16.7) so a
+    # typo fails fast at load time rather than inside the STT call.
+    # Default is "small", not "base" -- real-world testing (design doc
+    # §16.9) found "base" too inaccurate for grading fidelity on
+    # technical answers; "small" trades a slower first load and a
+    # somewhat slower transcription for meaningfully better accuracy.
+    stt_model_size: str
+    # Not format-validated against Piper's voice catalog -- that list is
+    # fetched from Piper's model repository and changes over time, same
+    # reasoning as GITHUB_TOKEN above.
+    tts_voice: str
+    voice_cache_dir: str
+    # Hard safety-net cap on a single recording, independent of the
+    # silence-based cutoff below (§16.3).
+    voice_max_answer_seconds: int
+    # Seconds of below-threshold amplitude after speech has been detected
+    # before record() stops on its own (§16.3's energy-based cutoff).
+    voice_silence_timeout_seconds: float
 
     @classmethod
     def load(cls, env_file: str | None = ".env") -> "Config":
@@ -244,6 +277,29 @@ class Config:
         # docs/system-design/13-phase-8-report-design.md §13.6.
         report_max_items_per_section = _get_positive_int("REPORT_MAX_ITEMS_PER_SECTION", "10")
 
+        # docs/system-design/16-phase-11-voice-io-design.md §16.7.
+        voice_enabled = _get_bool("VOICE_ENABLED", "false")
+
+        stt_model_size = os.getenv("STT_MODEL_SIZE", "small").strip()
+        if stt_model_size not in _WHISPER_MODEL_SIZES:
+            raise ConfigError(
+                "STT_MODEL_SIZE must be one of "
+                f"{sorted(_WHISPER_MODEL_SIZES)}, got {stt_model_size!r}"
+            )
+
+        tts_voice = os.getenv("TTS_VOICE", "en_US-lessac-medium").strip()
+        if not tts_voice:
+            raise ConfigError("TTS_VOICE must not be empty if set")
+
+        voice_cache_dir = os.getenv("VOICE_CACHE_DIR", "./data/voice_models").strip()
+        if not voice_cache_dir:
+            raise ConfigError("VOICE_CACHE_DIR must not be empty if set")
+
+        voice_max_answer_seconds = _get_positive_int("VOICE_MAX_ANSWER_SECONDS", "120")
+        voice_silence_timeout_seconds = _get_positive_float(
+            "VOICE_SILENCE_TIMEOUT_SECONDS", "2.5"
+        )
+
         return cls(
             llm_model=llm_model,
             embedding_model=embedding_model,
@@ -267,4 +323,10 @@ class Config:
             question_similarity_threshold=question_similarity_threshold,
             eval_flush_timeout_seconds=eval_flush_timeout_seconds,
             report_max_items_per_section=report_max_items_per_section,
+            voice_enabled=voice_enabled,
+            stt_model_size=stt_model_size,
+            tts_voice=tts_voice,
+            voice_cache_dir=voice_cache_dir,
+            voice_max_answer_seconds=voice_max_answer_seconds,
+            voice_silence_timeout_seconds=voice_silence_timeout_seconds,
         )
