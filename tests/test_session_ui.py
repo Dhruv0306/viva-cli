@@ -13,11 +13,16 @@ so tests don't need a real terminal to write to either.
 from __future__ import annotations
 
 import io
+import re
 import threading
 import time
 
+import pytest
+from prompt_toolkit.application import Application as _RealApplication
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.output.vt100 import Vt100_Output
 from rich.console import Console
 
 import viva.session_ui as session_ui_module
@@ -26,10 +31,62 @@ from viva.timer import AnswerTimer
 from viva.voice_io import VoiceIOError
 
 
+@pytest.fixture(autouse=True)
+def _fake_prompt_toolkit_application_for_voice_status_bar(monkeypatch):
+    """Every `RichSessionUI.read_answer()` call in voice mode constructs
+    a `prompt_toolkit` `Application` for the live recording status bar
+    (`_run_recording_status_bar`) -- patch it globally for this whole
+    test module so none of the many voice-mode tests that drive
+    `read_answer()` end-to-end need a real TTY. Only `Application` is
+    patched here, not `PromptSession` (the typed-input path) -- tests of
+    that path fake it separately via `_read_answer_with_keystrokes`,
+    since those need per-test scripted keystrokes rather than one shared
+    empty input."""
+    original_application = session_ui_module.Application
+    with create_pipe_input() as pipe_input:
+        def _fake_application(*args, **kwargs):
+            return original_application(*args, input=pipe_input, output=DummyOutput(), **kwargs)
+
+        monkeypatch.setattr(session_ui_module, "Application", _fake_application)
+        yield
+
+
 def _ui_with_captured_rich_output() -> tuple[RichSessionUI, io.StringIO]:
     buffer = io.StringIO()
     console = Console(file=buffer, no_color=True, width=100)
     return RichSessionUI(console=console), buffer
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
+
+
+def _run_recording_status_bar_capturing_output(
+    ui: RichSessionUI, timer: AnswerTimer, thread: threading.Thread
+) -> str:
+    """Runs `RichSessionUI._run_recording_status_bar` against a real
+    `prompt_toolkit.output.vt100.Vt100_Output` writing into an in-memory
+    buffer, rather than `DummyOutput` (which discards everything) --
+    needed to actually assert on what the live status bar renders, the
+    same way `_ui_with_captured_rich_output`'s `Console(file=buffer)`
+    captures Rich's side of the output. `enable_cpr=False` avoids
+    blocking on a cursor-position-report response that a fake pipe input
+    never sends."""
+    original_application = session_ui_module.Application
+    buffer = io.StringIO()
+    output = Vt100_Output(buffer, lambda: Size(rows=24, columns=100), enable_cpr=False)
+
+    with create_pipe_input() as pipe_input:
+        def _fake_application(*args, **kwargs):
+            return _RealApplication(*args, input=pipe_input, output=output, **kwargs)
+
+        session_ui_module.Application = _fake_application
+        try:
+            ui._run_recording_status_bar(timer, thread)
+        finally:
+            session_ui_module.Application = original_application
+
+    return _strip_ansi(buffer.getvalue())
 
 
 def _read_answer_with_keystrokes(ui: RichSessionUI, timer: AnswerTimer, keystrokes: str) -> str:
@@ -350,22 +407,52 @@ def test_read_answer_shows_a_countdown_while_recording():
     # voice-mode recording path printed nothing at all while blocked
     # waiting on record() -- someone using voice mode had no visibility
     # into the clock running down at all.
-    voice = _FakeVoiceIO(transcribed_text="an answer")
-    slept = threading.Event()
-
-    def _slow_record(max_seconds, silence_timeout):
-        # Long enough for _print_recording_countdown's 0.5s poll to run
-        # at least twice and cross the 10s-remaining checkpoint.
-        time.sleep(1.2)
-        slept.set()
-        return b"fake-audio"
-
-    voice.record = _slow_record
-    ui, buffer = _voice_ui_with_captured_rich_output(voice)
-    timer = AnswerTimer(10.5)  # starts just above the 10s checkpoint
+    ui, _buffer = _ui_with_captured_rich_output()
+    timer = AnswerTimer(60)
     timer.start()
 
-    ui.read_answer(timer)
+    # A thread that's still "alive" for one status-bar redraw tick
+    # before finishing, so _run_recording_status_bar has something to
+    # render before it exits.
+    still_running = threading.Event()
 
-    assert slept.is_set()
-    assert "remaining" in buffer.getvalue().lower()
+    def _briefly_alive():
+        still_running.wait(timeout=2)
+
+    thread = threading.Thread(target=_briefly_alive)
+    thread.start()
+
+    def _release_after_a_tick():
+        time.sleep(0.7)  # past the 0.5s refresh_interval
+        still_running.set()
+
+    releaser = threading.Thread(target=_release_after_a_tick)
+    releaser.start()
+
+    rendered = _run_recording_status_bar_capturing_output(ui, timer, thread)
+    thread.join()
+    releaser.join()
+
+    assert "Recording" in rendered
+    assert "remaining" in rendered.lower()
+
+
+def test_read_answer_status_bar_returns_promptly_once_recording_finishes():
+    """The status bar must not outlive the recording thread -- its exit
+    check runs from inside the refresh_interval callback (§ design doc
+    16.9), not from a separate poll loop, so this also covers that the
+    Application actually exits rather than hanging."""
+    ui, _buffer = _ui_with_captured_rich_output()
+    timer = AnswerTimer(60)
+    timer.start()
+
+    already_finished_thread = threading.Thread(target=lambda: None)
+    already_finished_thread.start()
+    already_finished_thread.join()
+
+    start = time.monotonic()
+    _run_recording_status_bar_capturing_output(ui, timer, already_finished_thread)
+    elapsed = time.monotonic() - start
+
+    # Should return on (at most) the first refresh tick, not linger.
+    assert elapsed < 1.5

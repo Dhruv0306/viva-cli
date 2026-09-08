@@ -45,7 +45,7 @@ def test_voice_setup_calls_setup_models_with_config_defaults(mocker, monkeypatch
     result = runner.invoke(app, ["voice", "setup"])
 
     assert result.exit_code == 0
-    setup_mock.assert_called_once_with("base", "en_US-lessac-medium", str(tmp_path / "voice_models"))
+    setup_mock.assert_called_once_with("small", "en_US-lessac-medium", str(tmp_path / "voice_models"))
 
 
 def test_voice_setup_cli_flags_override_config_defaults(mocker, monkeypatch, tmp_path):

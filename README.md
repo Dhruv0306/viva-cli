@@ -81,7 +81,7 @@ AVG_TIME_PER_CATEGORY_SECONDS=180
 QUESTION_SIMILARITY_THRESHOLD=0.90
 EVAL_FLUSH_TIMEOUT_SECONDS=60
 VOICE_ENABLED=false
-STT_MODEL_SIZE=base
+STT_MODEL_SIZE=small
 TTS_VOICE=en_US-lessac-medium
 VOICE_CACHE_DIR=./data/voice_models
 VOICE_MAX_ANSWER_SECONDS=120
@@ -138,7 +138,7 @@ Speak your answers instead of typing, and have questions read aloud
 
 ```bash
 pip install -e ".[voice]"
-viva voice setup [--stt-model base] [--tts-voice en_US-lessac-medium]
+viva voice setup [--stt-model small] [--tts-voice en_US-lessac-medium]
 ```
 
 Then set `VOICE_ENABLED=true` in `.env` before `viva start`/`resume`.

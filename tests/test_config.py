@@ -68,7 +68,7 @@ def test_defaults_applied(monkeypatch):
     assert config.eval_flush_timeout_seconds == 60
     assert config.report_max_items_per_section == 10
     assert config.voice_enabled is False
-    assert config.stt_model_size == "base"
+    assert config.stt_model_size == "small"
     assert config.tts_voice == "en_US-lessac-medium"
     assert config.voice_cache_dir == "./data/voice_models"
     assert config.voice_max_answer_seconds == 120

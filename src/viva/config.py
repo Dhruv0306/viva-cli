@@ -159,6 +159,10 @@ class Config:
     voice_enabled: bool
     # Validated against faster-whisper's known model sizes (§16.7) so a
     # typo fails fast at load time rather than inside the STT call.
+    # Default is "small", not "base" -- real-world testing (design doc
+    # §16.9) found "base" too inaccurate for grading fidelity on
+    # technical answers; "small" trades a slower first load and a
+    # somewhat slower transcription for meaningfully better accuracy.
     stt_model_size: str
     # Not format-validated against Piper's voice catalog -- that list is
     # fetched from Piper's model repository and changes over time, same
@@ -276,7 +280,7 @@ class Config:
         # docs/system-design/16-phase-11-voice-io-design.md §16.7.
         voice_enabled = _get_bool("VOICE_ENABLED", "false")
 
-        stt_model_size = os.getenv("STT_MODEL_SIZE", "base").strip()
+        stt_model_size = os.getenv("STT_MODEL_SIZE", "small").strip()
         if stt_model_size not in _WHISPER_MODEL_SIZES:
             raise ConfigError(
                 "STT_MODEL_SIZE must be one of "

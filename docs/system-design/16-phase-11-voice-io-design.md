@@ -147,7 +147,7 @@ side latency silently eating into the person's answering budget.
 New CLI command, `src/viva/cli.py`:
 
 ```
-viva voice setup [--stt-model base] [--tts-voice en_US-lessac-medium]
+viva voice setup [--stt-model small] [--tts-voice en_US-lessac-medium]
 ```
 
 Calls `_load_whisper_model()`/`_load_piper_voice()` eagerly against
@@ -183,7 +183,7 @@ running:
 ```
 # --- Voice I/O (Phase 11, docs/system-design/16-phase-11-voice-io-design.md) ---
 VOICE_ENABLED=false
-STT_MODEL_SIZE=base
+STT_MODEL_SIZE=small
 TTS_VOICE=en_US-lessac-medium
 VOICE_CACHE_DIR=./data/voice_models
 VOICE_MAX_ANSWER_SECONDS=120
@@ -240,6 +240,9 @@ directly needed updating in the same patch as the field additions —
   <dir>` CLI utility instead of importing from inside
   `piper.download_voices`, since that module's internals aren't
   documented as a stable API and have already changed once.
+  `pyproject.toml`'s `piper-tts` version bound was also widened
+  (`>=1.3,<2.0`, from `>=1.2,<2.0`) since `>=1.2` is the pre-rewrite
+  API this bug was written against.
 
 - **`faster-whisper` auto-selected an incompatible GPU, crashing with a
   cuBLAS error.** Real-world bug from a Windows `viva start` run:
@@ -276,10 +279,40 @@ directly needed updating in the same patch as the field additions —
   recording wait (unlike typed input, which races the terminal's own
   echo): §11.9's documented `Live` corruption bug is reason enough to
   keep this path structurally immune to that whole class of bug rather
-  than argue the specific trigger doesn't apply here. `pyproject
-  .toml`'s `piper-tts` version bound was also widened
-  (`>=1.3,<2.0`, from `>=1.2,<2.0`) since `>=1.2` is the pre-rewrite
-  API this bug was written against.
+  than argue the specific trigger doesn't apply here.
+
+- **Voice mode's countdown was scrolling text, not the live bar the
+  typed-input path has.** Reported directly against a screenshot of the
+  typed-input toolbar (the yellow, fixed-position "⏱ 00:57 remaining
+  (Alt+Enter to submit)" bar) alongside a question of why voice mode's
+  countdown looked different -- the first fix for the missing-countdown
+  gap above used sparse, scrolling `console.print()` checkpoints, which
+  technically showed the time but didn't match the live, in-place-
+  updating bar every other part of the session already has. Replaced
+  with a genuine `prompt_toolkit.Application` running a one-line status
+  bar with `refresh_interval=0.5`, the same mechanism
+  `_read_answer_by_text`'s `bottom_toolbar` already uses, rather than
+  the periodic-print compromise. The liveness/exit check runs inside
+  the status text's own getter callback (invoked by `refresh_interval`
+  from the Application's own event loop), so the background recording
+  thread never has to signal a running event loop across threads --
+  the Application notices its own recording thread finished on its next
+  scheduled redraw tick and exits itself.
+
+- **Whisper's `base` model was too inaccurate for grading fidelity.**
+  Reported alongside a real transcript with repeated, garbled phrasing
+  from a genuine spoken answer -- exactly the risk the original engine
+  choice (§16.2) flagged as the reason for choosing faster-whisper over
+  Vosk in the first place, but `base` (the smallest model, chosen as
+  the default for a fast first-run download) wasn't accurate enough in
+  practice. Default `STT_MODEL_SIZE` changed from `base` to `small` --
+  a larger download and somewhat slower transcription (still excluded
+  from the answer clock, §16.4), traded for meaningfully better
+  accuracy. Also enabled `vad_filter=True` on the transcription call,
+  which trims leading/trailing silence and background noise before
+  decoding and reduces Whisper's known repeated-phrase hallucination
+  pattern on quiet or noisy segments -- a second, independent
+  contributor to the same garbled-transcript symptom.
 
 - **`[voice]` swallowed by Rich markup, dropping the fix instruction
   from error output.** `VoiceDependencyError`'s message text includes

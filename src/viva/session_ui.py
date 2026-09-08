@@ -32,8 +32,12 @@ import threading
 from dataclasses import dataclass
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import Application
+from prompt_toolkit.application.current import get_app
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import Layout, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
@@ -98,6 +102,20 @@ def _submit_key_bindings() -> KeyBindings:
     return bindings
 
 
+def _recording_status_key_bindings() -> KeyBindings:
+    """Ctrl+C interrupts a recording in progress, matching
+    `prompt_toolkit`'s own default `prompt()` behavior -- the recording
+    status bar has nothing to submit (nothing is being typed), so this
+    is the only binding it needs."""
+    bindings = KeyBindings()
+
+    @bindings.add("c-c")
+    def _interrupt(event) -> None:
+        event.app.exit(exception=KeyboardInterrupt)
+
+    return bindings
+
+
 class RichSessionUI(SessionUI):
     def __init__(
         self,
@@ -153,45 +171,53 @@ class RichSessionUI(SessionUI):
                 "[dim]Type your answer (Enter for a new line). Press Alt+Enter to submit.[/dim]"
             )
 
-    def _print_recording_countdown(self, timer: AnswerTimer, thread: threading.Thread) -> None:
-        """Prints sparse, non-overwriting countdown updates while
-        `thread` (running `VoiceIO.record()`) is alive -- a real-world
-        gap found in testing (docs/system-design/
-        16-phase-11-voice-io-design.md \u00a716.9): the typed-input path has
-        always shown a live remaining-time toolbar, but the original
-        voice-mode recording path showed nothing at all while blocked
-        waiting on `record()`.
+    def _run_recording_status_bar(self, timer: AnswerTimer, thread: threading.Thread) -> None:
+        """A live, in-place-updating status line while `thread` (running
+        `VoiceIO.record()`) is alive -- fixing a real-world gap
+        (docs/system-design/16-phase-11-voice-io-design.md \u00a716.9):
+        typed input has always had a live countdown toolbar
+        (`_read_answer_by_text`'s `bottom_toolbar`), but the first
+        version of this method was sparse, scrolling `console.print()`
+        checkpoints instead of a genuinely live, fixed-position bar --
+        reported directly against a screenshot of the typed-input
+        toolbar asking why voice mode didn't look the same.
 
-        Deliberately not `rich.Live`: docs/system-design/
-        11-phase-6-session-loop-design.md \u00a711.9 documents a real
-        corruption bug from `Live`'s in-place redraw math colliding with
-        other terminal output. Nothing else writes to the terminal while
-        this blocks on a background thread, so that specific trigger
-        doesn't apply here -- but plain, append-only `console.print()`
-        calls keep this path structurally immune to that whole bug
-        class rather than re-litigating whether `Live` is safe this
-        time. The tradeoff, same one \u00a711.9 already accepted for the
-        pre-prompt_toolkit typed-input path, is periodic checkpoints
-        (whole-minute boundaries, then 30s and 10s) instead of a true
-        per-second redraw.
+        Uses a minimal `prompt_toolkit.Application` rather than
+        `rich.Live`, for the same reason `_read_answer_by_text` does
+        (\u00a711.9's documented corruption bug) -- `prompt_toolkit` owns its
+        own render region coherently, and this gives the identical
+        look-and-feel to the typed-input toolbar rather than a
+        different, bolted-on mechanism for voice mode specifically.
+
+        The liveness/exit check runs inside the status text getter
+        itself, which `refresh_interval` invokes from the Application's
+        own event loop -- so exiting the Application when recording
+        finishes never has to signal a running event loop from another
+        thread; it happens naturally on the next scheduled redraw tick.
         """
-        last_minute_announced: int | None = None
-        announced_30s = False
-        announced_10s = False
-        while thread.is_alive():
-            remaining = timer.remaining()
-            if remaining <= 10 and not announced_10s:
-                announced_10s = True
-                self._console.print(f"[red]\u23f1  {timer.format_remaining()} remaining![/red]")
-            elif remaining <= 30 and not announced_30s:
-                announced_30s = True
-                self._console.print(f"[yellow]\u23f1  {timer.format_remaining()} remaining[/yellow]")
-            elif remaining > 30:
-                current_minute = int(remaining // 60)
-                if current_minute != last_minute_announced:
-                    last_minute_announced = current_minute
-                    self._console.print(f"[dim]\u23f1  {timer.format_remaining()} remaining[/dim]")
-            thread.join(timeout=0.5)
+        status_bar_state = {"exited": False}
+
+        def _status_text() -> HTML:
+            if not thread.is_alive():
+                if not status_bar_state["exited"]:
+                    status_bar_state["exited"] = True
+                    get_app().exit()
+                return HTML("")
+            return HTML(
+                '<style fg="ansicyan">\U0001f3a4 Recording...</style>  '
+                f'<style fg="ansiyellow">\u23f1  {timer.format_remaining()} remaining</style>'
+            )
+
+        app: Application = Application(
+            layout=Layout(Window(content=FormattedTextControl(_status_text), height=1)),
+            key_bindings=_recording_status_key_bindings(),
+            refresh_interval=0.5,
+            full_screen=False,
+        )
+        try:
+            app.run()
+        except KeyboardInterrupt:
+            pass
 
     def _read_answer_by_voice(self, timer: AnswerTimer) -> str | None:
         """Records and transcribes a spoken answer. Returns None (rather
@@ -206,7 +232,6 @@ class RichSessionUI(SessionUI):
         if max_seconds <= 0:
             return None
 
-        self._console.print("[cyan]\U0001f3a4 Recording... speak your answer.[/cyan]")
         result: dict = {}
 
         def _do_record() -> None:
@@ -220,7 +245,7 @@ class RichSessionUI(SessionUI):
 
         record_thread = threading.Thread(target=_do_record, daemon=True)
         record_thread.start()
-        self._print_recording_countdown(timer, record_thread)
+        self._run_recording_status_bar(timer, record_thread)
         record_thread.join()
 
         if "error" in result:

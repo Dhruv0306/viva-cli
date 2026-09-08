@@ -288,7 +288,13 @@ class LocalVoiceIO(VoiceIO):
         # compact in-memory storage, converted here at the one call site
         # that needs the float representation.
         samples = np.frombuffer(audio, dtype="int16").astype("float32") / 32768.0
-        segments, _info = model.transcribe(samples, language="en")
+        # vad_filter=True (design doc §16.9): faster-whisper's built-in
+        # voice-activity filtering trims leading/trailing silence and
+        # background noise before decoding, which reduces the repeated-
+        # phrase hallucination pattern Whisper is known for on quiet or
+        # noisy segments -- found from a real transcript that repeated
+        # phrases like "top language cut" several times.
+        segments, _info = model.transcribe(samples, language="en", vad_filter=True)
         text = " ".join(segment.text.strip() for segment in segments).strip()
         return text or None
 

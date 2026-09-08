@@ -176,8 +176,8 @@ class _FakeWhisperModel:
     def __init__(self) -> None:
         self.calls: list = []
 
-    def transcribe(self, samples, language):
-        self.calls.append((samples, language))
+    def transcribe(self, samples, language, vad_filter=False):
+        self.calls.append((samples, language, vad_filter))
         return [_FakeSegment(" hello "), _FakeSegment("world ")], object()
 
 
@@ -185,7 +185,7 @@ def test_transcribe_joins_segments_and_strips_whitespace(monkeypatch):
     fake_model = _FakeWhisperModel()
     monkeypatch.setattr(voice_io_module, "_load_whisper_model", lambda *a, **kw: fake_model)
 
-    vio = LocalVoiceIO(stt_model_size="base", tts_voice="en_US-lessac-medium", cache_dir="./cache")
+    vio = LocalVoiceIO(stt_model_size="small", tts_voice="en_US-lessac-medium", cache_dir="./cache")
     # int16 PCM for a couple of samples -- transcribe() must convert this
     # to a normalized float32 waveform before handing it to the model.
     pcm = np.array([0, 16384, -16384], dtype="int16").tobytes()
@@ -193,18 +193,19 @@ def test_transcribe_joins_segments_and_strips_whitespace(monkeypatch):
     text = vio.transcribe(pcm)
 
     assert text == "hello world"
-    (samples_seen, language_seen), = fake_model.calls
+    (samples_seen, language_seen, vad_filter_seen), = fake_model.calls
     assert language_seen == "en"
+    assert vad_filter_seen is True
     assert samples_seen.dtype == np.float32
     assert samples_seen[1] == pytest.approx(0.5, abs=0.01)
 
 
 def test_transcribe_returns_none_for_empty_result(monkeypatch):
     fake_model = _FakeWhisperModel()
-    fake_model.transcribe = lambda samples, language: ([], object())
+    fake_model.transcribe = lambda samples, language, vad_filter=False: ([], object())
     monkeypatch.setattr(voice_io_module, "_load_whisper_model", lambda *a, **kw: fake_model)
 
-    vio = LocalVoiceIO(stt_model_size="base", tts_voice="en_US-lessac-medium", cache_dir="./cache")
+    vio = LocalVoiceIO(stt_model_size="small", tts_voice="en_US-lessac-medium", cache_dir="./cache")
     assert vio.transcribe(b"\x00\x00") is None
 
 
