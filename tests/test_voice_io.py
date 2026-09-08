@@ -31,6 +31,37 @@ def test_load_whisper_model_without_extra_raises_dependency_error():
         voice_io_module._load_whisper_model("base", "./cache")
 
 
+class _FakeWhisperModelClass:
+    """Stand-in for `faster_whisper.WhisperModel`, injected via
+    sys.modules so `_load_whisper_model`'s `from faster_whisper import
+    WhisperModel` succeeds without the real package installed."""
+
+    init_calls: list = []
+
+    def __init__(self, model_size, **kwargs):
+        type(self).init_calls.append((model_size, kwargs))
+
+
+def test_load_whisper_model_forces_cpu_device(monkeypatch, tmp_path):
+    # Regression test for a real-world bug (docs/system-design/
+    # 16-phase-11-voice-io-design.md §16.9): leaving device unset let
+    # CTranslate2 auto-select an available GPU, which raised "cuBLAS
+    # failed with status CUBLAS_STATUS_NOT_SUPPORTED" on a real Windows
+    # machine with compute_type="int8" -- a known CTranslate2/newer-GPU
+    # incompatibility. CPU is the one target guaranteed to work
+    # everywhere.
+    _FakeWhisperModelClass.init_calls = []
+    fake_module = type(sys)("faster_whisper")
+    fake_module.WhisperModel = _FakeWhisperModelClass
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
+
+    voice_io_module._load_whisper_model("base", str(tmp_path))
+
+    (model_size, kwargs), = _FakeWhisperModelClass.init_calls
+    assert model_size == "base"
+    assert kwargs["device"] == "cpu"
+
+
 def test_load_piper_voice_without_extra_raises_dependency_error():
     with pytest.raises(VoiceDependencyError, match="piper-tts"):
         voice_io_module._load_piper_voice("en_US-lessac-medium", "./cache")

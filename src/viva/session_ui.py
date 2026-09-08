@@ -28,6 +28,7 @@ promptly typing is cut off once time runs out.
 from __future__ import annotations
 
 import abc
+import threading
 from dataclasses import dataclass
 
 from prompt_toolkit import PromptSession
@@ -152,6 +153,46 @@ class RichSessionUI(SessionUI):
                 "[dim]Type your answer (Enter for a new line). Press Alt+Enter to submit.[/dim]"
             )
 
+    def _print_recording_countdown(self, timer: AnswerTimer, thread: threading.Thread) -> None:
+        """Prints sparse, non-overwriting countdown updates while
+        `thread` (running `VoiceIO.record()`) is alive -- a real-world
+        gap found in testing (docs/system-design/
+        16-phase-11-voice-io-design.md \u00a716.9): the typed-input path has
+        always shown a live remaining-time toolbar, but the original
+        voice-mode recording path showed nothing at all while blocked
+        waiting on `record()`.
+
+        Deliberately not `rich.Live`: docs/system-design/
+        11-phase-6-session-loop-design.md \u00a711.9 documents a real
+        corruption bug from `Live`'s in-place redraw math colliding with
+        other terminal output. Nothing else writes to the terminal while
+        this blocks on a background thread, so that specific trigger
+        doesn't apply here -- but plain, append-only `console.print()`
+        calls keep this path structurally immune to that whole bug
+        class rather than re-litigating whether `Live` is safe this
+        time. The tradeoff, same one \u00a711.9 already accepted for the
+        pre-prompt_toolkit typed-input path, is periodic checkpoints
+        (whole-minute boundaries, then 30s and 10s) instead of a true
+        per-second redraw.
+        """
+        last_minute_announced: int | None = None
+        announced_30s = False
+        announced_10s = False
+        while thread.is_alive():
+            remaining = timer.remaining()
+            if remaining <= 10 and not announced_10s:
+                announced_10s = True
+                self._console.print(f"[red]\u23f1  {timer.format_remaining()} remaining![/red]")
+            elif remaining <= 30 and not announced_30s:
+                announced_30s = True
+                self._console.print(f"[yellow]\u23f1  {timer.format_remaining()} remaining[/yellow]")
+            elif remaining > 30:
+                current_minute = int(remaining // 60)
+                if current_minute != last_minute_announced:
+                    last_minute_announced = current_minute
+                    self._console.print(f"[dim]\u23f1  {timer.format_remaining()} remaining[/dim]")
+            thread.join(timeout=0.5)
+
     def _read_answer_by_voice(self, timer: AnswerTimer) -> str | None:
         """Records and transcribes a spoken answer. Returns None (rather
         than raising) on any of the three fallback triggers design doc
@@ -166,14 +207,26 @@ class RichSessionUI(SessionUI):
             return None
 
         self._console.print("[cyan]\U0001f3a4 Recording... speak your answer.[/cyan]")
-        try:
-            # Not wrapped in timer.excluding() -- recording is the
-            # person's answering time, the same as typing would be
-            # (§16.4's correction to the pre-implementation plan).
-            audio = self._voice.record(max_seconds, self._voice_silence_timeout_seconds)
-        except VoiceIOError as exc:
-            self._console.print(f"[red]Recording failed: {escape(str(exc))}[/red]")
+        result: dict = {}
+
+        def _do_record() -> None:
+            try:
+                # Not wrapped in timer.excluding() -- recording is the
+                # person's answering time, the same as typing would be
+                # (§16.4's correction to the pre-implementation plan).
+                result["audio"] = self._voice.record(max_seconds, self._voice_silence_timeout_seconds)
+            except VoiceIOError as exc:
+                result["error"] = exc
+
+        record_thread = threading.Thread(target=_do_record, daemon=True)
+        record_thread.start()
+        self._print_recording_countdown(timer, record_thread)
+        record_thread.join()
+
+        if "error" in result:
+            self._console.print(f"[red]Recording failed: {escape(str(result['error']))}[/red]")
             return None
+        audio = result.get("audio")
 
         if audio is None:
             self._console.print("[yellow]No speech detected.[/yellow]")

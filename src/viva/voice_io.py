@@ -85,7 +85,20 @@ class VoiceIO(abc.ABC):
 def _load_whisper_model(model_size: str, cache_dir: str):
     """Lazy-imports faster-whisper and loads (downloading into
     `cache_dir` on first use) the given model size. Raises
-    VoiceDependencyError if the `voice` extra isn't installed."""
+    VoiceDependencyError if the `voice` extra isn't installed.
+
+    Forces `device="cpu"` explicitly rather than leaving CTranslate2 to
+    auto-select the best available hardware (design doc §16.9's
+    real-world bug writeup): on newer NVIDIA GPUs, `compute_type="int8"`
+    on an auto-selected CUDA device raises `RuntimeError: cuBLAS failed
+    with status CUBLAS_STATUS_NOT_SUPPORTED` -- a known CTranslate2/
+    int8-tensor-core incompatibility, not something this project can
+    detect or work around per-GPU. CPU is the one target guaranteed to
+    work on every machine regardless of GPU vendor, driver, or cuBLAS
+    version, consistent with the rest of the stack already assuming no
+    GPU (Ollama, ChromaDB). GPU acceleration as an opt-in is a
+    reasonable future enhancement, not the safe default.
+    """
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
@@ -93,7 +106,7 @@ def _load_whisper_model(model_size: str, cache_dir: str):
             "faster-whisper is not installed. Run "
             'pip install -e ".[voice]" and `viva voice setup` first.'
         ) from exc
-    return WhisperModel(model_size, download_root=cache_dir, compute_type="int8")
+    return WhisperModel(model_size, download_root=cache_dir, device="cpu", compute_type="int8")
 
 
 def _load_piper_voice(voice_id: str, cache_dir: str):

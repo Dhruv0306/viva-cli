@@ -239,7 +239,44 @@ directly needed updating in the same patch as the field additions —
   documented `python -m piper.download_voices <voice_id> --data-dir
   <dir>` CLI utility instead of importing from inside
   `piper.download_voices`, since that module's internals aren't
-  documented as a stable API and have already changed once. `pyproject
+  documented as a stable API and have already changed once.
+
+- **`faster-whisper` auto-selected an incompatible GPU, crashing with a
+  cuBLAS error.** Real-world bug from a Windows `viva start` run:
+  `viva voice setup` succeeded, both models loaded, the question
+  displayed, recording began, then the session crashed with
+  `cuBLAS failed with status CUBLAS_STATUS_NOT_SUPPORTED`.
+  `_load_whisper_model()` never passed a `device` argument to
+  `WhisperModel`, so CTranslate2 auto-selected "the best hardware
+  available" — an NVIDIA GPU on the test machine — and
+  `compute_type="int8"` on that GPU hit a documented CTranslate2
+  incompatibility with newer GPU architectures' int8 tensor cores
+  (upstream: OpenNMT/CTranslate2#1865, SYSTRAN/faster-whisper#1260).
+  This project has no way to know in advance which GPUs will hit this,
+  and the rest of the local stack (Ollama, ChromaDB) already assumes no
+  GPU is required. Fixed by forcing `device="cpu"` explicitly rather
+  than leaving hardware selection to CTranslate2's default — CPU is the
+  one target guaranteed to work regardless of GPU vendor, driver, or
+  cuBLAS version. GPU acceleration as an opt-in could be a reasonable
+  future enhancement; auto-selecting it was not a safe default.
+
+- **Voice mode's recording path showed no countdown at all.** Reported
+  directly alongside the cuBLAS crash above: the typed-input path has
+  always shown a live remaining-time toolbar (via `prompt_toolkit`),
+  but `_read_answer_by_voice()` printed a static "Recording..." message
+  and then blocked on `VoiceIO.record()` with no time-remaining
+  indication whatsoever until it returned. This is a real gap against
+  FR17's live-countdown requirement, not a cosmetic nicety — a person
+  using voice mode had no way to tell how much answering time they had
+  left while recording. Fixed by running `record()` on a background
+  thread while the main thread prints sparse, non-overwriting
+  `console.print()` countdown updates (whole-minute boundaries, then
+  30s and 10s checkpoints) — deliberately not `rich.Live`, even though
+  nothing else writes to the terminal concurrently during a pure
+  recording wait (unlike typed input, which races the terminal's own
+  echo): §11.9's documented `Live` corruption bug is reason enough to
+  keep this path structurally immune to that whole class of bug rather
+  than argue the specific trigger doesn't apply here. `pyproject
   .toml`'s `piper-tts` version bound was also widened
   (`>=1.3,<2.0`, from `>=1.2,<2.0`) since `>=1.2` is the pre-rewrite
   API this bug was written against.

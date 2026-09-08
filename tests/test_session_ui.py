@@ -13,6 +13,8 @@ so tests don't need a real terminal to write to either.
 from __future__ import annotations
 
 import io
+import threading
+import time
 
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -339,3 +341,31 @@ def test_read_answer_caps_recording_at_remaining_time():
 
     (max_seconds_used, _silence_timeout), = voice.record_calls
     assert max_seconds_used <= 5.0
+
+
+def test_read_answer_shows_a_countdown_while_recording():
+    # Regression test for a real-world gap (docs/system-design/
+    # 16-phase-11-voice-io-design.md §16.9): the typed-input path has
+    # always shown a live remaining-time toolbar, but the original
+    # voice-mode recording path printed nothing at all while blocked
+    # waiting on record() -- someone using voice mode had no visibility
+    # into the clock running down at all.
+    voice = _FakeVoiceIO(transcribed_text="an answer")
+    slept = threading.Event()
+
+    def _slow_record(max_seconds, silence_timeout):
+        # Long enough for _print_recording_countdown's 0.5s poll to run
+        # at least twice and cross the 10s-remaining checkpoint.
+        time.sleep(1.2)
+        slept.set()
+        return b"fake-audio"
+
+    voice.record = _slow_record
+    ui, buffer = _voice_ui_with_captured_rich_output(voice)
+    timer = AnswerTimer(10.5)  # starts just above the 10s checkpoint
+    timer.start()
+
+    ui.read_answer(timer)
+
+    assert slept.is_set()
+    assert "remaining" in buffer.getvalue().lower()
