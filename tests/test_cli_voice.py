@@ -6,6 +6,16 @@ config-error-exit-2/dependency-error-exit-2 surface that's cli.py's own
 job here. setup_models() itself (the actual model pulling) is covered by
 test_voice_io.py -- mocked here via mocker.patch("viva.cli.setup_models")
 so no real faster-whisper/Piper import or download ever happens.
+
+Every test that reaches Config.load() mocks viva.config.load_dotenv
+(the established pattern -- test_cli_session.py's own comment: "don't
+let a real .env override the missing var"). A real-world bug
+(docs/system-design/16-phase-11-voice-io-design.md \u00a716.9): the first
+version of this file skipped that on the tests asserting Config
+*defaults* specifically, which happened to pass in an environment with
+no real .env file, then failed against a real repo checkout whose
+.env still had the pre-Phase-11-patch-10 STT_MODEL_SIZE=base -- the
+real .env shadowed the coded default the test meant to exercise.
 """
 from __future__ import annotations
 
@@ -27,7 +37,8 @@ def test_voice_setup_help_lists_options():
     assert "--tts-voice" in result.output
 
 
-def test_voice_setup_config_error_exits_2(monkeypatch, tmp_path):
+def test_voice_setup_config_error_exits_2(mocker, monkeypatch, tmp_path):
+    mocker.patch("viva.config.load_dotenv")
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.chdir(tmp_path)
 
@@ -37,6 +48,7 @@ def test_voice_setup_config_error_exits_2(monkeypatch, tmp_path):
 
 
 def test_voice_setup_calls_setup_models_with_config_defaults(mocker, monkeypatch, tmp_path):
+    mocker.patch("viva.config.load_dotenv")
     monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
     monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
     monkeypatch.setenv("VOICE_CACHE_DIR", str(tmp_path / "voice_models"))
@@ -49,6 +61,7 @@ def test_voice_setup_calls_setup_models_with_config_defaults(mocker, monkeypatch
 
 
 def test_voice_setup_cli_flags_override_config_defaults(mocker, monkeypatch, tmp_path):
+    mocker.patch("viva.config.load_dotenv")
     monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
     monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
     setup_mock = mocker.patch("viva.cli.setup_models")
@@ -64,6 +77,7 @@ def test_voice_setup_cli_flags_override_config_defaults(mocker, monkeypatch, tmp
 
 
 def test_voice_setup_missing_extra_exits_2(mocker, monkeypatch, tmp_path):
+    mocker.patch("viva.config.load_dotenv")
     monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
     monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
     mocker.patch(
@@ -86,6 +100,7 @@ def test_voice_setup_missing_extra_message_is_not_mangled_by_rich_markup(mocker,
     # console.print(f"[red]{exc}[/red]") turned "...-e \".[voice]\" and..."
     # into "...-e \".\" and...", dropping the exact instruction the user
     # needed to fix the problem.
+    mocker.patch("viva.config.load_dotenv")
     monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
     monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
     mocker.patch(

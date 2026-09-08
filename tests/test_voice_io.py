@@ -7,9 +7,20 @@ functions (`_load_whisper_model`, `_load_piper_voice`, `_record_pcm`,
 `test_orchestrator.py`'s `monkeypatch.setattr(orchestrator_module, ...)`
 pattern) rather than installing faster-whisper/Piper/sounddevice.
 
-The `voice` extra genuinely isn't installed in this environment, which
-is used deliberately in a couple of tests below to exercise the real
-ImportError -> VoiceDependencyError translation without any mocking.
+The four "without extra" tests below force an ImportError via
+`monkeypatch.setitem(sys.modules, name, None)` (the standard technique
+for deterministically simulating "module not installed" -- `sys.modules
+[name] = None` makes `import name` raise ImportError immediately,
+regardless of whether the package is actually installed) rather than
+relying on the `voice` extra happening to be absent from whichever
+environment runs this suite. A real-world bug (docs/system-design/
+16-phase-11-voice-io-design.md §16.9): these tests originally called the
+real loaders with no mocking at all, correct only in an environment
+where the extra genuinely wasn't installed -- on a machine that had
+actually run `pip install -e ".[voice]"` for real voice-mode use (the
+expected, encouraged workflow), the same test suite silently fell
+through to the real loaders and made a real network call and disk write
+downloading actual STT/TTS models during a routine `pytest` run.
 """
 from __future__ import annotations
 
@@ -26,7 +37,8 @@ from viva.voice_io import LocalVoiceIO, VoiceDependencyError, VoiceIOError
 # --- VoiceDependencyError when the `voice` extra isn't installed --------
 
 
-def test_load_whisper_model_without_extra_raises_dependency_error():
+def test_load_whisper_model_without_extra_raises_dependency_error(monkeypatch):
+    monkeypatch.setitem(sys.modules, "faster_whisper", None)
     with pytest.raises(VoiceDependencyError, match="faster-whisper"):
         voice_io_module._load_whisper_model("base", "./cache")
 
@@ -62,7 +74,8 @@ def test_load_whisper_model_forces_cpu_device(monkeypatch, tmp_path):
     assert kwargs["device"] == "cpu"
 
 
-def test_load_piper_voice_without_extra_raises_dependency_error():
+def test_load_piper_voice_without_extra_raises_dependency_error(monkeypatch):
+    monkeypatch.setitem(sys.modules, "piper", None)
     with pytest.raises(VoiceDependencyError, match="piper-tts"):
         voice_io_module._load_piper_voice("en_US-lessac-medium", "./cache")
 
@@ -134,12 +147,14 @@ def test_load_piper_voice_download_failure_raises_dependency_error(monkeypatch, 
         voice_io_module._load_piper_voice("not-a-real-voice", str(tmp_path))
 
 
-def test_record_pcm_without_extra_raises_dependency_error():
+def test_record_pcm_without_extra_raises_dependency_error(monkeypatch):
+    monkeypatch.setitem(sys.modules, "sounddevice", None)
     with pytest.raises(VoiceDependencyError, match="sounddevice"):
         voice_io_module._record_pcm(max_seconds=5, silence_timeout=2)
 
 
-def test_play_pcm_without_extra_raises_dependency_error():
+def test_play_pcm_without_extra_raises_dependency_error(monkeypatch):
+    monkeypatch.setitem(sys.modules, "sounddevice", None)
     with pytest.raises(VoiceDependencyError, match="sounddevice"):
         voice_io_module._play_pcm(b"\x00\x00", sample_rate=16000)
 

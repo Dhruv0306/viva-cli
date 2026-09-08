@@ -335,3 +335,37 @@ directly needed updating in the same patch as the field additions —
   and is equally vulnerable to any exception text that happens to
   contain a bracket — out of scope to fix here since none of those
   paths are part of Phase 11, but worth a follow-up sweep.
+
+- **Tests silently depended on the `voice` extra being absent, and one
+  hit a real `.env`.** Two related test-isolation bugs surfaced by the
+  same `pytest` run on a real Windows checkout:
+
+  1. The four `_load_whisper_model`/`_load_piper_voice`/`_record_pcm`/
+     `_play_pcm` "without extra" tests called the real loaders with no
+     mocking at all, correct only in an environment where the `voice`
+     extra genuinely wasn't installed. On a machine that had actually
+     run `pip install -e ".[voice]"` for real voice-mode use (the
+     expected, encouraged workflow, not a misconfiguration), the same
+     tests silently fell through to the real loaders instead of
+     raising `VoiceDependencyError` -- and in doing so made a real
+     network call and disk write, actually downloading the STT model
+     and a TTS voice during a routine `pytest` run. Fixed with
+     `monkeypatch.setitem(sys.modules, name, None)`, the standard
+     technique for deterministically forcing `ImportError` on a given
+     module regardless of whether it's actually installed, so these
+     tests now assert the intended behavior in every environment
+     rather than only in the one that happened to be missing the
+     extra.
+  2. `test_voice_setup_calls_setup_models_with_config_defaults` asserts
+     `Config`'s coded default for `STT_MODEL_SIZE` ("small") without
+     mocking `viva.config.load_dotenv` -- the same class of bug
+     documented in this project's own memory of prior work ("a real
+     local `.env` can refill env vars ... due to `override=False`
+     default"). The test passed in an environment with no `.env` file
+     at all, then failed against a real repo checkout whose `.env`
+     still had `STT_MODEL_SIZE=base` (copied from `.env.example`
+     before this phase changed that default) -- the real `.env`
+     shadowed the coded default the test meant to exercise. Fixed by
+     applying the established `mocker.patch("viva.config.load_dotenv")`
+     pattern (already used in `test_cli_session.py`) across every test
+     in this file that reaches `Config.load()`.
