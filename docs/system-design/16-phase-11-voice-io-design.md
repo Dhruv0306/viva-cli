@@ -223,6 +223,27 @@ directly needed updating in the same patch as the field additions —
 
 ## 16.9 Real-world bugs found during testing
 
+- **`piper.download`'s API was removed by an upstream rewrite.**
+  `_load_piper_voice()` originally called `piper.download.get_voices()`/
+  `ensure_voice_exists()` (the old rhasspy/piper interface). Development
+  of `piper-tts` moved to OHF-Voice's `piper1-gpl` rewrite at v1.3.0,
+  which deleted that module entirely and replaced it with a `python -m
+  piper.download_voices` CLI-only utility — with no public function API
+  documented in its place. Because `_load_piper_voice()` imported both
+  `PiperVoice` and the old download functions in the same `try`/`except
+  ImportError` block, the missing `piper.download` module got caught by
+  the same handler as "the package isn't installed at all," so a
+  correctly-installed `piper-tts` (confirmed by the same real Windows
+  run — `faster-whisper` pulled its model successfully in the same
+  command) was misreported as missing. Fixed by shelling out to the
+  documented `python -m piper.download_voices <voice_id> --data-dir
+  <dir>` CLI utility instead of importing from inside
+  `piper.download_voices`, since that module's internals aren't
+  documented as a stable API and have already changed once. `pyproject
+  .toml`'s `piper-tts` version bound was also widened
+  (`>=1.3,<2.0`, from `>=1.2,<2.0`) since `>=1.2` is the pre-rewrite
+  API this bug was written against.
+
 - **`[voice]` swallowed by Rich markup, dropping the fix instruction
   from error output.** `VoiceDependencyError`'s message text includes
   the literal string `pip install -e ".[voice]"` (correct — that's the

@@ -13,6 +13,7 @@ ImportError -> VoiceDependencyError translation without any mocking.
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 
 import numpy as np
@@ -33,6 +34,73 @@ def test_load_whisper_model_without_extra_raises_dependency_error():
 def test_load_piper_voice_without_extra_raises_dependency_error():
     with pytest.raises(VoiceDependencyError, match="piper-tts"):
         voice_io_module._load_piper_voice("en_US-lessac-medium", "./cache")
+
+
+class _FakePiperVoiceClass:
+    """Stand-in for the real `piper.PiperVoice` class, injected via
+    sys.modules so `_load_piper_voice`'s `from piper import PiperVoice`
+    succeeds without the real piper-tts package installed."""
+
+    loaded_paths: list[str] = []
+
+    @classmethod
+    def load(cls, path):
+        cls.loaded_paths.append(path)
+        return f"voice-loaded-from-{path}"
+
+
+def _install_fake_piper_module(monkeypatch):
+    _FakePiperVoiceClass.loaded_paths = []
+    fake_piper = type(sys)("piper")
+    fake_piper.PiperVoice = _FakePiperVoiceClass
+    monkeypatch.setitem(sys.modules, "piper", fake_piper)
+    return _FakePiperVoiceClass
+
+
+def test_load_piper_voice_skips_download_when_already_cached(monkeypatch, tmp_path):
+    fake_voice_cls = _install_fake_piper_module(monkeypatch)
+    (tmp_path / "en_US-lessac-medium.onnx").write_bytes(b"fake-onnx")
+    run_calls = []
+    monkeypatch.setattr(voice_io_module.subprocess, "run", lambda *a, **kw: run_calls.append(a))
+
+    result = voice_io_module._load_piper_voice("en_US-lessac-medium", str(tmp_path))
+
+    assert run_calls == []  # already cached -- no download utility invoked
+    assert fake_voice_cls.loaded_paths == [str(tmp_path / "en_US-lessac-medium.onnx")]
+    assert result == f"voice-loaded-from-{tmp_path / 'en_US-lessac-medium.onnx'}"
+
+
+def test_load_piper_voice_downloads_when_not_cached(monkeypatch, tmp_path):
+    fake_voice_cls = _install_fake_piper_module(monkeypatch)
+    run_calls = []
+
+    def _fake_run(cmd):
+        run_calls.append(cmd)
+        # Simulate the real download utility placing the file.
+        (tmp_path / "en_GB-alan-medium.onnx").write_bytes(b"fake-onnx")
+        return subprocess.CompletedProcess(cmd, returncode=0)
+
+    monkeypatch.setattr(voice_io_module.subprocess, "run", _fake_run)
+
+    voice_io_module._load_piper_voice("en_GB-alan-medium", str(tmp_path))
+
+    (cmd,) = run_calls
+    assert cmd == [
+        sys.executable, "-m", "piper.download_voices", "en_GB-alan-medium",
+        "--data-dir", str(tmp_path),
+    ]
+    assert fake_voice_cls.loaded_paths == [str(tmp_path / "en_GB-alan-medium.onnx")]
+
+
+def test_load_piper_voice_download_failure_raises_dependency_error(monkeypatch, tmp_path):
+    _install_fake_piper_module(monkeypatch)
+    monkeypatch.setattr(
+        voice_io_module.subprocess, "run",
+        lambda cmd: subprocess.CompletedProcess(cmd, returncode=1),
+    )
+
+    with pytest.raises(VoiceDependencyError, match="Failed to download Piper voice"):
+        voice_io_module._load_piper_voice("not-a-real-voice", str(tmp_path))
 
 
 def test_record_pcm_without_extra_raises_dependency_error():

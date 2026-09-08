@@ -28,8 +28,10 @@ while recording time itself still counts as answering time.
 from __future__ import annotations
 
 import abc
-import time
+import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 
 class VoiceDependencyError(RuntimeError):
@@ -95,21 +97,51 @@ def _load_whisper_model(model_size: str, cache_dir: str):
 
 
 def _load_piper_voice(voice_id: str, cache_dir: str):
-    """Lazy-imports Piper and loads (downloading into `cache_dir` on
-    first use) the given voice. Raises VoiceDependencyError if the
-    `voice` extra isn't installed."""
+    """Lazy-imports Piper and loads the given voice, downloading it into
+    `cache_dir` first if it isn't already cached there. Raises
+    VoiceDependencyError if the `voice` extra isn't installed or the
+    download fails.
+
+    Downloads via the documented `python -m piper.download_voices` CLI
+    utility (design doc §16.9's real-world bug writeup) rather than
+    importing anything from inside `piper.download_voices` -- current
+    piper-tts (OHF-Voice's `piper1-gpl` rewrite, v1.3.0+) removed the
+    old `piper.download` module's `ensure_voice_exists()`/`get_voices()`
+    functions this code originally called against; that module doesn't
+    exist any more; only the CLI entrypoint is documented as stable.
+    Shelling out to it avoids depending on undocumented internals that
+    have already changed once.
+    """
     try:
         from piper import PiperVoice
-        from piper.download import ensure_voice_exists, get_voices
     except ImportError as exc:
         raise VoiceDependencyError(
             "piper-tts is not installed. Run "
             'pip install -e ".[voice]" and `viva voice setup` first.'
         ) from exc
-    voices_info = get_voices(cache_dir, update_voices=False)
-    ensure_voice_exists(voice_id, cache_dir, cache_dir, voices_info)
-    model_path = f"{cache_dir}/{voice_id}.onnx"
-    return PiperVoice.load(model_path)
+
+    model_path = Path(cache_dir) / f"{voice_id}.onnx"
+    if not model_path.exists():
+        _download_piper_voice(voice_id, cache_dir)
+    return PiperVoice.load(str(model_path))
+
+
+def _download_piper_voice(voice_id: str, cache_dir: str) -> None:
+    """Downloads `voice_id` into `cache_dir` via `python -m
+    piper.download_voices`. Stdout/stderr are left connected to the
+    parent process (not captured) so the download's own progress output
+    reaches the terminal during `viva voice setup`, the same way `ollama
+    pull`'s progress is visible."""
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [sys.executable, "-m", "piper.download_voices", voice_id, "--data-dir", cache_dir]
+    )
+    if result.returncode != 0:
+        raise VoiceDependencyError(
+            f"Failed to download Piper voice {voice_id!r} (exit code "
+            f"{result.returncode}). Check your network connection and the "
+            "voice ID, then retry `viva voice setup`."
+        )
 
 
 def _record_pcm(max_seconds: float, silence_timeout: float, sample_rate: int = 16000) -> _Recording | None:
