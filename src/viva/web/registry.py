@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from viva.config import Config
 from viva.orchestrator import Orchestrator, OrchestratorError
 from viva.storage import SessionStore
+from viva.timer import AnswerTimer
+from viva.voice_io import LocalVoiceIO, VoiceDependencyError
 from viva.web.web_session_ui import WebSessionUI
 
 # How long to wait, once a session's background thread is spawned, for
@@ -61,6 +63,67 @@ class SessionRegistry:
         self._config = config
         self._lock = threading.Lock()
         self._sessions: dict[str, LiveSession] = {}
+        # One LocalVoiceIO shared across every live session in this
+        # process (docs/system-design/17-phase-12-web-voice-io-design.md
+        # §17.4) -- built lazily on first actual voice use, not at
+        # server startup, so `viva serve` itself never pays the model-
+        # load cost for a server nobody ends up using voice against.
+        # _voice_lock guards the actual synthesize()/transcribe() calls,
+        # not just construction: faster-whisper/Piper aren't documented
+        # as safe for concurrent inference from multiple threads, and
+        # more than one browser tab can genuinely be open against one
+        # `viva serve` process.
+        self._voice: LocalVoiceIO | None = None
+        self._voice_lock = threading.Lock()
+
+    def _ensure_voice_ready(self) -> None:
+        """Raises VoiceDependencyError if voice isn't usable on this
+        server -- either VOICE_ENABLED=false, or the `voice` extra/
+        models aren't actually available. Call while already holding
+        `self._voice_lock`."""
+        if not self._config.voice_enabled:
+            raise VoiceDependencyError(
+                "Voice mode is disabled on this server (VOICE_ENABLED=false)."
+            )
+        if self._voice is None:
+            voice = LocalVoiceIO(
+                stt_model_size=self._config.stt_model_size,
+                tts_voice=self._config.tts_voice,
+                cache_dir=self._config.voice_cache_dir,
+            )
+            voice.ensure_ready()  # raises VoiceDependencyError if unavailable
+            self._voice = voice
+
+    def voice_available(self) -> tuple[bool, str | None]:
+        """`(True, None)` if voice is ready to use right now, or
+        `(False, reason)` -- the backing for `GET /api/voice/available`
+        (design doc §17.4). Deliberately does the same readiness check
+        `synthesize()`/`transcribe()` would, so this never reports
+        available when a subsequent real call would fail."""
+        with self._voice_lock:
+            try:
+                self._ensure_voice_ready()
+            except VoiceDependencyError as exc:
+                return False, str(exc)
+        return True, None
+
+    def synthesize(self, text: str) -> bytes:
+        with self._voice_lock:
+            self._ensure_voice_ready()
+            return self._voice.synthesize(text)  # type: ignore[union-attr]
+
+    def transcribe(self, pcm: bytes, timer: AnswerTimer | None) -> str | None:
+        with self._voice_lock:
+            self._ensure_voice_ready()
+            if timer is not None:
+                # Transcription compute is excluded from the answer
+                # clock, exactly like it is for the CLI (§16.4) --
+                # recording itself (which already happened, client-side
+                # in the browser, before this call) is what counts as
+                # answering time.
+                with timer.excluding():
+                    return self._voice.transcribe(pcm)  # type: ignore[union-attr]
+            return self._voice.transcribe(pcm)  # type: ignore[union-attr]
 
     def start_session(
         self,

@@ -204,3 +204,23 @@ def test_request_shutdown_unblocks_read_answer_with_empty_string():
     answer = ui.read_answer(_started_timer())
 
     assert answer == ""
+
+
+def test_timer_property_is_none_before_any_question():
+    # Phase 12 (docs/system-design/17-phase-12-web-voice-io-design.md
+    # §17.4): the voice-answer endpoint needs this to be None-safe for a
+    # session that hasn't reached read_answer() yet.
+    ui = WebSessionUI()
+
+    assert ui.timer is None
+
+
+def test_timer_property_exposes_the_timer_read_answer_was_given():
+    ui = WebSessionUI()
+    ui.ask_question("Q", "design", 1)
+    ui.submit_answer("an answer")
+    timer = _started_timer()
+
+    ui.read_answer(timer)
+
+    assert ui.timer is timer
