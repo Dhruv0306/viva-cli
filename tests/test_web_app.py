@@ -49,6 +49,7 @@ class _FakeUI:
     def __init__(self, stage="awaiting_answer"):
         self.stage = stage
         self.answers: list[str] = []
+        self.timer = "fake-timer-sentinel"  # Phase 12: just needs to be passed through
 
     def snapshot(self) -> dict:
         return {
@@ -74,6 +75,13 @@ class _FakeRegistry:
         self.start_exc = None
         self.resume_exc = None
         self.shutdown_called = False
+        self.voice_available_result = (True, None)
+        self.synthesize_exc = None
+        self.synthesize_return = b"FAKE-WAV-BYTES"
+        self.synthesize_calls: list[str] = []
+        self.transcribe_exc = None
+        self.transcribe_return = "a transcribed answer"
+        self.transcribe_calls: list[tuple] = []
 
     def start_session(self, repo_url, branch, duration_minutes, session_name):
         if self.start_exc:
@@ -94,6 +102,21 @@ class _FakeRegistry:
 
     def shutdown(self):
         self.shutdown_called = True
+
+    def voice_available(self):
+        return self.voice_available_result
+
+    def synthesize(self, text):
+        self.synthesize_calls.append(text)
+        if self.synthesize_exc:
+            raise self.synthesize_exc
+        return self.synthesize_return
+
+    def transcribe(self, pcm, timer):
+        self.transcribe_calls.append((pcm, timer))
+        if self.transcribe_exc:
+            raise self.transcribe_exc
+        return self.transcribe_return
 
 
 def _client_with_fake_registry(mocker, tmp_path) -> tuple[TestClient, _FakeRegistry]:
@@ -209,6 +232,140 @@ def test_submit_answer_when_not_awaiting_returns_409(mocker, tmp_path):
     fake.sessions["sess-fixed-id"] = _FakeUI(stage="working")
 
     response = client.post("/api/sessions/sess-fixed-id/answer", json={"text": "too late"})
+
+    assert response.status_code == 409
+
+
+# -- Voice (Phase 12, docs/system-design/17-phase-12-web-voice-io-design.md) -
+
+# -- GET /api/voice/available --------------------------------------------
+
+def test_voice_available_reports_true(mocker, tmp_path):
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.voice_available_result = (True, None)
+
+    response = client.get("/api/voice/available")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["reason"] is None
+    assert body["max_answer_seconds"] == 120
+    assert body["silence_timeout_seconds"] == 2.5
+
+
+def test_voice_available_reports_false_with_reason(mocker, tmp_path):
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.voice_available_result = (False, "Voice mode is disabled on this server.")
+
+    response = client.get("/api/voice/available")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is False
+    assert body["reason"] == "Voice mode is disabled on this server."
+
+
+# -- GET /api/sessions/{id}/question-audio --------------------------------
+
+def test_question_audio_unknown_session_returns_404(mocker, tmp_path):
+    client, _fake = _client_with_fake_registry(mocker, tmp_path)
+
+    response = client.get("/api/sessions/never-started/question-audio")
+
+    assert response.status_code == 404
+
+
+def test_question_audio_returns_wav_bytes(mocker, tmp_path):
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.sessions["sess-fixed-id"] = _FakeUI()
+    fake.synthesize_return = b"RIFF....WAVEfake"
+
+    response = client.get("/api/sessions/sess-fixed-id/question-audio")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content == b"RIFF....WAVEfake"
+    assert fake.synthesize_calls == ["Why is this a dataclass?"]
+
+
+def test_question_audio_not_awaiting_answer_returns_409(mocker, tmp_path):
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.sessions["sess-fixed-id"] = _FakeUI(stage="working")
+
+    response = client.get("/api/sessions/sess-fixed-id/question-audio")
+
+    assert response.status_code == 409
+    assert fake.synthesize_calls == []
+
+
+def test_question_audio_voice_unavailable_returns_503(mocker, tmp_path):
+    from viva.voice_io import VoiceDependencyError
+
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.sessions["sess-fixed-id"] = _FakeUI()
+    fake.synthesize_exc = VoiceDependencyError("Voice mode is disabled on this server.")
+
+    response = client.get("/api/sessions/sess-fixed-id/question-audio")
+
+    assert response.status_code == 503
+
+
+# -- POST /api/sessions/{id}/answer-audio ---------------------------------
+
+def test_answer_audio_unknown_session_returns_404(mocker, tmp_path):
+    client, _fake = _client_with_fake_registry(mocker, tmp_path)
+
+    response = client.post("/api/sessions/never-started/answer-audio", content=b"\x00\x00")
+
+    assert response.status_code == 404
+
+
+def test_answer_audio_success_submits_transcribed_text(mocker, tmp_path):
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    ui = _FakeUI()
+    fake.sessions["sess-fixed-id"] = ui
+    fake.transcribe_return = "the transcribed answer"
+
+    response = client.post("/api/sessions/sess-fixed-id/answer-audio", content=b"\x01\x02\x03\x04")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "recorded", "text": "the transcribed answer"}
+    assert ui.answers == ["the transcribed answer"]
+    (pcm_seen, timer_seen), = fake.transcribe_calls
+    assert pcm_seen == b"\x01\x02\x03\x04"
+    assert timer_seen == ui.timer  # the session's own timer, passed through for exclusion
+
+
+def test_answer_audio_no_speech_detected_returns_422_without_submitting(mocker, tmp_path):
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    ui = _FakeUI()
+    fake.sessions["sess-fixed-id"] = ui
+    fake.transcribe_return = None
+
+    response = client.post("/api/sessions/sess-fixed-id/answer-audio", content=b"\x00\x00")
+
+    assert response.status_code == 422
+    assert ui.answers == []
+
+
+def test_answer_audio_voice_unavailable_returns_503(mocker, tmp_path):
+    from viva.voice_io import VoiceDependencyError
+
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.sessions["sess-fixed-id"] = _FakeUI()
+    fake.transcribe_exc = VoiceDependencyError("Voice mode is disabled on this server.")
+
+    response = client.post("/api/sessions/sess-fixed-id/answer-audio", content=b"\x00\x00")
+
+    assert response.status_code == 503
+
+
+def test_answer_audio_when_not_awaiting_returns_409(mocker, tmp_path):
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.sessions["sess-fixed-id"] = _FakeUI(stage="working")
+
+    response = client.post("/api/sessions/sess-fixed-id/answer-audio", content=b"\x00\x00")
 
     assert response.status_code == 409
 

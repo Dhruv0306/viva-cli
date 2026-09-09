@@ -20,10 +20,11 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from viva.cleanup import run_cleanup
 from viva.config import Config
@@ -37,7 +38,9 @@ from viva.orchestrator import (
 )
 from viva.report import ReportBuilder, render_html, render_json, render_markdown
 from viva.storage import SessionStore
+from viva.voice_io import VoiceDependencyError
 from viva.web.registry import SessionRegistry
+from viva.web.web_session_ui import STAGE_AWAITING_ANSWER
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -117,6 +120,68 @@ def create_app(config: Config) -> FastAPI:
                 status_code=409, detail="Session is not currently awaiting an answer.",
             )
         return {"status": "recorded"}
+
+    # -- voice (Phase 12, docs/system-design/17-phase-12-web-voice-io-design.md) --
+
+    @app.get("/api/voice/available")
+    def voice_available() -> dict:
+        # Plain `def`, same as every other route in this file except
+        # answer_audio below -- Starlette offloads this to its threadpool
+        # automatically, so the (possibly several-second, first-call-only)
+        # model load this can trigger doesn't block the event loop.
+        available, reason = registry.voice_available()
+        return {
+            "available": available,
+            "reason": reason,
+            # Mirrors the CLI's own recording cutoff (design doc §16.3)
+            # so the frontend's AudioWorklet-based silence detection
+            # (static/voice-worklet.js) uses the server's actual
+            # configured values rather than separately hardcoded
+            # constants that could drift out of sync with them.
+            "max_answer_seconds": config.voice_max_answer_seconds,
+            "silence_timeout_seconds": config.voice_silence_timeout_seconds,
+        }
+
+    @app.get("/api/sessions/{session_id}/question-audio")
+    def question_audio(session_id: str) -> Response:
+        ui = registry.get(session_id)
+        if ui is None:
+            raise HTTPException(status_code=404, detail="No live session with this id.")
+        snapshot = ui.snapshot()
+        if snapshot["stage"] != STAGE_AWAITING_ANSWER or not snapshot["question_text"]:
+            raise HTTPException(status_code=409, detail="No current question to speak.")
+        try:
+            audio = registry.synthesize(snapshot["question_text"])
+        except VoiceDependencyError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return Response(content=audio, media_type="audio/wav")
+
+    @app.post("/api/sessions/{session_id}/answer-audio")
+    async def answer_audio(session_id: str, request: Request) -> dict:
+        # The one genuinely `async def` route in this file -- reading a
+        # raw (non-JSON) request body needs `await request.body()`,
+        # which only a coroutine route can call. registry.transcribe()
+        # itself is still blocking (a real faster-whisper call under a
+        # lock), so it's explicitly handed to Starlette's threadpool via
+        # run_in_threadpool() rather than awaited directly -- awaiting a
+        # blocking call here would stall the asyncio event loop for
+        # every other concurrent request (every other route in this file
+        # gets that offloading for free from being a plain `def`).
+        ui = registry.get(session_id)
+        if ui is None:
+            raise HTTPException(status_code=404, detail="No live session with this id.")
+        pcm = await request.body()
+        try:
+            text = await run_in_threadpool(registry.transcribe, pcm, ui.timer)
+        except VoiceDependencyError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if not text:
+            raise HTTPException(status_code=422, detail="Could not transcribe any speech.")
+        if not ui.submit_answer(text):
+            raise HTTPException(
+                status_code=409, detail="Session is not currently awaiting an answer.",
+            )
+        return {"status": "recorded", "text": text}
 
     # -- list/report/cleanup: read straight from SessionStore, same as CLI -----
 
