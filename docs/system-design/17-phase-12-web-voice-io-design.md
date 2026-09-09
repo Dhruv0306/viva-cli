@@ -149,6 +149,13 @@ atomic with respect to each other rather than relying on a favorable
 GIL scheduling of `+=`'s underlying load/add/store bytecodes. No
 behavior change for the CLI's existing single-threaded usage; this is
 purely a correctness fix for the newly-possible cross-thread case.
+Honesty note on the accompanying test: an attempt to reproduce an
+actual lost update against the pre-lock code (even with an aggressive
+`sys.setswitchinterval` and a tight no-sleep loop) didn't succeed --
+CPython's GIL makes a bare float `+=` surprisingly resistant to this
+specific race in practice. The lock is still the correct fix for a
+genuinely new cross-thread access pattern; the test is defensive
+hardening, not a reproduced-failure regression test.
 
 ## 17.6 Frontend
 

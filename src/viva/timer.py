@@ -6,9 +6,20 @@ uses `time.monotonic()` (immune to wall-clock adjustments) and an explicit
 `excluding()` context manager that any code performing an LLM call must wrap
 itself in, so exclusion is opt-in and visible at each call site rather than
 inferred.
+
+Thread-safe as of Phase 12 (docs/system-design/
+17-phase-12-web-voice-io-design.md §17.5): every prior caller of
+`excluding()` ran on the same single thread as everything else touching a
+given `AnswerTimer`. The web voice layer's `transcribe()` call is the first
+caller from a *different* thread than the Orchestrator's own loop, running
+concurrently with `WebSessionUI.snapshot()`'s own `remaining()` read from a
+polling request. A `threading.Lock` around `_start`/`_excluded_seconds`
+makes each read or mutation atomic; no behavior change for the CLI's
+existing single-threaded usage.
 """
 from __future__ import annotations
 
+import threading
 import time
 from contextlib import contextmanager
 from typing import Iterator
@@ -25,6 +36,7 @@ class AnswerTimer:
         self.duration_seconds = duration_seconds
         self._start: float | None = None
         self._excluded_seconds: float = 0.0
+        self._lock = threading.Lock()
 
     def start(self, initial_elapsed_seconds: float = 0.0) -> None:
         """`initial_elapsed_seconds` lets a resumed session (Phase 6,
@@ -32,8 +44,9 @@ class AnswerTimer:
         answer time already spent in a prior process before it crashed or
         was interrupted, rather than granting the full duration again.
         """
-        self._start = time.monotonic() - initial_elapsed_seconds
-        self._excluded_seconds = 0.0
+        with self._lock:
+            self._start = time.monotonic() - initial_elapsed_seconds
+            self._excluded_seconds = 0.0
 
     @contextmanager
     def excluding(self) -> Iterator[None]:
@@ -46,13 +59,18 @@ class AnswerTimer:
         try:
             yield
         finally:
-            self._excluded_seconds += time.monotonic() - exclusion_start
+            elapsed_in_block = time.monotonic() - exclusion_start
+            with self._lock:
+                self._excluded_seconds += elapsed_in_block
 
     def elapsed(self) -> float:
         """Answer time consumed so far, excluding any `excluding()` blocks."""
-        if self._start is None:
+        with self._lock:
+            start = self._start
+            excluded = self._excluded_seconds
+        if start is None:
             raise TimerNotStartedError("AnswerTimer.start() was not called")
-        return (time.monotonic() - self._start) - self._excluded_seconds
+        return (time.monotonic() - start) - excluded
 
     def remaining(self) -> float:
         return max(0.0, self.duration_seconds - self.elapsed())

@@ -1,3 +1,4 @@
+import threading
 import time
 
 import pytest
@@ -70,3 +71,41 @@ def test_start_with_initial_elapsed_seconds_can_already_be_expired():
     timer.start(initial_elapsed_seconds=61)
     assert timer.expired()
     assert timer.remaining() == 0.0
+
+
+def test_excluding_is_thread_safe_across_concurrent_calls():
+    """A defensive concurrency test, not a reproduced-failure regression
+    test -- honesty note: attempted to confirm this fails against the
+    pre-lock code first (the project's usual rule for regression tests),
+    but couldn't reliably reproduce a lost update even with an
+    aggressive `sys.setswitchinterval` and a tight no-sleep loop; a
+    simple float attribute `+=` is apparently resistant enough to
+    CPython's GIL scheduling that this specific race is hard to trigger
+    on purpose, let alone by accident. The lock is still correct to add
+    (docs/system-design/17-phase-12-web-voice-io-design.md \u00a717.5): every
+    prior caller of `excluding()` ran on the same thread as everything
+    else touching a given `AnswerTimer`; the web voice layer's
+    `transcribe()` is the first caller from a genuinely different
+    thread. This test documents and checks the intended behavior under
+    concurrency going forward, even though it can't be pointed at an
+    already-manifested bug.
+    """
+    timer = AnswerTimer(duration_seconds=60)
+    timer.start()
+    num_threads = 30
+    sleep_each = 0.02
+
+    def _exclude_a_bit() -> None:
+        with timer.excluding():
+            time.sleep(sleep_each)
+
+    threads = [threading.Thread(target=_exclude_a_bit) for _ in range(num_threads)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    # Every one of the 30 exclusions must be fully accounted for -- a
+    # lost update would leave elapsed() showing real answering time that
+    # was actually spent inside excluding() blocks.
+    assert timer.elapsed() < 0.15, f"lost time from a concurrent excluding() update: elapsed={timer.elapsed()}"
