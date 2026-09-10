@@ -94,13 +94,18 @@ question to speak) -- mirrors the existing `/answer` route's 409 for
 "not currently awaiting an answer."
 
 `POST /api/sessions/{id}/answer-audio` takes a raw PCM body (16kHz mono
-int16, exactly what `AudioWorklet`'s resampling step below produces),
-transcribes it, and on success calls the same `WebSessionUI.submit_answer()`
-the typed `/answer` route already uses -- from the Orchestrator's point
-of view, a voice answer and a typed answer are indistinguishable, which
-is exactly the point: nothing about `Orchestrator`/`WebSessionUI` needed
-to change to support this. Returns 422 (not 200 with an empty answer)
-if nothing transcribable came through, matching the CLI's fallback
+int16, exactly what `AudioWorklet`'s resampling step below produces)
+and transcribes it -- it does *not* call `submit_answer()` itself
+(revised from the original version of this design after real-world
+testing, §17.8: transcribing and submitting in one step meant no
+chance to see or correct a misheard word before it was already
+recorded as the answer). Returns `{"text": "..."}`; the frontend puts
+that in the same answer textarea a typed answer would use, and actual
+submission goes through the existing `POST .../answer` route -- one
+submission code path regardless of where the text came from, and from
+the Orchestrator's point of view a voice answer and a typed answer
+remain indistinguishable. Returns 422 (not 200 with empty text) if
+nothing transcribable came through, matching the CLI's fallback
 trigger for silence/empty transcription (§16.6) -- except here there's
 no background thread to fall through to typed input on its own, so the
 frontend has to handle "try again or type it" itself (§17.6).
@@ -185,7 +190,10 @@ constants rather than inventing a second cutoff behavior for the same
 feature. Once recording stops, the captured buffer is resampled to
 16kHz via an `OfflineAudioContext` (the standard way to resample
 client-side without pulling in a JS DSP library) and posted as raw
-int16 PCM bytes to `/answer-audio`.
+int16 PCM bytes to `/answer-audio`. On success, the returned transcript
+goes into the answer `<textarea>` for review -- not auto-submitted
+(§17.8) -- so a misheard word can be corrected before the person
+presses the same submit button a typed answer would use.
 
 **On a 422 (nothing transcribable).** Shows an inline message and
 re-offers the recording button rather than silently doing nothing --
@@ -213,6 +221,28 @@ the box that's already there," never a mode switch.
 
 ## 17.8 Real-world bugs found during testing
 
-(Populated as issues surface during real browser testing, per the
-project's established workflow -- none logged yet as of this patch
-series.)
+- **A transcribed-answer status message persisted across questions,
+  looking like it belonged to the wrong one.** Reported with a
+  screenshot: question 2 was on screen, but the recording status area
+  still showed question 1's "✓ Answer transcribed: ..." text.
+  `renderLiveState()`'s new-question-detected branch reset
+  `lastSpokenQuestionNumber` (for question-audio playback) but never
+  cleared the voice status line itself -- nothing else in the polling
+  loop touched it between questions. Fixed by clearing it both there
+  (defensively, on any new question number) and in the submit
+  handler (on any successful submission, typed or voice-originated).
+- **The transcribed answer was submitted before the person could see
+  or correct it.** Raised alongside the bug above: `answer-audio`
+  used to transcribe *and* call `submit_answer()` in the same request,
+  so a misheard technical term (a known STT accuracy risk, §16.2) was
+  already recorded as the answer with no chance to review it -- the
+  status line showed the transcript, but only as an after-the-fact
+  receipt, not something editable. Changed `answer-audio` to only
+  transcribe and return the text; the frontend now puts it in the
+  answer textarea (the same box typed answers use) and waits for an
+  explicit submit, giving a free proofreading step against exactly the
+  accuracy risk that motivated picking faster-whisper's more accurate
+  models in the first place. `ui.submit_answer()` is no longer called
+  from this route at all -- actual submission goes through the
+  existing `POST .../answer` route, so there's one submission code
+  path regardless of whether the text came from typing or from voice.

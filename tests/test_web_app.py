@@ -321,7 +321,14 @@ def test_answer_audio_unknown_session_returns_404(mocker, tmp_path):
     assert response.status_code == 404
 
 
-def test_answer_audio_success_submits_transcribed_text(mocker, tmp_path):
+def test_answer_audio_success_returns_transcribed_text_without_submitting(mocker, tmp_path):
+    # Real-world UX fix (docs/system-design/
+    # 17-phase-12-web-voice-io-design.md §17.8): this route used to call
+    # ui.submit_answer() itself, so a misheard word was already
+    # submitted before the person had any chance to see or correct it.
+    # It now only transcribes -- the frontend puts the text in the
+    # answer textarea for review, and the existing POST .../answer route
+    # is what actually submits it.
     client, fake = _client_with_fake_registry(mocker, tmp_path)
     ui = _FakeUI()
     fake.sessions["sess-fixed-id"] = ui
@@ -330,14 +337,14 @@ def test_answer_audio_success_submits_transcribed_text(mocker, tmp_path):
     response = client.post("/api/sessions/sess-fixed-id/answer-audio", content=b"\x01\x02\x03\x04")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "recorded", "text": "the transcribed answer"}
-    assert ui.answers == ["the transcribed answer"]
+    assert response.json() == {"text": "the transcribed answer"}
+    assert ui.answers == []  # not submitted by this route
     (pcm_seen, timer_seen), = fake.transcribe_calls
     assert pcm_seen == b"\x01\x02\x03\x04"
     assert timer_seen == ui.timer  # the session's own timer, passed through for exclusion
 
 
-def test_answer_audio_no_speech_detected_returns_422_without_submitting(mocker, tmp_path):
+def test_answer_audio_no_speech_detected_returns_422(mocker, tmp_path):
     client, fake = _client_with_fake_registry(mocker, tmp_path)
     ui = _FakeUI()
     fake.sessions["sess-fixed-id"] = ui
@@ -359,15 +366,6 @@ def test_answer_audio_voice_unavailable_returns_503(mocker, tmp_path):
     response = client.post("/api/sessions/sess-fixed-id/answer-audio", content=b"\x00\x00")
 
     assert response.status_code == 503
-
-
-def test_answer_audio_when_not_awaiting_returns_409(mocker, tmp_path):
-    client, fake = _client_with_fake_registry(mocker, tmp_path)
-    fake.sessions["sess-fixed-id"] = _FakeUI(stage="working")
-
-    response = client.post("/api/sessions/sess-fixed-id/answer-audio", content=b"\x00\x00")
-
-    assert response.status_code == 409
 
 
 # -- GET /api/sessions (real SessionStore) -----------------------------------

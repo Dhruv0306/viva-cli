@@ -309,6 +309,15 @@
         state.question_number !== lastSpokenQuestionNumber
       ) {
         lastSpokenQuestionNumber = state.question_number;
+        // Real bug found in testing (docs/system-design/
+        // 17-phase-12-web-voice-io-design.md §17.8): a transcribed-
+        // answer status message from a *previous* question was
+        // staying on screen through the next question, looking like it
+        // belonged to the new one. Cleared here as defense-in-depth on
+        // top of the live-submit handler's own clear, since a new
+        // question number showing up is itself proof the prior answer
+        // is gone, regardless of which path got it submitted.
+        document.getElementById("live-voice-status").textContent = "";
         playQuestionAudio();
       }
     } else {
@@ -460,9 +469,17 @@
           `/api/sessions/${encodeURIComponent(liveSessionId)}/answer-audio`,
           { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: pcm16.buffer },
         );
-        statusEl.textContent = `\u2713 Answer transcribed: ${result.text}`;
-        document.getElementById("live-question-block").hidden = true;
-        pollState();
+        // Real-world fix (docs/system-design/
+        // 17-phase-12-web-voice-io-design.md §17.8): this used to
+        // auto-submit immediately, so there was no way to see or
+        // correct a misheard word before it was already recorded as
+        // the answer. Puts the transcript in the textarea instead --
+        // review it, edit it if needed, then submit the same way a
+        // typed answer would be.
+        const textarea = document.getElementById("live-answer");
+        textarea.value = result.text;
+        textarea.focus();
+        statusEl.textContent = "Transcribed -- review below, then submit.";
       } catch (err) {
         // 422 (no speech) or 503 (voice unavailable) both land here --
         // either way, the typed textarea underneath is still right
@@ -519,6 +536,7 @@
         body: JSON.stringify({ text }),
       });
       textarea.value = "";
+      document.getElementById("live-voice-status").textContent = "";
       document.getElementById("live-question-block").hidden = true;
       pollState();
     } catch (err) {

@@ -167,6 +167,15 @@ def create_app(config: Config) -> FastAPI:
         # blocking call here would stall the asyncio event loop for
         # every other concurrent request (every other route in this file
         # gets that offloading for free from being a plain `def`).
+        #
+        # Deliberately does NOT call ui.submit_answer() itself (a real-
+        # world UX gap found in testing, design doc §17.8): the person
+        # can't see or correct a misheard word before it's already been
+        # submitted if this both transcribes and submits in one step.
+        # Returns the transcribed text; the frontend puts it in the
+        # answer textarea for review/editing, and the existing
+        # POST .../answer route is what actually submits it, same as a
+        # typed answer.
         ui = registry.get(session_id)
         if ui is None:
             raise HTTPException(status_code=404, detail="No live session with this id.")
@@ -177,11 +186,7 @@ def create_app(config: Config) -> FastAPI:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         if not text:
             raise HTTPException(status_code=422, detail="Could not transcribe any speech.")
-        if not ui.submit_answer(text):
-            raise HTTPException(
-                status_code=409, detail="Session is not currently awaiting an answer.",
-            )
-        return {"status": "recorded", "text": text}
+        return {"text": text}
 
     # -- list/report/cleanup: read straight from SessionStore, same as CLI -----
 
