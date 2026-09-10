@@ -198,6 +198,20 @@ class WebSessionUI(SessionUI):
             "remaining_seconds": remaining,
         }
 
+    @property
+    def timer(self) -> AnswerTimer | None:
+        """Exposes the same `self._timer` `read_answer()` already stores
+        (assigned once per question, on the Orchestrator's own thread),
+        for the web voice layer's `transcribe()` call to wrap in
+        `timer.excluding()` (docs/system-design/
+        17-phase-12-web-voice-io-design.md §17.4). No lock: same
+        justification as `snapshot()`'s own unlocked read of this
+        attribute just above -- a plain object reference, assigned once
+        and read from another thread, is safe under the GIL, and it's
+        always the same single `AnswerTimer` instance for the whole
+        session rather than a new one per question."""
+        return self._timer
+
     def request_shutdown(self) -> None:
         self._shutdown.set()
 

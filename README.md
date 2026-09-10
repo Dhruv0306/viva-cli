@@ -20,7 +20,7 @@ Explaining your own project out loud — to an interviewer, a thesis committee, 
 - 📄 **Structured per-question feedback** — summary, what you did well, what you missed, what you got wrong, and how to improve, for every question
 - 💻 **Zero cost** — entirely local inference via Ollama, no external API calls required
 - 💾 **Crash-resumable** — session state is persisted continuously; an interrupted viva can be resumed
-- 🎤 **Voice mode** — speak your answers and have questions read aloud, entirely local (faster-whisper + Piper), with automatic fallback to typed input
+- 🎤 **Voice mode** — speak your answers and have questions read aloud, entirely local (faster-whisper + Piper), in both the CLI and viva room, with automatic fallback to typed input
 
 ## How it works
 
@@ -132,18 +132,25 @@ operations as `viva start`/`resume`/`list`/`report`/`cleanup` above, not
 a different feature set. See
 [`docs/system-design/15-phase-10-web-ui-design.md`](docs/system-design/15-phase-10-web-ui-design.md).
 
-Speak your answers instead of typing, and have questions read aloud
-(CLI only for now -- see
-[`docs/system-design/16-phase-11-voice-io-design.md`](docs/system-design/16-phase-11-voice-io-design.md)):
+Speak your answers instead of typing, and have questions read aloud,
+in either the CLI or viva room (see
+[`docs/system-design/16-phase-11-voice-io-design.md`](docs/system-design/16-phase-11-voice-io-design.md)
+and
+[`docs/system-design/17-phase-12-web-voice-io-design.md`](docs/system-design/17-phase-12-web-voice-io-design.md)):
 
 ```bash
 pip install -e ".[voice]"
 viva voice setup [--stt-model small] [--tts-voice en_US-lessac-medium]
 ```
 
-Then set `VOICE_ENABLED=true` in `.env` before `viva start`/`resume`.
-Falls back to typed input automatically if nothing's heard, or if a
-model/microphone/speaker isn't available.
+Then set `VOICE_ENABLED=true` in `.env` before `viva start`/`resume`/
+`serve`. Falls back to typed input automatically if nothing's heard,
+or if a model/microphone/speaker isn't available. In viva room, voice
+is a per-browser-session toggle on the start form -- shown only once
+`VOICE_ENABLED=true` and the browser itself supports it (a secure
+context -- HTTPS or `localhost` -- with microphone access); each open
+tab decides independently, nothing is stored server-side about which
+sessions have it on.
 
 <table>
 <tr>
@@ -185,7 +192,7 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-10 (walking skeleton through viva room) are implemented.**
+**Phases 0-12 (walking skeleton through web voice I/O) are implemented.**
 Phase 10 added `viva serve`, which runs viva room: a local FastAPI server
 exposing the same
 start/resume/list/report/cleanup operations as the CLI, plus the live

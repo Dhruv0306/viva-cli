@@ -28,8 +28,10 @@ while recording time itself still counts as answering time.
 from __future__ import annotations
 
 import abc
+import io
 import subprocess
 import sys
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,6 +64,13 @@ class VoiceIO(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def synthesize(self, text: str) -> bytes:
+        """WAV-encoded audio for `text`, without playing it -- the web
+        layer's entry point (design doc §17.3). Returns empty bytes for
+        blank input."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def record(self, max_seconds: float, silence_timeout: float) -> bytes | None:
         """Block, capturing microphone audio, until either `max_seconds`
         elapses or `silence_timeout` seconds of below-threshold amplitude
@@ -80,6 +89,20 @@ class VoiceIO(abc.ABC):
         `timer.excluding()` -- it's compute, not answering time (§16.4).
         """
         raise NotImplementedError
+
+
+def _pcm_to_wav(pcm: bytes, sample_rate: int) -> bytes:
+    """Wraps raw 16-bit mono PCM in a WAV container using the stdlib
+    `wave` module -- no new dependency, and WAV plays natively in every
+    browser's `<audio>` element with zero client-side decode work
+    (design doc §17.3)."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)  # 16-bit
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm)
+    return buffer.getvalue()
 
 
 def _load_whisper_model(model_size: str, cache_dir: str):
@@ -266,12 +289,33 @@ class LocalVoiceIO(VoiceIO):
         return self._piper_voice
 
     def speak(self, text: str) -> None:
-        if not text.strip():
+        result = self._synthesize_pcm(text)
+        if result is None:
             return
+        pcm, sample_rate = result
+        _play_pcm(pcm, sample_rate)
+
+    def synthesize(self, text: str) -> bytes:
+        """WAV-encoded audio, not played -- the web layer's entry point
+        (design doc §17.3): a browser plays audio through its own
+        `<audio>` element, so there's nothing for this method to play
+        through locally the way `speak()` does for the CLI. Shares the
+        actual Piper call with `speak()` via `_synthesize_pcm()` rather
+        than either one round-tripping through the other's output
+        format."""
+        result = self._synthesize_pcm(text)
+        if result is None:
+            return b""
+        pcm, sample_rate = result
+        return _pcm_to_wav(pcm, sample_rate)
+
+    def _synthesize_pcm(self, text: str) -> tuple[bytes, int] | None:
+        if not text.strip():
+            return None
         voice = self._piper()
         sample_rate = voice.config.sample_rate
         chunks = [chunk.audio_int16_bytes for chunk in voice.synthesize(text)]
-        _play_pcm(b"".join(chunks), sample_rate)
+        return b"".join(chunks), sample_rate
 
     def record(self, max_seconds: float, silence_timeout: float) -> bytes | None:
         recording = _record_pcm(max_seconds, silence_timeout)

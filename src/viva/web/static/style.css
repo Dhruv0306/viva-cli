@@ -260,6 +260,21 @@ table.ledger tbody tr:hover { background: var(--surface-raised); }
   margin: 0 0 1.1rem;
 }
 
+/* -- Voice (Phase 12, docs/system-design/17-phase-12-web-voice-io-design.md) */
+
+.voice-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.voice-controls button { margin-top: 0; flex-shrink: 0; }
+#live-voice-status { margin: 0; }
+
 /* -- Report ------------------------------------------------------------------- */
 
 .result {

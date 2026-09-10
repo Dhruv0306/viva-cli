@@ -10,9 +10,14 @@ anywhere in the loop.
 """
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 
 from viva.orchestrator import SessionNotFoundError
+from viva.timer import AnswerTimer
+from viva.voice_io import VoiceDependencyError
 from viva.web.registry import SessionRegistry
 from viva.web.web_session_ui import STAGE_ERROR
 
@@ -54,10 +59,10 @@ class _NotFoundOrchestrator:
         raise SessionNotFoundError(f"No session found with id {session_id!r}.")
 
 
-def _config(tmp_path):
+def _config(tmp_path, **overrides):
     from viva.config import Config
 
-    return Config(
+    values = dict(
         llm_model="gemma4:e4b", embedding_model="nomic-embed-text", temperature=0.3,
         ollama_host="http://localhost:11434", viva_duration_minutes=30, max_questions=20,
         max_followup_depth=2, session_retention_days=30, max_files=200,
@@ -67,10 +72,12 @@ def _config(tmp_path):
         session_db_path=str(tmp_path / "viva.db"), avg_time_per_category_seconds=90,
         question_similarity_threshold=0.85, eval_flush_timeout_seconds=5.0,
         report_max_items_per_section=10,
-        voice_enabled=False, stt_model_size="base", tts_voice="en_US-lessac-medium",
+        voice_enabled=False, stt_model_size="small", tts_voice="en_US-lessac-medium",
         voice_cache_dir="./data/voice_models", voice_max_answer_seconds=120,
         voice_silence_timeout_seconds=2.5,
     )
+    values.update(overrides)
+    return Config(**values)
 
 
 def test_start_session_returns_id_reported_via_session_started(mocker, tmp_path):
@@ -143,3 +150,163 @@ def test_shutdown_requests_shutdown_on_every_live_session(mocker, tmp_path):
 
     live = next(iter(registry._sessions.values()))  # noqa: SLF001 - test-only introspection
     assert live.ui._shutdown.is_set()  # noqa: SLF001 - test-only introspection
+
+
+# --- Voice (Phase 12, docs/system-design/17-phase-12-web-voice-io-design.md)
+
+
+class _FakeLocalVoiceIO:
+    def __init__(self, stt_model_size, tts_voice, cache_dir, ensure_ready_exc=None):
+        self.stt_model_size = stt_model_size
+        self.tts_voice = tts_voice
+        self.cache_dir = cache_dir
+        self._ensure_ready_exc = ensure_ready_exc
+        self.ensure_ready_calls = 0
+        self.synthesize_calls: list[str] = []
+        self.transcribe_calls: list[bytes] = []
+        self.synthesize_return = b"FAKE-WAV-BYTES"
+        self.transcribe_return = "a transcribed answer"
+
+    def ensure_ready(self):
+        self.ensure_ready_calls += 1
+        if self._ensure_ready_exc is not None:
+            raise self._ensure_ready_exc
+
+    def synthesize(self, text):
+        self.synthesize_calls.append(text)
+        return self.synthesize_return
+
+    def transcribe(self, pcm):
+        self.transcribe_calls.append(pcm)
+        return self.transcribe_return
+
+
+def test_voice_available_false_when_server_disabled(tmp_path):
+    registry = SessionRegistry(_config(tmp_path, voice_enabled=False))
+
+    available, reason = registry.voice_available()
+
+    assert available is False
+    assert "VOICE_ENABLED" in reason
+
+
+def test_voice_available_true_when_ready(mocker, tmp_path):
+    fake_voice = _FakeLocalVoiceIO("small", "en_US-lessac-medium", "./data/voice_models")
+    voice_ctor = mocker.patch("viva.web.registry.LocalVoiceIO", return_value=fake_voice)
+    registry = SessionRegistry(_config(tmp_path, voice_enabled=True))
+
+    available, reason = registry.voice_available()
+
+    assert available is True
+    assert reason is None
+    voice_ctor.assert_called_once_with(
+        stt_model_size="small", tts_voice="en_US-lessac-medium", cache_dir="./data/voice_models",
+    )
+    assert fake_voice.ensure_ready_calls == 1
+
+
+def test_voice_available_false_on_dependency_error(mocker, tmp_path):
+    fake_voice = _FakeLocalVoiceIO(
+        "small", "en_US-lessac-medium", "./data/voice_models",
+        ensure_ready_exc=VoiceDependencyError('Run pip install -e ".[voice]"'),
+    )
+    mocker.patch("viva.web.registry.LocalVoiceIO", return_value=fake_voice)
+    registry = SessionRegistry(_config(tmp_path, voice_enabled=True))
+
+    available, reason = registry.voice_available()
+
+    assert available is False
+    assert "voice" in reason.lower()
+
+
+def test_voice_instance_is_shared_and_loaded_once_across_calls(mocker, tmp_path):
+    fake_voice = _FakeLocalVoiceIO("small", "en_US-lessac-medium", "./data/voice_models")
+    voice_ctor = mocker.patch("viva.web.registry.LocalVoiceIO", return_value=fake_voice)
+    registry = SessionRegistry(_config(tmp_path, voice_enabled=True))
+
+    registry.voice_available()
+    registry.synthesize("first question")
+    registry.transcribe(b"pcm-bytes", timer=None)
+
+    voice_ctor.assert_called_once()
+    assert fake_voice.ensure_ready_calls == 1
+
+
+def test_synthesize_calls_voice_synthesize_and_returns_its_result(mocker, tmp_path):
+    fake_voice = _FakeLocalVoiceIO("small", "en_US-lessac-medium", "./data/voice_models")
+    mocker.patch("viva.web.registry.LocalVoiceIO", return_value=fake_voice)
+    registry = SessionRegistry(_config(tmp_path, voice_enabled=True))
+
+    result = registry.synthesize("Why is this a dataclass?")
+
+    assert result == b"FAKE-WAV-BYTES"
+    assert fake_voice.synthesize_calls == ["Why is this a dataclass?"]
+
+
+def test_synthesize_raises_when_voice_disabled(tmp_path):
+    registry = SessionRegistry(_config(tmp_path, voice_enabled=False))
+
+    with pytest.raises(VoiceDependencyError):
+        registry.synthesize("some question")
+
+
+def test_transcribe_wraps_the_call_in_timer_excluding(mocker, tmp_path):
+    fake_voice = _FakeLocalVoiceIO("small", "en_US-lessac-medium", "./data/voice_models")
+
+    def _slow_transcribe(pcm):
+        time.sleep(0.1)
+        return "an answer"
+
+    fake_voice.transcribe = _slow_transcribe
+    mocker.patch("viva.web.registry.LocalVoiceIO", return_value=fake_voice)
+    registry = SessionRegistry(_config(tmp_path, voice_enabled=True))
+    timer = AnswerTimer(60)
+    timer.start()
+
+    text = registry.transcribe(b"pcm-bytes", timer=timer)
+
+    assert text == "an answer"
+    # The 0.1s "transcription" must be excluded, not counted as
+    # answering time (design doc §17.4, mirroring §16.4 for the CLI).
+    assert timer.elapsed() < 0.05
+
+
+def test_transcribe_without_a_timer_still_transcribes(mocker, tmp_path):
+    fake_voice = _FakeLocalVoiceIO("small", "en_US-lessac-medium", "./data/voice_models")
+    mocker.patch("viva.web.registry.LocalVoiceIO", return_value=fake_voice)
+    registry = SessionRegistry(_config(tmp_path, voice_enabled=True))
+
+    text = registry.transcribe(b"pcm-bytes", timer=None)
+
+    assert text == "a transcribed answer"
+    assert fake_voice.transcribe_calls == [b"pcm-bytes"]
+
+
+def test_voice_calls_are_serialized_across_threads(mocker, tmp_path):
+    """Neither faster-whisper nor Piper document their models as safe
+    for concurrent inference from multiple threads (design doc §17.4)
+    -- registry._voice_lock must ensure only one synthesize()/
+    transcribe() call actually runs at a time, even with more than one
+    browser tab hitting the same `viva serve` process."""
+    fake_voice = _FakeLocalVoiceIO("small", "en_US-lessac-medium", "./data/voice_models")
+    concurrent_calls = []
+    max_concurrent = []
+
+    def _tracked_synthesize(text):
+        concurrent_calls.append(1)
+        max_concurrent.append(len(concurrent_calls))
+        time.sleep(0.05)
+        concurrent_calls.pop()
+        return b"wav-bytes"
+
+    fake_voice.synthesize = _tracked_synthesize
+    mocker.patch("viva.web.registry.LocalVoiceIO", return_value=fake_voice)
+    registry = SessionRegistry(_config(tmp_path, voice_enabled=True))
+
+    threads = [threading.Thread(target=registry.synthesize, args=(f"q{i}",)) for i in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert max(max_concurrent) == 1

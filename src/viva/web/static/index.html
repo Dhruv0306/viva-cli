@@ -58,6 +58,10 @@
             Session name <span class="hint">optional</span>
             <input type="text" id="start-session-name" />
           </label>
+          <label class="checkbox" id="start-voice-enabled-row" hidden>
+            <input type="checkbox" id="start-voice-enabled" />
+            Speak questions aloud and answer by talking <span class="hint">(local, this browser only)</span>
+          </label>
           <button type="submit">Start</button>
         </form>
       </div>
@@ -109,6 +113,11 @@
         <div id="live-question-block" hidden>
           <p class="question-meta"><span id="live-category" class="pill"></span> <span class="question-number">question <span id="live-question-number"></span></span></p>
           <p id="live-question-text" class="question-text"></p>
+          <audio id="live-question-audio" hidden></audio>
+          <div id="live-voice-controls" hidden class="voice-controls">
+            <button id="live-record-btn" type="button" class="secondary">Record answer</button>
+            <p id="live-voice-status" class="hint"></p>
+          </div>
           <textarea id="live-answer" rows="6" placeholder="Type your answer... (Alt+Enter or the button submits)"></textarea>
           <button id="live-submit" type="button">Submit answer</button>
         </div>

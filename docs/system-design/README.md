@@ -94,5 +94,13 @@ history of what was tried and rejected along the way.
   excluded (correcting an earlier plan to pause the countdown instead),
   and the CLI-first scope with web UI voice deferred to a follow-up phase.
 
+- **[17-phase-12-web-voice-io-design.md](17-phase-12-web-voice-io-design.md)** —
+  the Phase 12 Web Voice I/O implementation design: bringing Phase 11's
+  voice mode to "viva room", the server-side-Piper-synthesis and
+  raw-PCM-AudioWorklet-capture decisions, the two new endpoints and why
+  no per-session backend state was needed for a per-session toggle, and
+  the `AnswerTimer` locking fix for the first genuinely cross-thread
+  `excluding()` call.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

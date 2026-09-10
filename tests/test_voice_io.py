@@ -24,8 +24,10 @@ downloading actual STT/TTS models during a routine `pytest` run.
 """
 from __future__ import annotations
 
+import io
 import subprocess
 import sys
+import wave
 
 import numpy as np
 import pytest
@@ -306,6 +308,61 @@ def test_piper_voice_is_loaded_once_and_cached(monkeypatch):
     vio.speak("Second question")
 
     assert load_calls == [("en_GB-alan-medium", "./cache")]
+
+
+# --- LocalVoiceIO.synthesize() (Phase 12, web voice I/O) ------------------
+
+
+def test_synthesize_returns_valid_wav_bytes(monkeypatch):
+    fake_voice = _FakePiperVoice()
+    monkeypatch.setattr(voice_io_module, "_load_piper_voice", lambda *a, **kw: fake_voice)
+
+    vio = LocalVoiceIO(stt_model_size="base", tts_voice="en_US-lessac-medium", cache_dir="./cache")
+    wav_bytes = vio.synthesize("What does this function do?")
+
+    assert fake_voice.synthesize_calls == ["What does this function do?"]
+    assert wav_bytes[:4] == b"RIFF"
+    assert wav_bytes[8:12] == b"WAVE"
+    # A real `wave` reader should round-trip back to the exact PCM and
+    # sample rate Piper produced -- the whole point of using the WAV
+    # container is that a browser's <audio> element needs no separate
+    # decode step to play this.
+    with wave.open(io.BytesIO(wav_bytes)) as reader:
+        assert reader.getframerate() == 22050
+        assert reader.getnchannels() == 1
+        assert reader.getsampwidth() == 2
+        assert reader.readframes(reader.getnframes()) == b"\x01\x00\x02\x00"
+
+
+def test_synthesize_returns_empty_bytes_for_blank_text(monkeypatch):
+    load_calls = []
+    monkeypatch.setattr(
+        voice_io_module, "_load_piper_voice", lambda *a, **kw: load_calls.append(1) or _FakePiperVoice()
+    )
+
+    vio = LocalVoiceIO(stt_model_size="base", tts_voice="en_US-lessac-medium", cache_dir="./cache")
+    assert vio.synthesize("   ") == b""
+    assert load_calls == []
+
+
+def test_synthesize_and_speak_share_the_same_loaded_voice(monkeypatch):
+    """synthesize() and speak() must not each load their own Piper voice
+    -- they're two output formats for the same underlying call
+    (_synthesize_pcm(), design doc §17.3), not two separate features."""
+    load_calls = []
+
+    def _fake_load(voice_id, cache_dir):
+        load_calls.append((voice_id, cache_dir))
+        return _FakePiperVoice()
+
+    monkeypatch.setattr(voice_io_module, "_load_piper_voice", _fake_load)
+    monkeypatch.setattr(voice_io_module, "_play_pcm", lambda pcm, sample_rate: None)
+
+    vio = LocalVoiceIO(stt_model_size="base", tts_voice="en_US-lessac-medium", cache_dir="./cache")
+    vio.speak("Spoken through the CLI")
+    vio.synthesize("Synthesized for the browser")
+
+    assert load_calls == [("en_US-lessac-medium", "./cache")]
 
 
 # --- _record_pcm's energy-based silence cutoff, against a fake sounddevice

@@ -108,6 +108,38 @@ Each phase is independently testable and produces a working, demoable slice.
   cleanup` all reachable from the UI, validated against a real local
   Ollama instance — not just `TestClient`-mocked coverage.
 
+## Phase 11 — Voice I/O (CLI)
+- Speak questions aloud (Piper) and answer by talking instead of typing
+  (faster-whisper), entirely local, CLI only. Opt-in via
+  `VOICE_ENABLED=true`; `viva voice setup` pre-pulls both models so a
+  live session never stalls on a first-run download.
+- Design doc: `docs/system-design/16-phase-11-voice-io-design.md`. Key
+  decision: recording time counts as answering time (same as typing),
+  only STT/TTS *compute* is excluded from the answer clock
+  (`timer.excluding()`) — the new `VoiceIO` component's `record()`/
+  `transcribe()` split is what makes that distinction possible at the
+  call site.
+- **Exit criteria:** a full timed voice-mode viva run validated against
+  real microphone/speaker hardware, not just mocked unit coverage —
+  several real-world bugs (an incompatible-GPU crash, a missing
+  countdown, transcription accuracy) were only found this way and are
+  logged in the design doc's §16.9.
+
+## Phase 12 — Web Voice I/O
+- Brings Phase 11's voice mode to `viva serve` ("viva room"): spoken
+  questions and spoken answers in the browser, using the same
+  `LocalVoiceIO` engine. Per-session toggle — each browser tab opts in
+  independently, with no new session state on the backend.
+- Design doc: `docs/system-design/17-phase-12-web-voice-io-design.md`.
+  Key decisions: server-side Piper synthesis served as WAV (not
+  browser-native `speechSynthesis`, for voice-quality consistency with
+  the CLI) and raw-PCM capture via `AudioWorklet` (not `MediaRecorder`,
+  to avoid a new server-side audio-decode dependency).
+- **Exit criteria:** a full timed voice-mode viva run through a real
+  browser end-to-end (spoken question → recorded answer → transcribed
+  → graded), validated against a real microphone, not just
+  `TestClient`-mocked endpoint coverage.
+
 ## Cross-Cutting: Testing
 - A small fixture set of real "golden repos" (a few small, varied-language
   repos) is checked into the test suite from Phase 2 onward and reused
