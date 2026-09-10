@@ -592,9 +592,17 @@ def test_static_assets_referenced_by_index_html_are_served(mocker, tmp_path):
 
     css = client.get("/static/style.css")
     js = client.get("/static/app.js")
+    # voice-worklet.js (Phase 12) is fetched dynamically by app.js via
+    # audioContext.audioWorklet.addModule(), not referenced from
+    # index.html directly -- covered by the same StaticFiles mount, but
+    # worth its own assertion since a 404 here would only ever surface
+    # at runtime inside a browser's voice-recording attempt, not on page
+    # load.
+    worklet = client.get("/static/voice-worklet.js")
 
     assert css.status_code == 200
     assert js.status_code == 200
+    assert worklet.status_code == 200
 
 
 def test_favicon_served_at_root_favicon_ico(mocker, tmp_path):

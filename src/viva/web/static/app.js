@@ -28,6 +28,46 @@
   // through it as if the person were still being timed.
   let currentStage = null;
 
+  // -- Voice (Phase 12, docs/system-design/17-phase-12-web-voice-io-design.md)
+  // Per-session toggle: purely client-side state (\u00a717.2) -- the backend
+  // never learns whether a given browser session wants voice, it just
+  // offers the endpoints below whenever the server has voice enabled at
+  // all. voiceEnabledForSession is read from the start form's checkbox
+  // once, when a session begins, and used for that browser tab only.
+  let voiceServerAvailable = false;
+  let voiceMaxAnswerSeconds = 120;
+  let voiceSilenceTimeoutSeconds = 2.5;
+  let voiceEnabledForSession = false;
+  let lastSpokenQuestionNumber = null;
+  let recordingState = null; // non-null exactly while a recording is in progress
+
+  function voiceClientCapable() {
+    // AudioWorklet requires a secure context (HTTPS or localhost) in
+    // every modern browser (design doc \u00a717.7) -- binding `viva serve`
+    // to a LAN address over plain HTTP will fail this even when the
+    // server itself has voice enabled.
+    return !!(
+      window.isSecureContext &&
+      window.AudioContext &&
+      window.OfflineAudioContext &&
+      navigator.mediaDevices &&
+      navigator.mediaDevices.getUserMedia
+    );
+  }
+
+  async function checkVoiceAvailable() {
+    try {
+      const result = await api("/api/voice/available");
+      voiceServerAvailable = !!result.available;
+      if (result.max_answer_seconds) voiceMaxAnswerSeconds = result.max_answer_seconds;
+      if (result.silence_timeout_seconds) voiceSilenceTimeoutSeconds = result.silence_timeout_seconds;
+    } catch {
+      voiceServerAvailable = false;
+    }
+    document.getElementById("start-voice-enabled-row").hidden =
+      !(voiceServerAvailable && voiceClientCapable());
+  }
+
   function showView(name) {
     for (const [key, el] of Object.entries(views)) {
       el.hidden = key !== name;
@@ -119,6 +159,9 @@
     const durationRaw = document.getElementById("start-duration").value;
     const duration = durationRaw ? Number(durationRaw) : null;
     const sessionName = document.getElementById("start-session-name").value.trim() || null;
+    voiceEnabledForSession =
+      document.getElementById("start-voice-enabled").checked &&
+      voiceServerAvailable && voiceClientCapable();
 
     try {
       const result = await api("/api/sessions", {
@@ -184,6 +227,9 @@
     document.getElementById("live-answer").value = "";
     lastRemaining = null;
     currentStage = null;
+    lastSpokenQuestionNumber = null;
+    document.getElementById("live-voice-controls").hidden = !voiceEnabledForSession;
+    document.getElementById("live-voice-status").textContent = "";
     showView("live");
     stopPolling();
     pollTimer = setInterval(pollState, POLL_INTERVAL_MS);
@@ -257,6 +303,14 @@
       document.getElementById("live-category").textContent = state.category || "";
       document.getElementById("live-question-number").textContent = state.question_number ?? "";
       document.getElementById("live-question-text").textContent = state.question_text || "";
+      if (
+        voiceEnabledForSession &&
+        state.question_number != null &&
+        state.question_number !== lastSpokenQuestionNumber
+      ) {
+        lastSpokenQuestionNumber = state.question_number;
+        playQuestionAudio();
+      }
     } else {
       questionBlock.hidden = true;
     }
@@ -271,6 +325,188 @@
       stopPolling();
     }
   }
+
+  // -- Voice: question playback (Phase 12) ------------------------------------
+
+  async function playQuestionAudio() {
+    if (!liveSessionId) return;
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(liveSessionId)}/question-audio`,
+      );
+      if (!response.ok) return; // 409/503 -- question text is already on screen either way
+      const blob = await response.blob();
+      const audioEl = document.getElementById("live-question-audio");
+      audioEl.src = URL.createObjectURL(blob);
+      // Autoplay can be blocked by the browser until the person has
+      // interacted with the page at least once -- not fatal, the
+      // question text is already visible regardless.
+      await audioEl.play().catch(() => {});
+    } catch {
+      /* best-effort; question text is already visible */
+    }
+  }
+
+  // -- Voice: recording an answer (Phase 12) -----------------------------------
+  // Mirrors the CLI's own energy-based silence cutoff (docs/system-design/
+  // 16-phase-11-voice-io-design.md \u00a716.3) against ~0.1s PCM blocks the
+  // AudioWorklet posts (static/voice-worklet.js), rather than inventing a
+  // second cutoff behavior for the same feature.
+
+  const SILENCE_RMS_THRESHOLD = 0.015; // float32 [-1,1] scale; ~500/32768, the CLI's int16 threshold
+
+  function computeRms(float32Block) {
+    let sumSquares = 0;
+    for (let i = 0; i < float32Block.length; i += 1) {
+      sumSquares += float32Block[i] * float32Block[i];
+    }
+    return Math.sqrt(sumSquares / float32Block.length);
+  }
+
+  function mergeFloat32Chunks(chunks) {
+    const total = chunks.reduce((sum, c) => sum + c.length, 0);
+    const merged = new Float32Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return merged;
+  }
+
+  // Resamples to 16kHz (what faster-whisper expects) and converts to
+  // int16 PCM via OfflineAudioContext -- the standard way to resample
+  // client-side without a JS DSP library (design doc \u00a717.6).
+  async function resampleTo16kInt16(float32Samples, nativeRate) {
+    const targetRate = 16000;
+    const targetLength = Math.ceil((float32Samples.length * targetRate) / nativeRate);
+    const offlineCtx = new OfflineAudioContext(1, targetLength, targetRate);
+    const buffer = offlineCtx.createBuffer(1, float32Samples.length, nativeRate);
+    buffer.copyToChannel(float32Samples, 0);
+    const source = offlineCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(offlineCtx.destination);
+    source.start();
+    const rendered = await offlineCtx.startRendering();
+    const resampled = rendered.getChannelData(0);
+    const int16 = new Int16Array(resampled.length);
+    for (let i = 0; i < resampled.length; i += 1) {
+      const s = Math.max(-1, Math.min(1, resampled[i]));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return int16;
+  }
+
+  async function startRecording() {
+    if (recordingState || !liveSessionId) return;
+    clearError();
+    const statusEl = document.getElementById("live-voice-status");
+    const recordBtn = document.getElementById("live-record-btn");
+
+    let stream;
+    let audioContext;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        // Explicit mono, matching the CLI's own capture format, rather
+        // than relying on the worklet silently reading only channel 0
+        // of what could otherwise be a stereo stream. echoCancellation/
+        // noiseSuppression are free quality wins most browsers already
+        // support for exactly this use case.
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+      audioContext = new AudioContext();
+      await audioContext.audioWorklet.addModule("/static/voice-worklet.js");
+    } catch (err) {
+      statusEl.textContent = `Couldn't access the microphone: ${err.message}`;
+      return;
+    }
+
+    const source = audioContext.createMediaStreamSource(stream);
+    const workletNode = new AudioWorkletNode(audioContext, "voice-capture-processor");
+    const chunks = [];
+    let speechDetected = false;
+    let silenceBlocks = 0;
+    let blockCount = 0;
+    const blockSeconds = 0.1;
+    const silenceBlockThreshold = Math.round(voiceSilenceTimeoutSeconds / blockSeconds);
+    const maxBlocks = Math.round(voiceMaxAnswerSeconds / blockSeconds);
+
+    recordingState = { stopped: false, finish: null };
+    recordBtn.textContent = "Stop recording";
+    statusEl.textContent = "\ud83c\udfa4 Recording... speak your answer.";
+
+    const finishRecording = async () => {
+      if (!recordingState || recordingState.stopped) return;
+      recordingState.stopped = true;
+      workletNode.port.onmessage = null;
+      workletNode.disconnect();
+      source.disconnect();
+      stream.getTracks().forEach((track) => track.stop());
+      const nativeRate = audioContext.sampleRate;
+      await audioContext.close();
+      recordingState = null;
+      recordBtn.textContent = "Record answer";
+
+      if (!speechDetected || chunks.length === 0) {
+        statusEl.textContent = "No speech detected -- try again, or type your answer below.";
+        return;
+      }
+
+      statusEl.textContent = "Transcribing...";
+      try {
+        const merged = mergeFloat32Chunks(chunks);
+        const pcm16 = await resampleTo16kInt16(merged, nativeRate);
+        const result = await api(
+          `/api/sessions/${encodeURIComponent(liveSessionId)}/answer-audio`,
+          { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: pcm16.buffer },
+        );
+        statusEl.textContent = `\u2713 Answer transcribed: ${result.text}`;
+        document.getElementById("live-question-block").hidden = true;
+        pollState();
+      } catch (err) {
+        // 422 (no speech) or 503 (voice unavailable) both land here --
+        // either way, the typed textarea underneath is still right
+        // there as a fallback, same as the CLI's own per-question
+        // fallback (§16.6), just without a background thread to fall
+        // through to it automatically.
+        statusEl.textContent = `Couldn't transcribe (${err.message}) -- try again, or type your answer below.`;
+      }
+    };
+    recordingState.finish = finishRecording;
+
+    workletNode.port.onmessage = (event) => {
+      const block = event.data;
+      blockCount += 1;
+      const rms = computeRms(block);
+      if (rms >= SILENCE_RMS_THRESHOLD) {
+        speechDetected = true;
+        silenceBlocks = 0;
+        chunks.push(block);
+      } else if (speechDetected) {
+        silenceBlocks += 1;
+        chunks.push(block);
+        if (silenceBlocks >= silenceBlockThreshold) {
+          finishRecording();
+          return;
+        }
+      }
+      // Leading silence before speech is first detected isn't buffered
+      // at all -- matches the CLI's own record() behavior.
+      if (blockCount >= maxBlocks) {
+        finishRecording();
+      }
+    };
+
+    source.connect(workletNode);
+  }
+
+  document.getElementById("live-record-btn").addEventListener("click", () => {
+    if (recordingState) {
+      if (recordingState.finish) recordingState.finish();
+    } else {
+      startRecording();
+    }
+  });
 
   document.getElementById("live-submit").addEventListener("click", async () => {
     const textarea = document.getElementById("live-answer");
@@ -292,6 +528,7 @@
 
   document.getElementById("live-back").addEventListener("click", () => {
     stopPolling();
+    if (recordingState && recordingState.finish) recordingState.finish();
     liveSessionId = null;
     showView("start");
     refreshSessions();
@@ -328,4 +565,5 @@
   // -- init -------------------------------------------------------------------
 
   refreshSessions();
+  checkVoiceAvailable();
 })();
