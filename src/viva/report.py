@@ -336,6 +336,16 @@ def render_html(report: Report) -> str:
     title = _esc(report.repo_slug or report.session_id)
     parts: list[str] = [f"<article><h1>Viva Report — {title}</h1>"]
 
+    # Wrapped in <aside>/<div> (rather than left as flat <article>
+    # children) so the web UI's CSS can lay this out as an independent-
+    # height sidebar next to the report body -- plain CSS Grid
+    # auto-placement on a flat sibling list locks every row's height to
+    # the tallest item across *both* columns, which stretches a short
+    # metadata block to match whatever the longest strengths/weaknesses
+    # section happens to be. Two real containers side-step that
+    # entirely; this costs nothing for `render_markdown`/`render_json`,
+    # which don't go through this function at all.
+    parts.append('<aside class="report-meta-rail">')
     parts.append('<dl class="report-meta">')
     parts.append(f"<dt>Session</dt><dd>{_esc(report.session_id)}</dd>")
     parts.append(f"<dt>Commit</dt><dd>{_esc(report.commit_sha or '(unknown)')}</dd>")
@@ -351,7 +361,9 @@ def render_html(report: Report) -> str:
         parts.append('<ul class="report-coverage-notes">')
         parts.extend(f"<li>{_esc(note)}</li>" for note in report.coverage_notes)
         parts.append("</ul>")
+    parts.append("</aside>")
 
+    parts.append('<div class="report-content">')
     parts.append(_render_html_section("Strengths", report.strengths))
     parts.append(_render_html_section("Weaknesses", report.weaknesses))
     parts.append(_render_html_section("Topics to Revisit", report.topics_to_revisit))
@@ -372,5 +384,5 @@ def render_html(report: Report) -> str:
         )
     parts.append("</tbody></table></section>")
 
-    parts.append("</article>")
+    parts.append("</div></article>")
     return "".join(parts)

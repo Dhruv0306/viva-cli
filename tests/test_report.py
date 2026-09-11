@@ -379,6 +379,36 @@ def test_render_html_includes_header_and_sections():
     assert "<html" not in rendered.lower()
 
 
+def test_render_html_wraps_meta_and_content_for_a_two_column_layout():
+    # Regression test: session metadata and the actual report body must
+    # sit in separate wrapper elements (<aside class="report-meta-rail">
+    # / <div class="report-content">), not as flat <article> siblings --
+    # viva room's CSS lays these out as independent-height grid columns
+    # (docs/system-design/15-phase-10-web-ui-design.md's redesign
+    # write-up), and plain CSS Grid auto-placement on a flat sibling
+    # list would lock every row's height to the tallest item across
+    # both columns, stretching the short metadata block to match
+    # whatever the longest strengths/weaknesses section happens to be.
+    session = _session()
+    qa_records = [_qa("q1", "rag", "answered", _record("correct", did_well=["Good grasp of chunking."]))]
+    report = ReportBuilder().build(session, qa_records)
+
+    rendered = render_html(report)
+
+    meta_start = rendered.index('<aside class="report-meta-rail">')
+    meta_end = rendered.index("</aside>")
+    content_start = rendered.index('<div class="report-content">')
+    content_end = rendered.rindex("</div>")
+
+    assert meta_start < meta_end < content_start < content_end
+    meta_html = rendered[meta_start:meta_end]
+    content_html = rendered[content_start:content_end]
+    assert 'class="report-meta"' in meta_html
+    assert "<h2>Strengths</h2>" not in meta_html
+    assert "<h2>Strengths</h2>" in content_html
+    assert 'class="report-meta"' not in content_html
+
+
 def test_render_html_escapes_llm_derived_text():
     # Regression test: every string in a Report can originate from LLM
     # output grounded in the analyzed repo's own content -- a repo

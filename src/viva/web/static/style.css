@@ -87,6 +87,16 @@ main {
   padding: 1.75rem 1.5rem 3rem;
 }
 
+/* The report is dense, tabular, metadata-heavy content -- the 760px
+   reading column that suits a form or a spoken question leaves most
+   of an ordinary monitor empty for no reason once a report is what's
+   on screen. Widening only while #view-report is the visible one
+   (rather than raising the shared default) keeps the start/live
+   views at the narrower measure that actually suits them. */
+main:has(#view-report:not([hidden])) {
+  max-width: 1220px;
+}
+
 .stack { display: flex; flex-direction: column; gap: 1.5rem; }
 
 .panel {
@@ -288,10 +298,55 @@ table.ledger tbody tr:hover { background: var(--surface-raised); }
   overflow: auto;
 }
 
+/* The report used to sit inside that same boxed, internally-scrolling
+   pane -- appropriate for `#cleanup-result`'s raw text dump, wrong for
+   a report: it's the page at this point, not output trapped in a
+   small window within a small centered card. Let it flow with normal
+   page scroll instead. */
+.result.report {
+  max-height: none;
+  overflow: visible;
+  background: transparent;
+  border: none;
+  padding: 0;
+  white-space: normal;
+  font-size: inherit;
+}
+
+#view-report .panel { padding: 1.9rem 2.4rem; }
+
+/* Sidebar (session metadata + coverage notes) alongside the report
+   body, rather than one long stack -- the freed-up width from
+   `main:has(#view-report ...)` above goes toward real structure, not
+   just a wider column of centered prose. `render_html()` wraps the
+   metadata/notes in <aside class="report-meta-rail"> and the actual
+   report content in <div class="report-content"> specifically so each
+   one is an independent grid item with its own content height --
+   placing flat sibling elements directly into grid columns instead
+   would lock every row's height to the tallest item across *both*
+   columns, stretching the short metadata block to match whichever
+   strengths/weaknesses section happens to be long. */
+.report article {
+  display: grid;
+  grid-template-columns: minmax(200px, 250px) minmax(0, 1fr);
+  column-gap: 2.75rem;
+  align-items: start;
+}
+.report article > h1 { grid-column: 1 / -1; }
+
+.report-meta-rail {
+  grid-column: 1;
+  position: sticky;
+  top: 1.5rem;
+}
+.report-meta-rail .report-coverage-notes { margin-top: 1rem; }
+
+.report-content { grid-column: 2; min-width: 0; }
+
 .report h1 {
   font-family: var(--font-mono);
   font-size: 1.05rem;
-  margin: 0 0 1rem;
+  margin: 0 0 1.5rem;
   color: var(--text);
 }
 .report h2 {
@@ -306,15 +361,15 @@ table.ledger tbody tr:hover { background: var(--surface-raised); }
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 0.2rem 0.75rem;
-  margin: 0 0 1rem;
+  margin: 0;
   font-size: 0.85rem;
 }
 .report dl.report-meta dt { color: var(--text-dim); }
-.report dl.report-meta dd { margin: 0; font-family: var(--font-mono); }
+.report dl.report-meta dd { margin: 0; font-family: var(--font-mono); word-break: break-word; }
 .report ul { margin: 0; padding-left: 1.2rem; }
 .report li { margin: 0.3rem 0; }
 .report .report-empty { color: var(--text-dim); font-style: italic; margin: 0; }
-.report .report-coverage-notes { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 1rem; }
+.report .report-coverage-notes { color: var(--text-dim); font-size: 0.85rem; padding-left: 1.2rem; }
 .report table {
   width: 100%;
   border-collapse: collapse;
@@ -331,6 +386,17 @@ table.ledger tbody tr:hover { background: var(--surface-raised); }
 .report table tr.needs-review td:nth-child(2) { color: var(--danger); }
 
 .report-actions { display: flex; gap: 0.6rem; }
+
+/* Below this, the sidebar's sticky positioning and the two-column
+   split stop paying for themselves -- a short metadata rail next to a
+   much taller content column just leaves dead space beneath it once
+   the viewport is too narrow for both to sit comfortably side by
+   side. Single column, normal flow, matches every other view's
+   mobile behavior. */
+@media (max-width: 900px) {
+  .report article { display: block; }
+  .report-meta-rail { position: static; }
+}
 
 /* -- Misc ---------------------------------------------------------------------- */
 
