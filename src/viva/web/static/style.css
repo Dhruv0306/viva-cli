@@ -189,16 +189,27 @@ button, a.btn {
   font-weight: 600;
   font-size: 0.88rem;
   cursor: pointer;
-  transition: background-color 120ms ease;
+  transition: background-color 120ms ease, border-color 120ms ease,
+    transform 100ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 button:hover, a.btn:hover { background: var(--accent-hover); }
+button:active, a.btn:active { transform: scale(0.97); }
 button.secondary, a.btn.secondary {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-weight: 500;
+  /* Same amber as the primary action, outlined rather than filled at
+     rest -- keeps every button reading as "part of this theme" while
+     the fill-vs-outline difference still tells primary and secondary
+     actions apart (the timer/`.panel-live` accent stays the only
+     *solid* amber moment outside a primary button). */
+  background: var(--surface-raised);
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-weight: 600;
 }
-button.secondary:hover, a.btn.secondary:hover { background: var(--surface-raised); }
+button.secondary:hover, a.btn.secondary:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1305;
+}
 
 /* -- Sessions ledger --------------------------------------------------------- */
 
