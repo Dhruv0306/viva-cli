@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viva-cli"
-version = "0.0.1"
+version = "0.1.0"
 description = "A local-LLM RAG tool that conducts a timed, code-grounded viva on a GitHub project."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -50,6 +50,18 @@ viva = "viva.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Real bug found while setting up the release workflow: without this,
+# `python -m build`'s wheel silently drops src/viva/web/static/* (index.html,
+# style.css, app.js, voice-worklet.js, favicon.svg) entirely -- setuptools
+# only bundles importable .py files by default. `pip install -e .` (every
+# dev/CI install so far) reads straight from the source tree regardless,
+# so this was invisible until a real installed wheel was actually tested:
+# `viva serve` would 404 every static asset for anyone installing this
+# package for real, e.g. from a GitHub release or PyPI. Verified fixed by
+# building a wheel and confirming static/ is present after a clean install.
+"viva.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

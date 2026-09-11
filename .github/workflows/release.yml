@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for an existing release on this tag
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # gh release view exits non-zero if no release exists for the tag.
+          # This is the "only on the first release of the tag" guard: if a
+          # release is already published here (e.g. this workflow already
+          # ran, or someone re-pushed the same tag), skip and do nothing
+          # rather than overwrite it.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.existing.outputs.exists == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Run the test suite before releasing
+        # Not part of the reference workflow this was adapted from --
+        # added deliberately. tests.yml already gates every push/PR, so
+        # by the time a commit on main gets tagged it's almost certainly
+        # already green; this is cheap insurance against tagging the
+        # wrong commit or a bypassed check, not a substitute for tests.yml.
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          pip install -e ".[dev]"
+          pytest -q
+
+      - name: Build sdist and wheel
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          pip install build
+          python -m build
+
+      - name: Verify static web assets made it into the wheel
+        # Regression guard for a real bug found setting up this workflow:
+        # without an explicit [tool.setuptools.package-data] entry,
+        # setuptools silently drops src/viva/web/static/* from the built
+        # wheel (it only bundles importable .py files by default), which
+        # would make `viva serve` unusable for anyone installing this
+        # package for real -- invisible in normal dev/CI, since
+        # `pip install -e .` reads straight from the source tree and
+        # never exercises this path. Fails the release loudly instead of
+        # shipping a broken artifact silently.
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          WHEEL=$(ls dist/*.whl)
+          LISTING=$(python -m zipfile -l "$WHEEL")
+          for f in index.html style.css app.js voice-worklet.js favicon.svg; do
+            if ! echo "$LISTING" | grep -q "viva/web/static/$f"; then
+              echo "Missing viva/web/static/$f from $WHEEL -- viva serve would be broken." >&2
+              exit 1
+            fi
+          done
+
+      - name: Extract CHANGELOG section for this version
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Strip the leading "v" (v0.1.0 -> 0.1.0) to match the
+          # "## [0.1.0]" heading style used in CHANGELOG.md.
+          VERSION="${TAG#v}"
+          awk -v version="$VERSION" '
+            BEGIN { found = 0 }
+            $0 ~ "^## \\[" version "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG.md section found for version $VERSION" >&2
+            echo "Add a \"## [$VERSION]\" heading to CHANGELOG.md before tagging." >&2
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            dist/*.whl \
+            dist/*.tar.gz

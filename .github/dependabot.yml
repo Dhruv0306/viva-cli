@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Runtime and dev/voice dependencies declared in pyproject.toml.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      # One combined PR for routine patch/minor bumps instead of a
+      # separate PR per package -- most of this project's version
+      # pins are already conservative (see the compatible-release
+      # ranges throughout pyproject.toml's dependencies), so grouping
+      # keeps the noise down without hiding anything major.
+      routine:
+        update-types: ["patch", "minor"]
+
+  # actions/checkout, actions/setup-python, etc. in .github/workflows/*.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
