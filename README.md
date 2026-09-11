@@ -155,12 +155,12 @@ sessions have it on.
 <table>
 <tr>
 <td width="50%">
-<img src="docs/screenshots/start-and-sessions.png" alt="Viva Room: start a viva form and the sessions ledger" />
-<br /><sub>Start a viva, and the sessions ledger</sub>
+<img src="docs/screenshots/start-and-sessions.png" alt="Viva Room: start a viva form with voice mode enabled, and the sessions ledger" />
+<br /><sub>Start a viva, with voice mode enabled, and the sessions ledger</sub>
 </td>
 <td width="50%">
-<img src="docs/screenshots/live-question.png" alt="Viva Room: a live question with the countdown timer" />
-<br /><sub>Live Q&amp;A, with the countdown timer</sub>
+<img src="docs/screenshots/live-question.png" alt="Viva Room: a live question with the countdown timer, recorded and transcribed for review" />
+<br /><sub>Live Q&amp;A -- a spoken answer, transcribed and ready to review before submitting</sub>
 </td>
 </tr>
 <tr>
