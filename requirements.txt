@@ -9,7 +9,7 @@ tree-sitter-language-pack>=0.7,<2.0
 chromadb>=0.5,<2.0
 
 # dev/test
-pytest>=8.0,<9.0
+pytest>=8.0,<10.0
 pytest-mock>=3.14,<4.0
 
 # voice (Phase 11, docs/system-design/16-phase-11-voice-io-design.md) --
