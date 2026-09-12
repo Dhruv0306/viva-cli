@@ -34,7 +34,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS qa_records (
     category TEXT NOT NULL,
     target_module TEXT,
     target_file TEXT,
+    architecture_topic TEXT,
     is_followup_of TEXT,
     question_text TEXT,
     grounding_chunk_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -100,4 +101,21 @@ def connect(db_path: str) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(_DDL)
+    _ensure_column(conn, "qa_records", "architecture_topic", "TEXT")
     conn.commit()
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, coltype: str) -> None:
+    """Additive migration for a DB created before this column existed
+    (schema version bumped 1 -> 2 for `architecture_topic`, Phase 13,
+    docs/system-design/18-phase-13-architecture-tier-questions-design.md
+    §18.2). `CREATE TABLE IF NOT EXISTS` above is a no-op against an
+    existing on-disk DB, so a fresh column needs an explicit `ALTER
+    TABLE` -- SQLite has no `ADD COLUMN IF NOT EXISTS`, so check
+    `PRAGMA table_info` first rather than relying on catching the
+    "duplicate column" error, which would mask a genuinely different
+    failure just as easily.
+    """
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")

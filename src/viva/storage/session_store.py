@@ -69,6 +69,7 @@ class QARecordRow:
     category: str
     target_module: str | None
     target_file: str | None
+    architecture_topic: str | None
     is_followup_of: str | None
     question_text: str | None
     grounding_chunk_ids: list[str]
@@ -109,6 +110,7 @@ def _qa_from_row(row: sqlite3.Row) -> QARecordRow:
         category=row["category"],
         target_module=row["target_module"],
         target_file=row["target_file"],
+        architecture_topic=row["architecture_topic"],
         is_followup_of=row["is_followup_of"],
         question_text=row["question_text"],
         grounding_chunk_ids=json.loads(row["grounding_chunk_ids_json"]),
@@ -260,6 +262,7 @@ class SessionStore:
                 item.category,
                 item.target_module,
                 item.target_file,
+                item.architecture_topic,
                 item.is_followup_of,
             )
             for item in plan_items
@@ -267,8 +270,9 @@ class SessionStore:
         with self._lock:
             self._conn.executemany(
                 "INSERT OR IGNORE INTO qa_records "
-                "(session_id, question_id, category, target_module, target_file, is_followup_of) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(session_id, question_id, category, target_module, target_file, "
+                "architecture_topic, is_followup_of) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
             self._conn.commit()
