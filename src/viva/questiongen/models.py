@@ -49,12 +49,23 @@ class QuestionPlanItem:
     top-level items (`is_followup_of=None`) -- follow-up generation is a
     live-session concept this phase deliberately doesn't own (see
     `docs/system-design/10-phase-5-questiongen-design.md` §10.3).
+
+    `architecture_topic` (Phase 13, docs/system-design/
+    18-phase-13-architecture-tier-questions-design.md §18.2) narrows the
+    `architecture` category to one topic from `retrieval.py`'s
+    `_ARCHITECTURE_TOPICS` registry (e.g. "overview", "pipeline",
+    "security"). Invariant, documented rather than enforced (matching
+    this module's existing convention of trusting `QuestionCategory` as a
+    plain `Literal` by caller discipline, not runtime validation): set if
+    and only if `category == "architecture"`. `None` for every other
+    category.
     """
 
     id: str
     category: QuestionCategory
     target_module: str | None
     target_file: str | None = None
+    architecture_topic: str | None = None
     status: PlanItemStatus = "pending"
     is_followup_of: str | None = None
 
