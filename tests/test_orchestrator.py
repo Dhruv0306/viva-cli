@@ -379,6 +379,9 @@ def test_resume_continues_pending_items(tmp_path, monkeypatch):
     store.save_plan("sess1", [QuestionPlanItem(id="q1", category="architecture", target_module=None)])
     store.update_status("sess1", "IN_PROGRESS")
 
+    # Deliberately a single-item plan to test resume()'s own plumbing --
+    # not exercising Phase 13's replenishment (tested separately).
+    monkeypatch.setattr(orch, "_replenish_plan", lambda *a, **kw: False)
     orch.resume("sess1")
 
     record = store.get_session("sess1")
@@ -416,6 +419,9 @@ def test_resume_reasks_orphaned_unanswered_question(tmp_path, monkeypatch):
     # Simulate the crash: q1 was shown but never answered.
     store.record_question_asked("sess1", "q1", "What does this do?", ["chunk1"])
 
+    # Deliberately a single-item plan to test the orphan-requeue plumbing
+    # -- not exercising Phase 13's replenishment (tested separately).
+    monkeypatch.setattr(orch, "_replenish_plan", lambda *a, **kw: False)
     orch.resume("sess1")
 
     record = {r.question_id: r for r in store.get_qa_records("sess1")}["q1"]
@@ -459,6 +465,9 @@ def test_resume_does_not_regenerate_orphaned_question(tmp_path, monkeypatch):
     store.update_status("sess1", "IN_PROGRESS")
     store.record_question_asked("sess1", "q1", "Pre-generated question text?", ["chunk1"])
 
+    # Deliberately a single-item plan to isolate the regenerate-vs-reuse
+    # check -- not exercising Phase 13's replenishment (tested separately).
+    monkeypatch.setattr(orch, "_replenish_plan", lambda *a, **kw: False)
     orch.resume("sess1")
 
     assert generate_calls == []  # never called -- reused the persisted text
@@ -643,6 +652,153 @@ def test_select_next_item_eventually_asks_repeat_category_when_nothing_novel_lef
 
     assert selected is not None
     assert selected.question_id == "q2"  # only option left -- must still be returned, not None
+
+
+def test_replenish_plan_extends_and_returns_true(tmp_path, monkeypatch):
+    """Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+    questions-design.md §18.5): build_coverage_plan() returning a longer
+    plan than what's already persisted means there's real new coverage
+    -- _replenish_plan() must persist it and report success."""
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview"),
+        QuestionPlanItem(id="q2", category="implementation_detail", target_module="core"),
+    ])
+
+    monkeypatch.setattr(
+        orchestrator_module, "build_coverage_plan",
+        lambda *a, **kw: [
+            QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview"),
+            QuestionPlanItem(id="q2", category="implementation_detail", target_module="core"),
+            QuestionPlanItem(id="q3", category="architecture", target_module=None, architecture_topic="security"),
+        ],
+    )
+
+    result = orch._replenish_plan("sess1", profile=object())
+
+    assert result is True
+    pending_ids = {p.question_id for p in store.get_pending_plan_items("sess1")}
+    assert "q3" in pending_ids
+
+
+def test_replenish_plan_returns_false_when_nothing_new(tmp_path, monkeypatch):
+    """A repo that's already fully covered -- build_coverage_plan()
+    returns no more than what's already persisted even with a higher
+    ceiling. Must report failure so the caller can end the session for
+    good, rather than retrying the same or a higher ceiling forever."""
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    existing_plan = [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview"),
+    ]
+    store.save_plan("sess1", existing_plan)
+
+    monkeypatch.setattr(orchestrator_module, "build_coverage_plan", lambda *a, **kw: existing_plan)
+
+    result = orch._replenish_plan("sess1", profile=object())
+
+    assert result is False
+
+
+def test_replenish_plan_does_not_duplicate_already_persisted_items(tmp_path, monkeypatch):
+    """save_plan()'s INSERT OR IGNORE (storage/session_store.py) is what
+    makes re-saving the whole rebuilt plan safe -- confirms it actually
+    behaves that way for a replenishment call specifically, not just for
+    the follow-up-item case it was originally written for."""
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    q1 = QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview")
+    store.save_plan("sess1", [q1])
+    store.record_question_asked("sess1", "q1", "Original question text?", ["chunk1"])
+
+    monkeypatch.setattr(
+        orchestrator_module, "build_coverage_plan",
+        lambda *a, **kw: [q1, QuestionPlanItem(id="q2", category="implementation_detail", target_module="core")],
+    )
+
+    orch._replenish_plan("sess1", profile=object())
+
+    records = store.get_qa_records("sess1")
+    assert len([r for r in records if r.question_id == "q1"]) == 1
+    assert {r.question_id for r in records} == {"q1", "q2"}
+    # q1's already-recorded question text must survive the re-save untouched.
+    assert next(r for r in records if r.question_id == "q1").question_text == "Original question text?"
+
+
+def test_live_session_replenishes_instead_of_ending_early(tmp_path, monkeypatch):
+    """End-to-end: a plan that runs out before the timer does must not
+    end the session at QUESTIONS_EXHAUSTED -- it should ask more
+    questions instead, as long as build_coverage_plan() keeps returning
+    genuinely new coverage."""
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch, plan=[QuestionPlanItem(id="q1", category="architecture", target_module=None)])
+    ui = FakeSessionUI(answers=["a1", "a2", "a3"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    call_count = {"n": 0}
+    original_build = orchestrator_module.build_coverage_plan
+
+    def growing_plan(*a, **kw):
+        call_count["n"] += 1
+        # Each replenishment adds one more item, up to 3 total, then the
+        # profile is "exhausted" -- growth must stop somewhere, or this
+        # test would hang forever chasing an ever-growing plan.
+        n = min(call_count["n"], 3)
+        return [
+            QuestionPlanItem(id=f"q{i}", category="architecture", target_module=None, architecture_topic=f"topic{i}")
+            for i in range(1, n + 1)
+        ]
+
+    monkeypatch.setattr(orchestrator_module, "build_coverage_plan", growing_plan)
+
+    session_id = orch.start("https://github.com/owner/repo", branch="main", duration_minutes=30)
+
+    record = store.get_session(session_id)
+    assert record.status == "COMPLETE"
+    assert ui.summary.questions_answered == 3  # grew past the original single-item plan
+
+
+def test_live_session_ends_exhausted_when_replenishment_finds_nothing(tmp_path, monkeypatch):
+    """The termination guard: once a replenishment attempt returns no
+    new coverage, the session must end at QUESTIONS_EXHAUSTED rather
+    than retrying forever for the rest of the timer. (The persisted
+    final status is always COMPLETE by the time _run_live_session
+    returns -- FINALIZING_EVALS/SUMMARIZING/COMPLETE run unconditionally
+    after the loop breaks -- so this spies on the intermediate
+    update_status() calls to confirm which exit path was actually
+    taken, rather than asserting on the final status.)
+    """
+    config = _config(tmp_path, viva_duration_minutes=30)  # plenty of time left
+    fixed_plan = [QuestionPlanItem(id="q1", category="architecture", target_module=None)]
+    _patch_pipeline(monkeypatch, plan=fixed_plan)
+    ui = FakeSessionUI(answers=["a1"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    statuses_seen = []
+    original_update_status = store.update_status
+
+    def spying_update_status(session_id, status):
+        statuses_seen.append(status)
+        original_update_status(session_id, status)
+
+    monkeypatch.setattr(store, "update_status", spying_update_status)
+
+    # build_coverage_plan always returns the same single item -- nothing
+    # new is ever available, so replenishment must give up after one try.
+    monkeypatch.setattr(orchestrator_module, "build_coverage_plan", lambda *a, **kw: fixed_plan)
+
+    orch.start("https://github.com/owner/repo", branch="main", duration_minutes=30)
+
+    assert "QUESTIONS_EXHAUSTED" in statuses_seen
+    assert "TIME_EXPIRED" not in statuses_seen
+    assert ui.summary.questions_answered == 1
 
 
 

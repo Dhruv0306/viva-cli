@@ -13,6 +13,7 @@ class plus a `SessionUI` (see `session_ui.py`).
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import uuid
 from pathlib import Path
@@ -73,6 +74,15 @@ def is_resumable(status: str) -> bool:
 # extra LLM/embedding cost (all excluded from the user's clock) small
 # rather than unbounded on a repo where duplication is pervasive.
 _MAX_DEDUP_CANDIDATES = 3
+
+# Phase 13 (docs/system-design/18-phase-13-architecture-tier-questions-
+# design.md §18.5): how much higher to raise the max_questions ceiling
+# on each replenishment attempt when the live loop's pending queue runs
+# dry before the timer expires. Arbitrary but bounded and re-tried as
+# many times as the loop keeps draining -- not meant to be tuned
+# precisely, just large enough that a fast answerer doesn't trigger a
+# replenishment call on almost every single question.
+_REPLENISH_INCREMENT = 6
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -306,6 +316,14 @@ class Orchestrator:
 
             pending = self.store.get_pending_plan_items(session_id)
             if not pending:
+                # Phase 13 (docs/system-design/18-phase-13-architecture-
+                # tier-questions-design.md §18.5): the timer hasn't
+                # expired (checked at the top of this iteration) but the
+                # plan is drained -- try to extend it before declaring
+                # the session over, rather than ending early with real
+                # time still on the clock.
+                if self._replenish_plan(session_id, profile):
+                    continue
                 self.store.update_status(session_id, "QUESTIONS_EXHAUSTED")
                 break
 
@@ -331,6 +349,7 @@ class Orchestrator:
                 plan_item = QuestionPlanItem(
                     id=candidate.question_id, category=candidate.category,
                     target_module=candidate.target_module, target_file=candidate.target_file,
+                    architecture_topic=candidate.architecture_topic,
                     is_followup_of=candidate.is_followup_of,
                 )
                 with timer.excluding():
@@ -417,6 +436,44 @@ class Orchestrator:
         self.store.update_status(session_id, "COMPLETE")
 
         self.ui.session_complete(self._build_summary(session_id))
+
+    def _replenish_plan(self, session_id: str, profile: ProjectProfile) -> bool:
+        """Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+        questions-design.md §18.5): called when `_run_live_session`'s
+        pending queue is empty but the timer hasn't expired -- FR29.
+
+        `build_coverage_plan()` is deterministic given `(profile,
+        max_questions)`, so raising the ceiling and calling it again
+        reproduces every already-persisted item identically, plus a
+        genuinely new tail. `save_plan()` already uses `INSERT OR
+        IGNORE` keyed on `(session_id, question_id)` (see
+        `storage/session_store.py`), so the whole rebuilt plan can just
+        be re-saved -- anything whose `question_id` already exists is
+        silently skipped, no manual diffing needed. (The design doc's
+        original write-up assumed a manual ID diff would be necessary;
+        `INSERT OR IGNORE` already covered it before this patch existed.)
+
+        Returns `True` if new coverage was actually added (the caller
+        loops back and re-fetches pending). Returns `False` if the
+        profile has genuinely run out of groundable modules/files/topics
+        -- `build_coverage_plan()` returned no more items than what's
+        already persisted even with a higher ceiling -- so the caller
+        can treat that as a true terminal `QUESTIONS_EXHAUSTED` rather
+        than retrying the same or a higher ceiling again in this
+        session (which would otherwise busy-loop on every empty-pending
+        check for the rest of the timer).
+        """
+        current_top_level = sum(
+            1 for r in self.store.get_qa_records(session_id) if r.is_followup_of is None
+        )
+        replenished_config = dataclasses.replace(
+            self.config, max_questions=current_top_level + _REPLENISH_INCREMENT
+        )
+        new_plan = build_coverage_plan(profile, replenished_config)
+        if len(new_plan) <= current_top_level:
+            return False
+        self.store.save_plan(session_id, new_plan)
+        return True
 
     def _finalize_stray_evals(self, session_id: str) -> None:
         """Defensive SUMMARIZING pass (docs/system-design/

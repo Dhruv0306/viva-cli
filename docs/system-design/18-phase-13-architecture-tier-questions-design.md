@@ -189,11 +189,13 @@ a higher `max_questions` ceiling instead of ending the session.
 — Pass 2's module round-robin and Pass 3's file-level fallback already
 know how to keep manufacturing more specific coverage rather than leaving
 slots idle, they just stop at a fixed ceiling today. Raising the ceiling
-and re-running produces a superset of the original plan; only the items
-beyond what's already been asked or is already pending get enqueued
-(matched by plan-item ID, since IDs are assigned deterministically in
-generation order — see §18.6 for why this needs a real diff, not a raw
-re-insert).
+and re-running produces a superset of the original plan; the whole
+rebuilt plan can simply be re-saved through `save_plan()`, whose
+`INSERT OR IGNORE` (keyed on `(session_id, question_id)`, already in
+place for the follow-up-item case) silently skips anything whose
+`question_id` already exists — this turned out to already solve the
+manual-ID-diffing problem this design doc originally assumed would be
+needed (see §18.6).
 
 Because phase is re-derived from category on every `_rank_pending_items`
 call (§18.4), a replenishment that adds fresh `architecture` items
@@ -238,12 +240,16 @@ document why, not just what.
   still reading `(False, False)`) jumps ahead of the second architecture
   item. The fix has to be the `phase` key in the ranking function itself
   (§18.4), not the plan's insertion order.
-- **Replenishment ID collision.** `build_coverage_plan()` assigns IDs
-  sequentially from `q_01` on every call. Calling it again with a higher
-  ceiling and inserting the *whole* returned list would re-generate the
-  same IDs for the first N items, colliding against rows already in
-  `SessionStore`. Replenishment must diff by ID and insert only the tail
-  beyond what's already persisted.
+- **Replenishment ID collision -- resolved for free.** The original
+  design worry: `build_coverage_plan()` assigns IDs sequentially from
+  `q_01` on every call, so calling it again with a higher ceiling and
+  inserting the *whole* returned list would re-generate the same IDs for
+  the first N items, risking a collision against rows already in
+  `SessionStore`. Turned out `save_plan()` already uses `INSERT OR
+  IGNORE` keyed on `(session_id, question_id)` (originally added for the
+  follow-up-item case), so re-saving the entire rebuilt plan is already
+  safe -- no manual diffing needed. Worth recording as a "checked, not
+  just assumed" note rather than silently dropping the concern.
 - **Replenishment busy-loop.** A repo that's already fully covered (every
   module, every file, every topic exhausted) would, without a stopping
   rule, get asked again on the very next empty-`pending` check with the
