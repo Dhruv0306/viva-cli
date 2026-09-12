@@ -9,6 +9,14 @@ for general use."
 
 ## [Unreleased]
 
+### Changed
+
+- Widened `rich` from `>=13.7,<14.0` to `>=13.7,<16.0` (Dependabot).
+- Widened `pytest` (dev extra) from `>=8.0,<9.0` to `>=8.0,<10.0`
+  (Dependabot).
+- Bumped `actions/checkout` from `v4` to `v7` and `actions/setup-python`
+  from `v5` to `v7` in `tests.yml` and `release.yml` (Dependabot).
+
 ## [0.1.0] - 2026-09-11
 
 First tagged release. Everything below shipped incrementally across
