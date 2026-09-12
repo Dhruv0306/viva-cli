@@ -75,9 +75,18 @@ needs to change. A topic that returns zero grounding chunks (e.g.
 
 `planner.py`'s Pass 1 changes from "one slot for `architecture`" to "one
 slot per architecture topic". A new pass (1.5, between the existing
-Pass 1 and Pass 2) round-robins *extra* slots across topics the same way
-Pass 2 already round-robins across modules, so a topic like `pipeline`
-can get more than one question when budget allows.
+Pass 1 and Pass 2) gives each topic **one additional** question before
+Pass 2 spends any budget on per-module categories — deliberately capped
+at one extra round rather than an unbounded round-robin. A topic has no
+natural exhaustion the way a `(category, module)` pair does (there's
+always another question you could ask about "pipeline"), so an uncapped
+loop here would consume the entire remaining budget on architecture
+alone and starve Pass 2/3 completely, which isn't what "prefer more
+architecture depth" was meant to produce. This surfaced during
+implementation, not during design review — recorded in §18.6 alongside
+the panel-review findings, same discipline either way. Revisit as a
+config knob (e.g. `ARCHITECTURE_EXTRA_ROUNDS`) if one extra question per
+topic proves too thin in practice.
 
 **Dedup key fix (found in panel review before implementation, not after
 — see §18.6):** `_add()`'s dedup key is `(category, target_module,
@@ -242,6 +251,15 @@ document why, not just what.
   loop. The fix is in §18.5's termination guarantee: a replenishment call
   returning zero new items ends the session for good, no retry at a
   higher ceiling in the same session.
+- **Unbounded architecture round-robin would starve everything else.**
+  An architecture topic has no natural "exhausted" signal the way a
+  `(category, module)` pair does (there's always another question you
+  could ask about "pipeline"), so a Pass 1.5 shaped exactly like Pass
+  2's round-robin — loop until nothing new can be added — would never
+  stop on its own and would consume 100% of any remaining budget before
+  Pass 2 got a single slot. Found while implementing, not during panel
+  review. Fixed by capping Pass 1.5 at exactly one extra question per
+  topic; documented as a future config knob if that turns out too thin.
 
 ## 18.7 What This Phase Does Not Change
 

@@ -5,11 +5,21 @@ from viva.config import Config
 from viva.ingest.models import ExclusionStats, SampledFile
 from viva.profile import ProjectProfile
 from viva.questiongen.planner import build_coverage_plan
+from viva.questiongen.retrieval import ARCHITECTURE_TOPICS
 
 _ALL_CATEGORIES = {
     "architecture", "implementation_detail", "tech_choice_rationale",
     "error_handling", "testing_strategy",
 }
+
+# Phase 13 baseline: one slot per architecture topic + one slot per each
+# of the other four categories (Pass 1), then one extra slot per
+# architecture topic (Pass 1.5) before Pass 2/3 get anything. Computed
+# from the real registry rather than hardcoded, so these tests don't
+# silently rot if a topic is added or removed later.
+_ARCH_TOPIC_COUNT = len(ARCHITECTURE_TOPICS)
+_BASELINE_SLOTS = _ARCH_TOPIC_COUNT + 4  # topics + the other 4 categories
+_WITH_ARCH_TOPUP_SLOTS = _BASELINE_SLOTS + _ARCH_TOPIC_COUNT  # + Pass 1.5
 
 
 def _config(max_questions: int = 8) -> Config:
@@ -48,40 +58,91 @@ def _profile(modules, sampled_files=None) -> ProjectProfile:
 
 
 def test_plan_covers_every_category_at_least_once():
+    # Needs enough budget to clear the architecture-topic baseline (Pass
+    # 1's per-topic slots) before the other four categories get theirs.
     profile = _profile([_Module("auth", 5), _Module("payments", 3)])
-    plan = build_coverage_plan(profile, _config(max_questions=5))
+    plan = build_coverage_plan(profile, _config(max_questions=_BASELINE_SLOTS))
 
     categories_seen = {item.category for item in plan}
     assert categories_seen == _ALL_CATEGORIES
 
 
-def test_architecture_item_has_no_target_module():
+def test_small_budget_prioritizes_architecture_topics_over_other_categories():
+    # With a budget smaller than the architecture-topic baseline, Pass 1
+    # spends every slot on architecture topics first -- the other four
+    # categories get nothing yet. This is the ordering-at-the-plan-level
+    # half of "architecture clears before implementation"; the other
+    # half (runtime ask order even when both are already planned) is
+    # orchestrator.py's phase-keyed ranking, not this function.
     profile = _profile([_Module("auth", 5)])
-    plan = build_coverage_plan(profile, _config(max_questions=5))
+    plan = build_coverage_plan(profile, _config(max_questions=min(3, _ARCH_TOPIC_COUNT)))
+
+    assert all(item.category == "architecture" for item in plan)
+
+
+def test_architecture_gets_one_item_per_topic():
+    profile = _profile([_Module("auth", 5)])
+    plan = build_coverage_plan(profile, _config(max_questions=_BASELINE_SLOTS))
 
     arch_items = [i for i in plan if i.category == "architecture"]
-    assert len(arch_items) == 1
-    assert arch_items[0].target_module is None
+    assert len(arch_items) == _ARCH_TOPIC_COUNT
+    assert {i.architecture_topic for i in arch_items} == set(ARCHITECTURE_TOPICS)
+    assert all(i.target_module is None for i in arch_items)
+
+
+def test_architecture_topics_get_a_second_question_when_budget_allows():
+    # Pass 1.5: one extra question per topic before Pass 2 starts
+    # spending budget on per-module categories.
+    profile = _profile([_Module("auth", 5)])
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS))
+
+    arch_items = [i for i in plan if i.category == "architecture"]
+    assert len(arch_items) == _ARCH_TOPIC_COUNT * 2
+    per_topic_counts = {topic: 0 for topic in ARCHITECTURE_TOPICS}
+    for item in arch_items:
+        per_topic_counts[item.architecture_topic] += 1
+    assert all(count == 2 for count in per_topic_counts.values())
+
+
+def test_architecture_extra_round_is_capped_at_one_not_unbounded():
+    # Pass 1.5 gives one extra question per topic, then stops -- it must
+    # not consume every remaining slot even when budget is generous,
+    # since that would starve Pass 2/3 of the module-scoped categories
+    # entirely.
+    profile = _profile([_Module("auth", 5), _Module("payments", 3)])
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 4))
+
+    arch_items = [i for i in plan if i.category == "architecture"]
+    assert len(arch_items) == _ARCH_TOPIC_COUNT * 2
+    assert len(plan) > len(arch_items)  # Pass 2 got some of the remaining budget
 
 
 def test_plan_never_exceeds_max_questions():
     profile = _profile([_Module("auth", 5), _Module("payments", 3), _Module("api", 2)])
-    plan = build_coverage_plan(profile, _config(max_questions=6))
+    plan = build_coverage_plan(profile, _config(max_questions=_BASELINE_SLOTS + 2))
 
-    assert len(plan) <= 6
+    assert len(plan) <= _BASELINE_SLOTS + 2
 
 
 def test_plan_never_duplicates_category_module_pairs():
+    # Non-architecture categories still can't duplicate a (category,
+    # module) pair -- architecture is deliberately exempt (see
+    # test_architecture_topics_get_a_second_question_when_budget_allows),
+    # so it's excluded from this check.
     profile = _profile([_Module("auth", 5), _Module("payments", 3)])
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 6))
 
-    keys = [(item.category, item.target_module) for item in plan]
+    keys = [
+        (item.category, item.target_module)
+        for item in plan
+        if item.category != "architecture"
+    ]
     assert len(keys) == len(set(keys))
 
 
 def test_bigger_modules_get_more_coverage_when_slots_remain():
     profile = _profile([_Module("auth", 50), _Module("tiny", 1)])
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 4))
 
     auth_count = sum(1 for i in plan if i.target_module == "auth")
     tiny_count = sum(1 for i in plan if i.target_module == "tiny")
@@ -91,11 +152,17 @@ def test_bigger_modules_get_more_coverage_when_slots_remain():
 def test_plan_shorter_than_max_questions_for_small_repo():
     # One module means every module-scoped category is exhausted after
     # one round -- the plan must not pad with duplicate pairs to reach
-    # max_questions.
+    # max_questions. Total is the architecture baseline+topup (fixed,
+    # topic-count-driven) plus one module-level item per per-module
+    # category (implementation_detail/tech_choice_rationale/
+    # error_handling already got their Pass-1 slot; testing_strategy
+    # also already got its Pass-1 slot) -- i.e. exactly the baseline +
+    # topup, nothing more, since there's no second module to round-robin
+    # onto and Pass 3 has no extra files to fall back to either.
     profile = _profile([_Module("only", 3)])
-    plan = build_coverage_plan(profile, _config(max_questions=20))
+    plan = build_coverage_plan(profile, _config(max_questions=200))
 
-    assert len(plan) == len(_ALL_CATEGORIES)
+    assert len(plan) == _WITH_ARCH_TOPUP_SLOTS
 
 
 def test_plan_with_no_modules_grounds_every_category_project_level():
@@ -103,9 +170,9 @@ def test_plan_with_no_modules_grounds_every_category_project_level():
     # falls back to target_module=None (project-level context) rather
     # than the planner failing or fabricating a module name.
     profile = _profile([])
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    plan = build_coverage_plan(profile, _config(max_questions=200))
 
-    assert len(plan) == len(_ALL_CATEGORIES)
+    assert len(plan) == _WITH_ARCH_TOPUP_SLOTS
     assert all(item.target_module is None for item in plan)
 
 
@@ -125,7 +192,7 @@ def test_non_source_modules_excluded_from_implementation_style_categories():
     profile = _profile([
         _Module("tests", 150), _Module("docs", 60), _Module("click", 25),
     ])
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 6))
 
     for item in plan:
         if item.category in ("implementation_detail", "tech_choice_rationale", "error_handling"):
@@ -140,7 +207,7 @@ def test_testing_strategy_targets_dedicated_test_module_even_when_not_largest():
     profile = _profile([
         _Module("click", 100), _Module("tests", 60), _Module("docs", 20),
     ])
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 6))
 
     testing_items = [i for i in plan if i.category == "testing_strategy"]
     assert len(testing_items) == 1
@@ -153,7 +220,7 @@ def test_testing_strategy_falls_back_to_source_module_without_dedicated_test_dir
     # than leaving testing_strategy ungrounded, relying on retrieval.py's
     # test-path preference to surface co-located test chunks within it.
     profile = _profile([_Module("app", 30), _Module("docs", 10)])
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 6))
 
     testing_items = [i for i in plan if i.category == "testing_strategy"]
     assert testing_items[0].target_module == "app"
@@ -165,7 +232,7 @@ def test_all_non_source_modules_falls_back_to_unfiltered_pool():
     # implementation-style categories with no target -- degrade to the
     # unfiltered module pool rather than producing an empty plan.
     profile = _profile([_Module("docs", 20), _Module("examples", 10)])
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 6))
 
     impl_items = [i for i in plan if i.category == "implementation_detail"]
     assert len(impl_items) >= 1
@@ -184,7 +251,7 @@ def test_dot_prefixed_directories_excluded_even_when_not_denylisted():
         _Module("src", 50), _Module("tests", 40), _Module("docs", 20),
         _Module("examples", 8), _Module(".github", 6),
     ])
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 6))
 
     for item in plan:
         if item.category in ("implementation_detail", "tech_choice_rationale", "error_handling"):
@@ -196,7 +263,7 @@ def test_vendored_and_build_directories_excluded():
     profile = _profile([
         _Module("node_modules", 500), _Module("dist", 30), _Module("app", 15),
     ])
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 6))
 
     for item in plan:
         if item.category in ("implementation_detail", "tech_choice_rationale", "error_handling"):
@@ -208,8 +275,8 @@ def test_vendored_and_build_directories_excluded():
 # Found via the same real click run: click only has two real source-ish
 # top-level directories (src, tests) once non-source ones are excluded,
 # so Pass 2 had nowhere left to distribute extra slots to -- the plan
-# stopped at 5 items instead of MAX_QUESTIONS=8. Pass 3 fills remaining
-# slots with file-level items instead of leaving them unused.
+# stopped short of MAX_QUESTIONS. Pass 3 fills remaining slots with
+# file-level items instead of leaving them unused.
 
 def _file(path: str, module: str, size_bytes: int = 1000, always_include: bool = False, is_test: bool = False) -> SampledFile:
     return SampledFile(path=path, size_bytes=size_bytes, module=module, always_include=always_include, is_test=is_test)
@@ -224,11 +291,12 @@ def test_pass_3_fills_remaining_slots_with_file_level_items_when_modules_run_out
         _file("src/utils.py", "src", size_bytes=1000),
     ]
     profile = _profile([_Module("src", 10), _Module("docs", 8)], sampled_files=files)
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    budget = _WITH_ARCH_TOPUP_SLOTS + 3
+    plan = build_coverage_plan(profile, _config(max_questions=budget))
 
-    assert len(plan) == 8
+    assert len(plan) == budget
     file_level_items = [i for i in plan if i.target_file is not None]
-    assert len(file_level_items) == 3  # 8 total - 5 module-level (Pass 1)
+    assert len(file_level_items) == 3  # all three files get used, one per per-module category
     assert all(i.target_module == "src" for i in file_level_items)
     assert all(i.target_file in {"src/core.py", "src/parser.py", "src/utils.py"} for i in file_level_items)
 
@@ -240,9 +308,10 @@ def test_pass_3_prefers_largest_files_first():
         _file("src/medium.py", "src", size_bytes=500),
     ]
     profile = _profile([_Module("src", 10)], sampled_files=files)
-    # Only 6 slots: 5 module-level (Pass 1) + 1 file-level (Pass 3, first
-    # category to hit the file-level branch gets the largest file).
-    plan = build_coverage_plan(profile, _config(max_questions=6))
+    # Exactly one file-level slot: architecture baseline+topup + the
+    # single-module Pass-1 baseline for the three per-module categories,
+    # plus one more for Pass 3 to fill with the largest file.
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 1))
 
     file_level_items = [i for i in plan if i.target_file is not None]
     assert len(file_level_items) == 1
@@ -255,7 +324,7 @@ def test_pass_3_prefers_always_include_files_over_size():
         _file("src/main.py", "src", size_bytes=200, always_include=True),
     ]
     profile = _profile([_Module("src", 10)], sampled_files=files)
-    plan = build_coverage_plan(profile, _config(max_questions=6))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 1))
 
     file_level_items = [i for i in plan if i.target_file is not None]
     assert file_level_items[0].target_file == "src/main.py"
@@ -267,7 +336,7 @@ def test_pass_3_excludes_test_files():
         _file("src/test_helpers.py", "src", size_bytes=9000, is_test=True),
     ]
     profile = _profile([_Module("src", 10)], sampled_files=files)
-    plan = build_coverage_plan(profile, _config(max_questions=6))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 1))
 
     file_level_items = [i for i in plan if i.target_file is not None]
     assert all(i.target_file != "src/test_helpers.py" for i in file_level_items)
@@ -276,17 +345,22 @@ def test_pass_3_excludes_test_files():
 def test_pass_3_never_exceeds_max_questions_even_with_many_files():
     files = [_file(f"src/file_{i}.py", "src", size_bytes=1000 - i) for i in range(20)]
     profile = _profile([_Module("src", 20)], sampled_files=files)
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    budget = _WITH_ARCH_TOPUP_SLOTS + 4
+    plan = build_coverage_plan(profile, _config(max_questions=budget))
 
-    assert len(plan) == 8
+    assert len(plan) == budget
 
 
 def test_pass_3_never_duplicates_category_module_file_triples():
     files = [_file(f"src/file_{i}.py", "src", size_bytes=1000 - i) for i in range(5)]
     profile = _profile([_Module("src", 5)], sampled_files=files)
-    plan = build_coverage_plan(profile, _config(max_questions=8))
+    plan = build_coverage_plan(profile, _config(max_questions=_WITH_ARCH_TOPUP_SLOTS + 6))
 
-    keys = [(i.category, i.target_module, i.target_file) for i in plan]
+    keys = [
+        (i.category, i.target_module, i.target_file)
+        for i in plan
+        if i.category != "architecture"
+    ]
     assert len(keys) == len(set(keys))
 
 
@@ -295,6 +369,6 @@ def test_pass_3_does_not_run_when_module_level_slots_already_fill_budget():
     # must never kick in and produce redundant file-level items.
     files = [_file("auth/handler.py", "auth", size_bytes=5000)]
     profile = _profile([_Module("auth", 10), _Module("payments", 8), _Module("api", 6)], sampled_files=files)
-    plan = build_coverage_plan(profile, _config(max_questions=5))
+    plan = build_coverage_plan(profile, _config(max_questions=_BASELINE_SLOTS))
 
     assert all(item.target_file is None for item in plan)
