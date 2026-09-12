@@ -80,6 +80,47 @@ need parameter Y" twice about the same code just because the phrasing \
 differs) -- pick a different angle, method, parameter, or code path \
 from the context instead."""
 
+# Phase 13 (docs/system-design/18-phase-13-architecture-tier-questions-
+# design.md §18.3): a separate register for the architecture category,
+# used instead of QUESTION_GEN_SYSTEM_PROMPT above. Same one-clause/
+# 15-25-word/no-preamble shape and the same "never fully generic" rule,
+# but the specificity requirement names a component/module/pipeline
+# stage rather than an exact function/class/parameter -- that's the
+# right grain for "how do the pieces fit together" questions, and
+# forcing exact-function-level specificity onto this category was
+# exactly what made architecture questions indistinguishable from
+# implementation_detail ones in real sessions.
+ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT = """You are writing one oral-exam \
+("viva") question for a candidate about their own codebase's architecture.
+
+Ground the question ONLY in the provided code context -- ask about \
+something the context actually shows, never a generic question that \
+could be answered without having read this specific project (e.g. never \
+"describe your architecture" in isolation; instead ask about the \
+specific component, module, or pipeline stage the context demonstrates).
+
+Keep it to ONE clause, ONE sentence, roughly 15-25 words -- a real \
+examiner asks one thing at a time, not a chain of conditions. Do NOT \
+stack qualifiers with "if X and Y", "especially when Z", or "given \
+that ...". Being specific means naming the exact component, module, or \
+pipeline stage the context shows, not drilling into a single function's \
+exact line-level behavior -- that level of detail belongs to a \
+different question, not this one.
+
+Good: "How does a sampled file get handed off from Ingest to the \
+Analyzer's map step?"
+Bad (too line-level, not this question's job): "Why does \
+`_top_level_module` return an empty string for root-level files?"
+
+Ask exactly ONE question. Write it as a direct, spoken-style question a \
+human examiner would ask out loud. No preamble, no markdown, no \
+numbering, no restating the code context back verbatim.
+
+If an [AVOID_REPEATING] section lists questions already asked this \
+session, do not ask something that tests substantially the same \
+understanding, even worded differently -- pick a different component, \
+stage, or boundary from the context instead."""
+
 CLASSIFICATION_SYSTEM_PROMPT = """You are grading a candidate's spoken answer in a \
 code-grounded oral exam ("viva") about their own project.
 
@@ -207,6 +248,7 @@ class LLMClient(abc.ABC):
     def generate_question(
         self, category: str, target_module: str | None, grounding_context: str,
         target_file: str | None = None, avoid_questions: list[str] | None = None,
+        architecture_topic: str | None = None,
     ) -> str:
         """FR13: just-in-time question generation, grounded in retrieved
         chunk text (`grounding_context`).
@@ -230,6 +272,14 @@ class LLMClient(abc.ABC):
         duplicate in the first place); the Orchestrator's embedding-
         similarity check is a backstop for when the model doesn't fully
         comply, not a replacement for this.
+
+        `architecture_topic`, when `category == "architecture"` (Phase
+        13, docs/system-design/18-phase-13-architecture-tier-questions-
+        design.md §18.3), selects `ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT`
+        instead of `QUESTION_GEN_SYSTEM_PROMPT` and labels the topic
+        explicitly in the user prompt, so one system prompt can serve
+        several topics without the model losing track of which lens
+        ("pipeline" vs "security", etc.) it's writing for.
         """
         raise NotImplementedError
 
@@ -450,6 +500,7 @@ class OllamaClient(LLMClient):
     def generate_question(
         self, category: str, target_module: str | None, grounding_context: str,
         target_file: str | None = None, avoid_questions: list[str] | None = None,
+        architecture_topic: str | None = None,
     ) -> str:
         # Explicitly labeled, non-concatenated sections, same convention
         # as _build_prompt's evaluator prompt (design.md §5).
@@ -457,6 +508,8 @@ class OllamaClient(LLMClient):
             f"[CATEGORY]\n{category}",
             f"[TARGET_MODULE]\n{target_module or '(project-level)'}",
         ]
+        if architecture_topic:
+            sections.append(f"[ARCHITECTURE_TOPIC]\n{architecture_topic}")
         if target_file:
             sections.append(f"[TARGET_FILE]\n{target_file}")
         if avoid_questions:
@@ -464,11 +517,20 @@ class OllamaClient(LLMClient):
             sections.append(f"[AVOID_REPEATING]\n{avoid_list}")
         sections.append(f"[CODE_CONTEXT]\n{grounding_context}")
         prompt = "\n\n".join(sections) + "\n"
+        # Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+        # questions-design.md §18.3): architecture questions get their
+        # own system prompt, permitting component/module-level
+        # specificity instead of the implementation tiers' exact-
+        # function requirement.
+        system_prompt = (
+            ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT if category == "architecture"
+            else QUESTION_GEN_SYSTEM_PROMPT
+        )
         # A single spoken question is short -- a smaller fixed target
         # than summarize_file/reduce's variable target_tokens is enough
         # headroom, while still giving a thinking-capable model (think=False
         # notwithstanding, see _generate's comment) room to not get cut off.
-        return self._generate(QUESTION_GEN_SYSTEM_PROMPT, prompt, target_tokens=80)
+        return self._generate(system_prompt, prompt, target_tokens=80)
 
     def get_context_window(self) -> int | None:
         try:
