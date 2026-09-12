@@ -38,6 +38,24 @@ _CATEGORY_QUERY_TEMPLATES: dict[QuestionCategory, str] = {
     "testing_strategy": "the testing strategy, test coverage, and how tests are structured",
 }
 
+# Phase 13 (docs/system-design/18-phase-13-architecture-tier-questions-
+# design.md §18.2): an open, extensible registry of architecture
+# sub-topics, each queried and retrieved independently rather than the
+# whole `architecture` category sharing one guaranteed slot and one
+# retrieval query. Adding a new topic later is a dict entry here, no
+# branching logic anywhere else needs to change. When a `QuestionPlanItem`
+# carries no `architecture_topic` (e.g. anything built before Phase 13,
+# or a caller that intentionally wants the category-wide query),
+# `build_query()` falls back to `_CATEGORY_QUERY_TEMPLATES["architecture"]`
+# above rather than requiring every caller to pick a topic.
+_ARCHITECTURE_TOPICS: dict[str, str] = {
+    "overview": "the overall structure and how the major components fit together",
+    "pipeline": "the stages data or a request passes through end to end, from entry point to output",
+    "security": "authentication, authorization, input validation, secrets handling, and trust boundaries",
+    "integration": "external services, APIs, or dependencies the system integrates with",
+    "concurrency": "threading, async, locking, or shared-state coordination",
+}
+
 # Mirrors ingest/sampling.py's _TEST_DIR_NAMES/_TEST_NAME_PATTERN -- see
 # module docstring for why this isn't a direct import.
 _TEST_DIR_NAMES = frozenset({"test", "tests", "__tests__", "spec", "specs"})
@@ -50,7 +68,12 @@ _TEST_NAME_PATTERN = re.compile(r"(^test_|_test\.|\.test\.|\.spec\.|^spec_|_spec
 _OVERFETCH_FACTOR = 3
 
 
-def build_query(category: QuestionCategory, module_summary: str | None, target_file: str | None = None) -> str:
+def build_query(
+    category: QuestionCategory,
+    module_summary: str | None,
+    target_file: str | None = None,
+    architecture_topic: str | None = None,
+) -> str:
     """Expand a bare (category, module[, file]) tuple into a richer
     retrieval query grounded in the module's own summary text (open
     question #6's query-reformulation fix). No LLM call -- deterministic
@@ -60,8 +83,20 @@ def build_query(category: QuestionCategory, module_summary: str | None, target_f
     `target_file`, when set (Pass 3's file-level plan items -- see
     `planner.py`), anchors the query to that specific file so retrieval
     doesn't just fall back to the module's most generically-relevant
-    chunks."""
-    base = _CATEGORY_QUERY_TEMPLATES[category]
+    chunks.
+
+    `architecture_topic`, when set and `category == "architecture"`
+    (Phase 13, docs/system-design/18-phase-13-architecture-tier-
+    questions-design.md §18.2), selects a specific entry from
+    `_ARCHITECTURE_TOPICS` instead of the category-wide template --
+    e.g. "pipeline" retrieves chunks about end-to-end data/control flow
+    rather than architecture in general. Falls back to the category-wide
+    template when unset, so this is additive for any caller that doesn't
+    yet assign topics."""
+    if category == "architecture" and architecture_topic is not None:
+        base = _ARCHITECTURE_TOPICS[architecture_topic]
+    else:
+        base = _CATEGORY_QUERY_TEMPLATES[category]
     if module_summary:
         base = f"{base}. Context: {module_summary}"
     if target_file:
@@ -91,7 +126,9 @@ def retrieve_grounding_chunks(
     callers (`questiongen/__init__.py`) must treat that as "skip this
     plan item," never as an excuse to generate an ungrounded question.
     """
-    query = build_query(plan_item.category, module_summary, plan_item.target_file)
+    query = build_query(
+        plan_item.category, module_summary, plan_item.target_file, plan_item.architecture_topic
+    )
     [query_embedding] = embedding_client.embed([query])
     if plan_item.target_file:
         # File-level plan item (Pass 3, planner.py) -- narrow retrieval
