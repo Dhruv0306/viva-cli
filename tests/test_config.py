@@ -50,7 +50,7 @@ def test_defaults_applied(monkeypatch):
     assert config.ollama_host == "http://localhost:11434"
     assert config.temperature == 0.3
     assert config.viva_duration_minutes == 30
-    assert config.max_questions == 8
+    assert config.max_questions == 15  # Phase 13: 30 // 2, not a flat constant -- see below
     assert config.max_followup_depth == 1
     assert config.session_retention_days == 7
     assert config.max_files == 500
@@ -173,6 +173,33 @@ def test_invalid_max_questions_raises(monkeypatch):
     monkeypatch.setenv("MAX_QUESTIONS", "0")
     with pytest.raises(ConfigError, match="MAX_QUESTIONS"):
         Config.load(env_file=None)
+
+
+def test_max_questions_default_derives_from_viva_duration(monkeypatch):
+    # Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+    # questions-design.md §18.5): no flat constant -- roughly one
+    # question per two minutes of session time.
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("VIVA_DURATION_MINUTES", "10")
+    config = Config.load(env_file=None)
+    assert config.max_questions == 5
+
+
+def test_max_questions_default_never_goes_below_one(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("VIVA_DURATION_MINUTES", "1")
+    config = Config.load(env_file=None)
+    assert config.max_questions == 1
+
+
+def test_explicit_max_questions_overrides_duration_derived_default(monkeypatch):
+    # An explicit MAX_QUESTIONS must still win over the duration-derived
+    # default -- this is a default change, not a removal of the override.
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("VIVA_DURATION_MINUTES", "10")
+    monkeypatch.setenv("MAX_QUESTIONS", "3")
+    config = Config.load(env_file=None)
+    assert config.max_questions == 3
 
 
 def test_invalid_max_files_raises(monkeypatch):

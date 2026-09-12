@@ -211,7 +211,15 @@ class Config:
             )
 
         viva_duration_minutes = _get_positive_int("VIVA_DURATION_MINUTES", "30")
-        max_questions = _get_positive_int("MAX_QUESTIONS", "8")
+        # Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+        # questions-design.md §18.5): when MAX_QUESTIONS isn't explicitly
+        # set, derive it from session length instead of a flat constant --
+        # roughly one question per two minutes, matching the pace a
+        # 2-minute-per-answer session was already implicitly assuming.
+        # MAX_QUESTIONS still wins when a caller sets it explicitly, so
+        # this only changes the default, not the override.
+        default_max_questions = str(max(1, viva_duration_minutes // 2))
+        max_questions = _get_positive_int("MAX_QUESTIONS", default_max_questions)
         # 0 is a legitimate choice here (no follow-ups at all), so this is
         # non-negative rather than strictly positive like the others.
         max_followup_depth = _get_non_negative_int("MAX_FOLLOWUP_DEPTH", "1")
