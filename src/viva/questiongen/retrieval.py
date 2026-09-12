@@ -48,7 +48,15 @@ _CATEGORY_QUERY_TEMPLATES: dict[QuestionCategory, str] = {
 # or a caller that intentionally wants the category-wide query),
 # `build_query()` falls back to `_CATEGORY_QUERY_TEMPLATES["architecture"]`
 # above rather than requiring every caller to pick a topic.
-_ARCHITECTURE_TOPICS: dict[str, str] = {
+#
+# No leading underscore, unlike `_CATEGORY_QUERY_TEMPLATES` -- `planner.py`
+# needs the topic *keys* (in this dict's insertion order) to build one
+# Pass 1 slot per topic, so this is intentionally one of the few names
+# shared across questiongen's own modules rather than kept file-private.
+# Still within one component (QuestionGen), so this doesn't cross the
+# "no cross-component direct imports" boundary design.md draws between
+# Ingest/Analyzer/Indexer/QuestionGen/Evaluator/Report/Orchestrator.
+ARCHITECTURE_TOPICS: dict[str, str] = {
     "overview": "the overall structure and how the major components fit together",
     "pipeline": "the stages data or a request passes through end to end, from entry point to output",
     "security": "authentication, authorization, input validation, secrets handling, and trust boundaries",
@@ -88,13 +96,13 @@ def build_query(
     `architecture_topic`, when set and `category == "architecture"`
     (Phase 13, docs/system-design/18-phase-13-architecture-tier-
     questions-design.md §18.2), selects a specific entry from
-    `_ARCHITECTURE_TOPICS` instead of the category-wide template --
+    `ARCHITECTURE_TOPICS` instead of the category-wide template --
     e.g. "pipeline" retrieves chunks about end-to-end data/control flow
     rather than architecture in general. Falls back to the category-wide
     template when unset, so this is additive for any caller that doesn't
     yet assign topics."""
     if category == "architecture" and architecture_topic is not None:
-        base = _ARCHITECTURE_TOPICS[architecture_topic]
+        base = ARCHITECTURE_TOPICS[architecture_topic]
     else:
         base = _CATEGORY_QUERY_TEMPLATES[category]
     if module_summary:
