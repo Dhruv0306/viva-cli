@@ -479,6 +479,28 @@ class Orchestrator:
         the start. Returns the *full* ranked list (not just the top
         pick) so `_run_live_session` can try several candidates for the
         semantic-duplicate check without a second query.
+
+        Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+        questions-design.md §18.4) adds `phase` as the *primary* sort
+        key: `architecture` items are phase 0, everything else is phase
+        1, so every pending architecture question clears before any
+        other category is asked. An earlier version of this design tried
+        to get the same effect purely from `build_coverage_plan()`'s
+        insertion order, emitting every architecture item first --
+        that doesn't survive this function's own duplicate-target/
+        repeat-category tie-break: the moment the first architecture
+        question is asked, `architecture` becomes an "already asked"
+        category, and every *other* never-touched category (still
+        reading (False, False)) jumps ahead of the second architecture
+        item. `phase` has to live in the ranking function itself, not the
+        plan's build order.
+
+        `phase` is re-derived from `item.category` on every call, not
+        cached or decided once -- so a plan replenishment (§18.5) that
+        adds fresh architecture items reopens phase 0 automatically, with
+        no special-casing needed here. This is intentional: phase
+        ordering is a live property of what's currently pending, not a
+        one-time decision baked in at session start.
         """
         followups = [p for p in pending if p.is_followup_of is not None]
         non_followups = [p for p in pending if p.is_followup_of is None]
@@ -486,11 +508,14 @@ class Orchestrator:
         already_asked_targets = self._already_asked_targets(session_id)
         already_asked_categories = self._already_asked_categories(session_id)
 
-        def _priority(item: QARecordRow) -> tuple[bool, bool]:
+        def _phase(category: str) -> int:
+            return 0 if category == "architecture" else 1
+
+        def _priority(item: QARecordRow) -> tuple[int, bool, bool]:
             target = item.target_file or item.target_module
             is_duplicate_target = bool(target) and target in already_asked_targets
             is_repeat_category = item.category in already_asked_categories
-            return (is_duplicate_target, is_repeat_category)
+            return (_phase(item.category), is_duplicate_target, is_repeat_category)
 
         return followups + sorted(non_followups, key=_priority)
 

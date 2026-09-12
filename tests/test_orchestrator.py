@@ -545,9 +545,9 @@ def test_select_next_item_prefers_novel_category_but_keeps_repeat_pending(tmp_pa
     orch, store = _make_orchestrator(tmp_path, config, ui)
     store.create_session("sess1", "https://github.com/o/r", None, None, 60)
     plan = [
-        QuestionPlanItem(id="q1", category="architecture", target_module=None),
-        QuestionPlanItem(id="q2", category="architecture", target_module=None, target_file="b.py"),
-        QuestionPlanItem(id="q3", category="implementation_detail", target_module="core"),
+        QuestionPlanItem(id="q1", category="implementation_detail", target_module="core"),
+        QuestionPlanItem(id="q2", category="implementation_detail", target_module="core", target_file="b.py"),
+        QuestionPlanItem(id="q3", category="error_handling", target_module="payments"),
     ]
     store.save_plan("sess1", plan)
 
@@ -563,15 +563,57 @@ def test_select_next_item_prefers_novel_category_but_keeps_repeat_pending(tmp_pa
     records = {r.question_id: r for r in store.get_qa_records("sess1")}
     assert records["q2"].status == "pending"  # never permanently dropped
 
-    # Once q1 (architecture) is asked, q3 (a novel category) should be
-    # preferred over q2 (a repeat of q1's category) -- but q2 stays
-    # available, not skipped.
+    # Once q1 (implementation_detail) is asked, q3 (a novel category)
+    # should be preferred over q2 (a repeat of q1's category) -- but q2
+    # stays available, not skipped. Both are phase 1 (non-architecture),
+    # so this tie-break is the one this test is actually exercising --
+    # see test_select_next_item_prefers_architecture_phase_even_when_repeat
+    # for the phase-0-always-wins case.
     store.record_question_asked("sess1", "q1", "Q1 text", [])
     store.record_answer("sess1", "q1", "answer")
     pending = store.get_pending_plan_items("sess1")
     selected = orch._select_next_item("sess1", pending, timer)
     assert selected.question_id == "q3"
     assert records["q2"].status == "pending"
+
+
+def test_select_next_item_prefers_architecture_phase_even_when_repeat(tmp_path):
+    """Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+    questions-design.md §18.4): architecture items must clear before any
+    other category is asked, even when the architecture item is itself a
+    repeat of an already-asked category and the alternative is a
+    completely novel one. This is the ordering fix that actually makes
+    "architecture questions first" hold -- build_coverage_plan()'s
+    insertion order alone can't guarantee it, since the pre-Phase-13
+    tie-break here (novel category beats repeat category) would let a
+    never-touched category cut in line the moment one architecture item
+    had been asked.
+    """
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 60)
+    plan = [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview"),
+        QuestionPlanItem(id="q2", category="architecture", target_module=None, architecture_topic="pipeline"),
+        QuestionPlanItem(id="q3", category="implementation_detail", target_module="core"),
+    ]
+    store.save_plan("sess1", plan)
+    store.record_question_asked("sess1", "q1", "Q1 text", [])
+    store.record_answer("sess1", "q1", "answer")
+
+    from viva.timer import AnswerTimer
+
+    timer = AnswerTimer(60)
+    timer.start()
+    pending = store.get_pending_plan_items("sess1")
+
+    selected = orch._select_next_item("sess1", pending, timer)
+
+    # q2 is a repeat of q1's category (architecture) and q3 is a
+    # completely novel category -- pre-Phase-13, q3 would win. Now q2
+    # wins, because phase 0 (architecture) is the primary sort key.
+    assert selected.question_id == "q2"
 
 
 def test_select_next_item_eventually_asks_repeat_category_when_nothing_novel_left(tmp_path):
