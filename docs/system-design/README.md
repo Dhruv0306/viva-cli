@@ -102,5 +102,16 @@ history of what was tried and rejected along the way.
   the `AnswerTimer` locking fix for the first genuinely cross-thread
   `excluding()` call.
 
+- **[18-phase-13-architecture-tier-questions-design.md](18-phase-13-architecture-tier-questions-design.md)**
+  — the Phase 13 Architecture-Tier Questions design: splitting the single
+  `architecture` category into an extensible set of topics (overview,
+  pipeline, security, integration, concurrency) each capable of multiple
+  questions, a separate architecture-tier system prompt permitting
+  component/module-level specificity instead of exact-function-level, the
+  `phase`-keyed ranking fix that makes architecture questions clear
+  before other categories every time the plan is re-ranked (including on
+  replenishment), and deriving `max_questions` from session duration with
+  live-loop replenishment instead of ending early on `QUESTIONS_EXHAUSTED`.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

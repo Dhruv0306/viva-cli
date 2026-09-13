@@ -37,6 +37,7 @@ def _qa(question_id: str, category: str, status: str, eval_record: EvaluationRec
         category=category,
         target_module=None,
         target_file=None,
+        architecture_topic=None,
         is_followup_of=None,
         question_text=f"Question {question_id}?",
         grounding_chunk_ids=[],

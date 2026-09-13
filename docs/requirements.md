@@ -23,10 +23,10 @@ A locally-run tool that takes a GitHub repository URL, builds a grounded underst
 - FR11: Support retrieval by both semantic similarity and metadata filter (e.g. "chunks belonging to module X").
 
 ### 2.4 Question Generation
-- FR12: Build a question/coverage plan from the Project Profile spanning multiple categories: architecture/design decisions, specific implementation detail, technology-choice rationale, error handling/edge cases, and testing strategy.
+- FR12: Build a question/coverage plan from the Project Profile spanning multiple categories: architecture/design decisions, specific implementation detail, technology-choice rationale, error handling/edge cases, and testing strategy. The `architecture` category is itself spread across an extensible set of topics (e.g. system overview, pipeline/data flow, security boundaries, external integrations, concurrency) rather than a single slot, and multiple questions may be asked per topic — see design.md §13.
 - FR13: Generate each question just-in-time, grounded in retrieved chunk(s) relevant to its category/target module — never generate a question ungrounded in actual retrieved code.
 - FR14: Support adaptive follow-up questions based on the strength of the previous answer, bounded by a configurable max follow-up depth per topic (default 1, via `MAX_FOLLOWUP_DEPTH`).
-- FR15: Track asked topics/files to avoid duplicate questioning and to enforce category coverage across the session.
+- FR15: Track asked topics/files to avoid duplicate questioning and to enforce category coverage across the session. Architecture-category questions must be asked ahead of the other four categories whenever both are pending, and this ordering re-applies any time the plan is replenished (FR29), not just once at session start.
 
 ### 2.5 Viva Session
 - FR16: Run a single timed session per repository, duration configurable via environment variable (default 30 minutes).
@@ -49,6 +49,7 @@ A locally-run tool that takes a GitHub repository URL, builds a grounded underst
 
 ### 2.8 Configuration
 - FR28: All tunable parameters (viva duration, max questions, file cap, top-k retrieval, model names, temperature) must be environment-file configurable, not hardcoded.
+- FR29: When no explicit `MAX_QUESTIONS` override is set, the question budget must scale with `VIVA_DURATION_MINUTES` rather than a fixed constant. If the live session's question supply is exhausted (including follow-ups) before the timer expires, the coverage plan must be replenished with additional questions rather than ending the session early, as long as new (non-duplicate) coverage can still be grounded in retrieved code.
 
 ## 3. Non-Functional Requirements
 

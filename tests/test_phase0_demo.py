@@ -37,7 +37,7 @@ class FakeSlowLLMClient(LLMClient):
     def reduce(self, label, summaries, target_tokens):
         raise NotImplementedError  # not exercised by the Phase 0 demo
 
-    def generate_question(self, category, target_module, grounding_context, target_file=None, avoid_questions=None):
+    def generate_question(self, category, target_module, grounding_context, target_file=None, avoid_questions=None, architecture_topic=None):
         raise NotImplementedError  # not exercised by the Phase 0 demo
 
 

@@ -41,14 +41,14 @@ class _FakeLLMClient(LLMClient):
         self.reduce_calls += 1
         return f"reduced({label}, {len(summaries)} items)"
 
-    def generate_question(self, category, target_module, grounding_context, target_file=None, avoid_questions=None):
+    def generate_question(self, category, target_module, grounding_context, target_file=None, avoid_questions=None, architecture_topic=None):
         raise NotImplementedError
 
 
 def _config(max_files: int = 500, map_reduce_batch_size: int = 8, max_reduce_context_tokens=None) -> Config:
     return Config(
         llm_model="test-model", embedding_model="nomic-embed-text", temperature=0.3,
-        ollama_host="http://localhost:11434", viva_duration_minutes=30, max_questions=8,
+        ollama_host="http://localhost:11434", viva_duration_minutes=30, max_questions=8, max_questions_explicit=True,
         max_followup_depth=1, session_retention_days=7, max_files=max_files, test_file_quota_pct=10,
         github_token=None, map_reduce_batch_size=map_reduce_batch_size,
         max_reduce_context_tokens=max_reduce_context_tokens, line_window_size=60,

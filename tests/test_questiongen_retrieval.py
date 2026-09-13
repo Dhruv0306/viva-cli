@@ -23,6 +23,39 @@ def test_build_query_anchors_to_target_file_when_present():
     assert "auth/handler.py" in query
 
 
+def test_build_query_uses_architecture_topic_when_present():
+    query = build_query("architecture", None, architecture_topic="security")
+    assert "authentication" in query.lower() or "authorization" in query.lower()
+
+
+def test_build_query_falls_back_to_category_template_without_topic():
+    # No architecture_topic given -- same behavior as before Phase 13.
+    query = build_query("architecture", None)
+    assert "overall architecture" in query.lower()
+
+
+def test_build_query_ignores_architecture_topic_for_other_categories():
+    # architecture_topic is only meaningful for category == "architecture";
+    # a non-architecture category must not accidentally pick it up.
+    query = build_query("implementation_detail", None, architecture_topic="security")
+    assert "authentication" not in query.lower()
+
+
+def test_retrieve_grounding_chunks_uses_architecture_topic_query():
+    plan_item = QuestionPlanItem(
+        id="q_01", category="architecture", target_module=None, architecture_topic="pipeline"
+    )
+    store = MagicMock()
+    store.query.return_value = []
+    embedding_client = MagicMock()
+    embedding_client.embed.return_value = [[0.1, 0.2]]
+
+    retrieve_grounding_chunks(plan_item, None, store, "collection", embedding_client, top_k=5)
+
+    query_used = embedding_client.embed.call_args.args[0][0]
+    assert "end to end" in query_used.lower()
+
+
 def test_is_test_path_detects_test_directories_and_filenames():
     assert _is_test_path("tests/test_handler.py") is True
     assert _is_test_path("src/tests/handler.py") is True

@@ -34,6 +34,7 @@ def _make_config(max_files: int = 500, test_file_quota_pct: int = 10) -> Config:
         ollama_host="http://localhost:11434",
         viva_duration_minutes=30,
         max_questions=8,
+        max_questions_explicit=True,
         max_followup_depth=1,
         session_retention_days=7,
         max_files=max_files,

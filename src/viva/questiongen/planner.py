@@ -58,6 +58,7 @@ from viva.config import Config
 from viva.ingest.models import SampledFile
 from viva.profile import ProjectProfile
 from viva.questiongen.models import QuestionCategory, QuestionPlanItem
+from viva.questiongen.retrieval import ARCHITECTURE_TOPICS
 
 _CATEGORIES: tuple[QuestionCategory, ...] = (
     "architecture",
@@ -136,9 +137,18 @@ def build_coverage_plan(profile: ProjectProfile, config: Config) -> list[Questio
 
     Bounded by `config.max_questions`. Returns fewer than
     `max_questions` items only if the profile has too few source modules
-    *and files within them* to fill every slot (e.g. a very small repo)
-    -- never pads with duplicate (category, module, file) triples to hit
-    the count.
+    *and files within them* (and, since Phase 13, architecture topics)
+    to fill every slot -- never pads with duplicate (category, module,
+    file[, architecture_topic]) combinations to hit the count.
+
+    Pass order (docs/system-design/18-phase-13-architecture-tier-
+    questions-design.md §18.2): one slot per architecture topic, then one
+    slot per each remaining category (Pass 1) -- one extra slot per
+    architecture topic (Pass 1.5) -- per-module round-robin for the other
+    three categories (Pass 2) -- file-level fallback within those modules
+    (Pass 3). Ask *order* within a live session is a separate concern
+    handled by `orchestrator.py`'s phase-keyed ranking, not by this
+    function's return order.
     """
     max_questions = config.max_questions
     modules_by_size = sorted(profile.modules, key=lambda m: m.file_count, reverse=True)
@@ -162,10 +172,30 @@ def build_coverage_plan(profile: ProjectProfile, config: Config) -> list[Questio
     )
 
     items: list[QuestionPlanItem] = []
-    seen: set[tuple[QuestionCategory, str | None, str | None]] = set()
+    seen: set[tuple[QuestionCategory, str | None, str | None, str | None, int]] = set()
 
-    def _add(category: QuestionCategory, target_module: str | None, target_file: str | None = None) -> bool:
-        key = (category, target_module, target_file)
+    def _add(
+        category: QuestionCategory,
+        target_module: str | None,
+        target_file: str | None = None,
+        architecture_topic: str | None = None,
+    ) -> bool:
+        if category == "architecture":
+            # Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+            # questions-design.md §18.2): multiple questions per topic are
+            # allowed and expected -- target_module/target_file are always
+            # None for every architecture item, so the plain
+            # (category, module, file) key below would treat every one of
+            # them as an identical duplicate and silently drop all but the
+            # first. Key on an occurrence count instead, so each new
+            # instance of the same topic gets a fresh key.
+            occurrence = sum(
+                1 for item in items
+                if item.category == "architecture" and item.architecture_topic == architecture_topic
+            )
+        else:
+            occurrence = 0
+        key = (category, target_module, target_file, architecture_topic, occurrence)
         if key in seen:
             return False
         seen.add(key)
@@ -175,21 +205,45 @@ def build_coverage_plan(profile: ProjectProfile, config: Config) -> list[Questio
                 category=category,
                 target_module=target_module,
                 target_file=target_file,
+                architecture_topic=architecture_topic,
             )
         )
         return True
 
-    # Pass 1: guarantee one slot per category (FR12's coverage requirement).
-    for category in _CATEGORIES:
+    # Pass 1: guarantee one slot per architecture topic (Phase 13 --
+    # replaces the single architecture slot the original FR12 category
+    # set got), then one slot per each of the remaining four categories.
+    for topic in ARCHITECTURE_TOPICS:
         if len(items) >= max_questions:
             break
+        _add("architecture", None, architecture_topic=topic)
+
+    for category in _CATEGORIES:
         if category == "architecture":
-            target_module = None
-        elif category == "testing_strategy":
+            continue
+        if len(items) >= max_questions:
+            break
+        if category == "testing_strategy":
             target_module = testing_target
         else:
             target_module = source_module_names[0] if source_module_names else None
         _add(category, target_module)
+
+    # Pass 1.5 (Phase 13, docs/system-design/18-phase-13-architecture-
+    # tier-questions-design.md §18.2): give each architecture topic one
+    # *extra* question before Pass 2 starts spending budget on per-module
+    # categories -- extra architecture depth is preferred over extra
+    # per-module depth when budget is tight. Deliberately capped at one
+    # extra round rather than an unbounded round-robin (a topic has no
+    # natural exhaustion the way a (category, module) pair does, so an
+    # uncapped loop here would consume 100% of any remaining budget and
+    # starve Pass 2/3 entirely). Revisit as a config knob (e.g.
+    # ARCHITECTURE_EXTRA_ROUNDS) if one extra question per topic isn't
+    # enough depth in practice.
+    for topic in ARCHITECTURE_TOPICS:
+        if len(items) >= max_questions:
+            break
+        _add("architecture", None, architecture_topic=topic)
 
     # Pass 2: distribute remaining slots round-robin across the
     # per-module categories x source modules, biggest modules first,

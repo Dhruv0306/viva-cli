@@ -13,6 +13,8 @@ class plus a `SessionUI` (see `session_ui.py`).
 """
 from __future__ import annotations
 
+import dataclasses
+import logging
 import math
 import uuid
 from pathlib import Path
@@ -42,6 +44,8 @@ from viva.storage.session_store import (
     SKIPPED_TIME_COLLAPSE,
 )
 from viva.timer import AnswerTimer
+
+logger = logging.getLogger(__name__)
 
 # Terminal states that make a session's `IN_PROGRESS` loop stop asking new
 # questions (design.md §2).
@@ -73,6 +77,15 @@ def is_resumable(status: str) -> bool:
 # extra LLM/embedding cost (all excluded from the user's clock) small
 # rather than unbounded on a repo where duplication is pervasive.
 _MAX_DEDUP_CANDIDATES = 3
+
+# Phase 13 (docs/system-design/18-phase-13-architecture-tier-questions-
+# design.md §18.5): how much higher to raise the max_questions ceiling
+# on each replenishment attempt when the live loop's pending queue runs
+# dry before the timer expires. Arbitrary but bounded and re-tried as
+# many times as the loop keeps draining -- not meant to be tuned
+# precisely, just large enough that a fast answerer doesn't trigger a
+# replenishment call on almost every single question.
+_REPLENISH_INCREMENT = 6
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -140,7 +153,8 @@ class Orchestrator:
         session_name: str | None = None,
     ) -> str:
         session_id = uuid.uuid4().hex[:12]
-        duration_seconds = float((duration_minutes or self.config.viva_duration_minutes) * 60)
+        effective_duration_minutes = duration_minutes or self.config.viva_duration_minutes
+        duration_seconds = float(effective_duration_minutes * 60)
 
         # Row created (status=INGESTING) and session_id handed to the UI
         # before cloning starts, so it's captured even if this crashes --
@@ -153,7 +167,7 @@ class Orchestrator:
 
         try:
             profile, collection_name = self._run_setup_pipeline(session_id, repo_url, branch)
-            plan = self._run_planning(session_id, profile)
+            plan = self._run_planning(session_id, profile, effective_duration_minutes)
         except Exception as exc:
             self.store.set_failed(session_id, str(exc))
             self.ui.error(f"Session setup failed: {exc}")
@@ -203,10 +217,50 @@ class Orchestrator:
         )
         return profile, index_result.collection_name
 
-    def _run_planning(self, session_id: str, profile: ProjectProfile) -> list[QuestionPlanItem]:
+    def _run_planning(
+        self, session_id: str, profile: ProjectProfile, duration_minutes: int
+    ) -> list[QuestionPlanItem]:
+        """Builds the initial coverage plan (FR12) and persists it.
+
+        `duration_minutes` is the *effective* duration for this specific
+        session (the caller's explicit choice, or `self.config
+        .viva_duration_minutes` when none was given -- see `start()`),
+        not necessarily the same as `self.config.viva_duration_minutes`
+        itself. Found via a real session (docs/system-design/
+        18-phase-13-architecture-tier-questions-design.md §18.7): a
+        5-minute session picked in the web UI still produced a 9-question
+        plan, because `self.config.max_questions` had already been fixed
+        at process-startup time from the `.env` file's global
+        `VIVA_DURATION_MINUTES`, and `build_coverage_plan(profile,
+        self.config)` had no way to know this particular session asked
+        for something shorter. `duration_minutes` here is what closes
+        that gap -- when `MAX_QUESTIONS` wasn't pinned explicitly, the
+        budget used for *this* plan is rederived from *this* session's
+        actual duration, not the process-wide default.
+        """
         self.store.update_status(session_id, "PLANNING")
         self.ui.stage_started("Planning question coverage")
-        plan = build_coverage_plan(profile, self.config)
+        planning_config = self.config
+        if not self.config.max_questions_explicit:
+            planning_config = dataclasses.replace(
+                self.config, max_questions=max(1, duration_minutes // 2)
+            )
+        # Phase 13 follow-up (docs/system-design/18-phase-13-architecture-
+        # tier-questions-design.md §18.8): logged at INFO rather than
+        # DEBUG specifically because "why did my plan come out this size"
+        # turned out to be genuinely hard to diagnose from the outside --
+        # two real sessions produced a confusing question count before
+        # this line existed, and there was no way to tell from the
+        # outside whether duration_minutes, max_questions_explicit, or
+        # the resulting budget were what the person expected without
+        # instrumenting the process by hand.
+        logger.info(
+            "Planning session %s: duration_minutes=%s max_questions_explicit=%s "
+            "-> max_questions=%s",
+            session_id, duration_minutes, self.config.max_questions_explicit,
+            planning_config.max_questions,
+        )
+        plan = build_coverage_plan(profile, planning_config)
         self.store.save_plan(session_id, plan)
         self.ui.stage_completed("Planning", f"{len(plan)} question(s) planned")
         return plan
@@ -306,6 +360,14 @@ class Orchestrator:
 
             pending = self.store.get_pending_plan_items(session_id)
             if not pending:
+                # Phase 13 (docs/system-design/18-phase-13-architecture-
+                # tier-questions-design.md §18.5): the timer hasn't
+                # expired (checked at the top of this iteration) but the
+                # plan is drained -- try to extend it before declaring
+                # the session over, rather than ending early with real
+                # time still on the clock.
+                if self._replenish_plan(session_id, profile):
+                    continue
                 self.store.update_status(session_id, "QUESTIONS_EXHAUSTED")
                 break
 
@@ -331,6 +393,7 @@ class Orchestrator:
                 plan_item = QuestionPlanItem(
                     id=candidate.question_id, category=candidate.category,
                     target_module=candidate.target_module, target_file=candidate.target_file,
+                    architecture_topic=candidate.architecture_topic,
                     is_followup_of=candidate.is_followup_of,
                 )
                 with timer.excluding():
@@ -418,6 +481,44 @@ class Orchestrator:
 
         self.ui.session_complete(self._build_summary(session_id))
 
+    def _replenish_plan(self, session_id: str, profile: ProjectProfile) -> bool:
+        """Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+        questions-design.md §18.5): called when `_run_live_session`'s
+        pending queue is empty but the timer hasn't expired -- FR29.
+
+        `build_coverage_plan()` is deterministic given `(profile,
+        max_questions)`, so raising the ceiling and calling it again
+        reproduces every already-persisted item identically, plus a
+        genuinely new tail. `save_plan()` already uses `INSERT OR
+        IGNORE` keyed on `(session_id, question_id)` (see
+        `storage/session_store.py`), so the whole rebuilt plan can just
+        be re-saved -- anything whose `question_id` already exists is
+        silently skipped, no manual diffing needed. (The design doc's
+        original write-up assumed a manual ID diff would be necessary;
+        `INSERT OR IGNORE` already covered it before this patch existed.)
+
+        Returns `True` if new coverage was actually added (the caller
+        loops back and re-fetches pending). Returns `False` if the
+        profile has genuinely run out of groundable modules/files/topics
+        -- `build_coverage_plan()` returned no more items than what's
+        already persisted even with a higher ceiling -- so the caller
+        can treat that as a true terminal `QUESTIONS_EXHAUSTED` rather
+        than retrying the same or a higher ceiling again in this
+        session (which would otherwise busy-loop on every empty-pending
+        check for the rest of the timer).
+        """
+        current_top_level = sum(
+            1 for r in self.store.get_qa_records(session_id) if r.is_followup_of is None
+        )
+        replenished_config = dataclasses.replace(
+            self.config, max_questions=current_top_level + _REPLENISH_INCREMENT
+        )
+        new_plan = build_coverage_plan(profile, replenished_config)
+        if len(new_plan) <= current_top_level:
+            return False
+        self.store.save_plan(session_id, new_plan)
+        return True
+
     def _finalize_stray_evals(self, session_id: str) -> None:
         """Defensive SUMMARIZING pass (docs/system-design/
         13-phase-8-report-design.md §13.3): `Evaluator.flush()`'s bounded
@@ -479,6 +580,28 @@ class Orchestrator:
         the start. Returns the *full* ranked list (not just the top
         pick) so `_run_live_session` can try several candidates for the
         semantic-duplicate check without a second query.
+
+        Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+        questions-design.md §18.4) adds `phase` as the *primary* sort
+        key: `architecture` items are phase 0, everything else is phase
+        1, so every pending architecture question clears before any
+        other category is asked. An earlier version of this design tried
+        to get the same effect purely from `build_coverage_plan()`'s
+        insertion order, emitting every architecture item first --
+        that doesn't survive this function's own duplicate-target/
+        repeat-category tie-break: the moment the first architecture
+        question is asked, `architecture` becomes an "already asked"
+        category, and every *other* never-touched category (still
+        reading (False, False)) jumps ahead of the second architecture
+        item. `phase` has to live in the ranking function itself, not the
+        plan's build order.
+
+        `phase` is re-derived from `item.category` on every call, not
+        cached or decided once -- so a plan replenishment (§18.5) that
+        adds fresh architecture items reopens phase 0 automatically, with
+        no special-casing needed here. This is intentional: phase
+        ordering is a live property of what's currently pending, not a
+        one-time decision baked in at session start.
         """
         followups = [p for p in pending if p.is_followup_of is not None]
         non_followups = [p for p in pending if p.is_followup_of is None]
@@ -486,11 +609,14 @@ class Orchestrator:
         already_asked_targets = self._already_asked_targets(session_id)
         already_asked_categories = self._already_asked_categories(session_id)
 
-        def _priority(item: QARecordRow) -> tuple[bool, bool]:
+        def _phase(category: str) -> int:
+            return 0 if category == "architecture" else 1
+
+        def _priority(item: QARecordRow) -> tuple[int, bool, bool]:
             target = item.target_file or item.target_module
             is_duplicate_target = bool(target) and target in already_asked_targets
             is_repeat_category = item.category in already_asked_categories
-            return (is_duplicate_target, is_repeat_category)
+            return (_phase(item.category), is_duplicate_target, is_repeat_category)
 
         return followups + sorted(non_followups, key=_priority)
 

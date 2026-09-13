@@ -75,6 +75,7 @@ def generate_question(
         grounding_context=grounding_context,
         target_file=plan_item.target_file,
         avoid_questions=avoid_questions,
+        architecture_topic=plan_item.architecture_topic,
     )
     return GeneratedQuestion(
         plan_item=plan_item,

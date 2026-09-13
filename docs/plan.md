@@ -140,6 +140,28 @@ Each phase is independently testable and produces a working, demoable slice.
   → graded), validated against a real microphone, not just
   `TestClient`-mocked endpoint coverage.
 
+## Phase 13 — Architecture-Tier Questions
+- Splits the single `architecture` category into an extensible set of
+  topics (system overview, pipeline/data flow, security boundaries,
+  external integrations, concurrency), each capable of holding more than
+  one question, asked ahead of the other four categories rather than
+  interleaved with them from question one.
+- Design doc: `docs/system-design/18-phase-13-architecture-tier-
+  questions-design.md`. Key decisions: ordering is enforced by a
+  `phase` key in the session loop's ranking function (not by plan
+  insertion order, which doesn't survive the existing category-breadth
+  tie-break — see design doc §18.6), a separate architecture-tier system
+  prompt permits component/module-level specificity instead of the
+  implementation tier's exact-function requirement, and `max_questions`
+  is derived from `VIVA_DURATION_MINUTES` with live-loop replenishment on
+  exhaustion rather than ending the session early.
+- **Exit criteria:** a real-repo timed session where every architecture-
+  topic question is asked before any implementation-tier question
+  starts, a fast-answering session that exhausts the initial plan still
+  runs until the timer expires (via replenishment) rather than hitting
+  `QUESTIONS_EXHAUSTED` early, and a thin repo with no groundable
+  security/concurrency code skips those topics without error.
+
 ## Cross-Cutting: Testing
 - A small fixture set of real "golden repos" (a few small, varied-language
   repos) is checked into the test suite from Phase 2 onward and reused

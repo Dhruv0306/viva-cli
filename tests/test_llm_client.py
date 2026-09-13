@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from viva.llm_client import QUESTION_GEN_SYSTEM_PROMPT, OllamaClient
+from viva.llm_client import ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT, QUESTION_GEN_SYSTEM_PROMPT, OllamaClient
 from viva.schemas import ClassificationResult
 
 
@@ -331,6 +331,62 @@ def test_question_gen_system_prompt_constrains_length_and_clause_count():
     # its own, so the constraint has to be explicit in the instructions.
     assert "ONE clause" in QUESTION_GEN_SYSTEM_PROMPT
     assert "15-25 words" in QUESTION_GEN_SYSTEM_PROMPT
+
+
+def test_architecture_system_prompt_permits_component_level_specificity():
+    # Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+    # questions-design.md §18.3): the architecture-tier prompt must NOT
+    # inherit the implementation tier's exact-function requirement -- that
+    # requirement is exactly what made real architecture questions come
+    # out indistinguishable from implementation_detail ones ("why did you
+    # use this particular line of code").
+    assert "component, module, or pipeline stage" in ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT
+    assert "exact function/class/parameter" not in ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT
+    # Still constrained the same way -- one clause, one question, grounded.
+    assert "ONE clause" in ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT
+    assert "Ground the question ONLY in the provided code context" in ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT
+
+
+def test_generate_question_uses_architecture_prompt_for_architecture_category(client):
+    client._client.chat.return_value = _chat_response("How does data flow through the pipeline?")
+
+    client.generate_question(
+        category="architecture", target_module=None, grounding_context="ctx",
+        architecture_topic="pipeline",
+    )
+
+    system_prompt = client._client.chat.call_args.kwargs["messages"][0]["content"]
+    assert system_prompt == ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT
+
+
+def test_generate_question_uses_implementation_prompt_for_other_categories(client):
+    client._client.chat.return_value = _chat_response("How does this module handle a failed retry?")
+
+    client.generate_question(category="error_handling", target_module="payments", grounding_context="ctx")
+
+    system_prompt = client._client.chat.call_args.kwargs["messages"][0]["content"]
+    assert system_prompt == QUESTION_GEN_SYSTEM_PROMPT
+
+
+def test_generate_question_includes_architecture_topic_section_when_present(client):
+    client._client.chat.return_value = _chat_response("How does data flow through the pipeline?")
+
+    client.generate_question(
+        category="architecture", target_module=None, grounding_context="ctx",
+        architecture_topic="pipeline",
+    )
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[ARCHITECTURE_TOPIC]\npipeline" in user_prompt
+
+
+def test_generate_question_omits_architecture_topic_section_when_absent(client):
+    client._client.chat.return_value = _chat_response("How does this module handle a failed retry?")
+
+    client.generate_question(category="error_handling", target_module="payments", grounding_context="ctx")
+
+    user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
+    assert "[ARCHITECTURE_TOPIC]" not in user_prompt
 
 
 def test_generate_question_builds_labeled_sections(client):
