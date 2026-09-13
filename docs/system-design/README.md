@@ -33,6 +33,12 @@ history of what was tried and rejected along the way.
   including the previously-undocumented `viva list`), and the recursive
   hierarchical-reduce fallback for Project Profile generation on repos
   with many modules. Added in response to a second external design review.
+- **[07-llm-model-pressure-test-results.md](07-llm-model-pressure-test-results.md)**
+  — results of the `LLM_MODEL` pressure-test harness
+  (`scripts/pressure_test_llm_model.py`), closing
+  `04-open-questions.md` item 5: accuracy, classification stability, and
+  citation-compliance rate across candidate models (N=10 repetitions per
+  sample), which is what `gemma4:e4b`'s default selection is based on.
 - **[08-phase-3-analyzer-design.md](08-phase-3-analyzer-design.md)** — the
   Phase 3 Analyzer implementation design: tree-sitter dependency choice,
   the query-per-language extraction mechanism, the `ProjectProfile`
@@ -84,6 +90,16 @@ history of what was tried and rejected along the way.
   Chroma-collection reference-counting decision (no session still
   pointing at a collection may have it deleted out from under it); and
   why `updated_at`, not `created_at`, is the retention clock.
+
+- **[15-phase-10-web-ui-design.md](15-phase-10-web-ui-design.md)** — the
+  Phase 10 Web UI implementation design: `viva serve`, a local FastAPI
+  server fronted by a single static HTML+JS page exposing the same
+  start/resume/list/report/cleanup operations as the CLI, plus the live
+  question/answer loop; the `WebSessionUI`/`queue.Queue` bridge that lets
+  `Orchestrator.start()`/`.resume()` keep blocking on
+  `SessionUI.read_answer()` from a background thread instead of an HTTP
+  request thread, with `Orchestrator` itself unchanged; and the later
+  rename from viva-web to viva room alongside its visual redesign.
 
 - **[16-phase-11-voice-io-design.md](16-phase-11-voice-io-design.md)** —
   the Phase 11 Voice I/O implementation design: the faster-whisper/Piper

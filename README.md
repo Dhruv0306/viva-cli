@@ -78,14 +78,6 @@ LINE_WINDOW_SIZE=60
 LINE_WINDOW_OVERLAP=15
 SESSION_DB_PATH=./data/viva.db
 AVG_TIME_PER_CATEGORY_SECONDS=180
-```
-
-`MAX_QUESTIONS` is unset by default: when it's not set, the question
-budget is derived from the session's own duration (roughly one question
-per two minutes) instead of a flat count, so a short session naturally
-plans fewer questions than a long one. Uncomment `MAX_QUESTIONS` and set
-a number to pin the budget regardless of what duration any individual
-session picks.
 QUESTION_SIMILARITY_THRESHOLD=0.90
 EVAL_FLUSH_TIMEOUT_SECONDS=60
 VOICE_ENABLED=false
@@ -95,6 +87,13 @@ VOICE_CACHE_DIR=./data/voice_models
 VOICE_MAX_ANSWER_SECONDS=120
 VOICE_SILENCE_TIMEOUT_SECONDS=2.5
 ```
+
+`MAX_QUESTIONS` is unset by default: when it's not set, the question
+budget is derived from the session's own duration (roughly one question
+per two minutes) instead of a flat count, so a short session naturally
+plans fewer questions than a long one. Uncomment `MAX_QUESTIONS` and set
+a number to pin the budget regardless of what duration any individual
+session picks.
 
 ## Usage
 
@@ -200,7 +199,16 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-12 (walking skeleton through web voice I/O) are implemented.**
+**Phases 0-13 (walking skeleton through architecture-tier questions) are
+implemented.** Phase 13 split the single `architecture` category into an
+extensible set of topics (system overview, pipeline/data flow, security
+boundaries, external integrations, concurrency), each capable of holding
+more than one question and now asked ahead of the other four categories
+rather than interleaved with them from question one. The question budget
+also scales with each session's own chosen duration instead of a flat
+default, with a session that finishes its plan early getting it extended
+rather than ending with time still on the clock -- see
+[`docs/system-design/18-phase-13-architecture-tier-questions-design.md`](docs/system-design/18-phase-13-architecture-tier-questions-design.md).
 Phase 10 added `viva serve`, which runs viva room: a local FastAPI server
 exposing the same
 start/resume/list/report/cleanup operations as the CLI, plus the live
