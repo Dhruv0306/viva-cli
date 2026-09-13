@@ -32,10 +32,12 @@ cp .env.example .env
 ```
 
 You'll also need [Ollama](https://ollama.com) running locally with the
-configured models pulled:
+configured models pulled. `LLM_MODEL` defaults to `gemma4:e4b` in
+`.env.example` (see
+`docs/system-design/07-llm-model-pressure-test-results.md` for why):
 
 ```bash
-ollama pull qwen2.5-coder:7b
+ollama pull gemma4:e4b
 ollama pull nomic-embed-text
 ```
 
