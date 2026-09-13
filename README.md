@@ -65,7 +65,7 @@ VIVA_DURATION_MINUTES=30
 LLM_MODEL=gemma4:e4b
 EMBEDDING_MODEL=nomic-embed-text
 VECTOR_DB_PATH=./data/chroma
-MAX_QUESTIONS=8
+# MAX_QUESTIONS=8   # commented out by default -- see note below
 TOP_K_RETRIEVAL=5
 MAX_FILES=500
 TEST_FILE_QUOTA_PCT=10
@@ -78,6 +78,14 @@ LINE_WINDOW_SIZE=60
 LINE_WINDOW_OVERLAP=15
 SESSION_DB_PATH=./data/viva.db
 AVG_TIME_PER_CATEGORY_SECONDS=180
+```
+
+`MAX_QUESTIONS` is unset by default: when it's not set, the question
+budget is derived from the session's own duration (roughly one question
+per two minutes) instead of a flat count, so a short session naturally
+plans fewer questions than a long one. Uncomment `MAX_QUESTIONS` and set
+a number to pin the budget regardless of what duration any individual
+session picks.
 QUESTION_SIMILARITY_THRESHOLD=0.90
 EVAL_FLUSH_TIMEOUT_SECONDS=60
 VOICE_ENABLED=false
