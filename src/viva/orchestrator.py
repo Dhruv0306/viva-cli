@@ -14,6 +14,7 @@ class plus a `SessionUI` (see `session_ui.py`).
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 import uuid
 from pathlib import Path
@@ -43,6 +44,8 @@ from viva.storage.session_store import (
     SKIPPED_TIME_COLLAPSE,
 )
 from viva.timer import AnswerTimer
+
+logger = logging.getLogger(__name__)
 
 # Terminal states that make a session's `IN_PROGRESS` loop stop asking new
 # questions (design.md §2).
@@ -242,6 +245,21 @@ class Orchestrator:
             planning_config = dataclasses.replace(
                 self.config, max_questions=max(1, duration_minutes // 2)
             )
+        # Phase 13 follow-up (docs/system-design/18-phase-13-architecture-
+        # tier-questions-design.md §18.8): logged at INFO rather than
+        # DEBUG specifically because "why did my plan come out this size"
+        # turned out to be genuinely hard to diagnose from the outside --
+        # two real sessions produced a confusing question count before
+        # this line existed, and there was no way to tell from the
+        # outside whether duration_minutes, max_questions_explicit, or
+        # the resulting budget were what the person expected without
+        # instrumenting the process by hand.
+        logger.info(
+            "Planning session %s: duration_minutes=%s max_questions_explicit=%s "
+            "-> max_questions=%s",
+            session_id, duration_minutes, self.config.max_questions_explicit,
+            planning_config.max_questions,
+        )
         plan = build_coverage_plan(profile, planning_config)
         self.store.save_plan(session_id, plan)
         self.ui.stage_completed("Planning", f"{len(plan)} question(s) planned")

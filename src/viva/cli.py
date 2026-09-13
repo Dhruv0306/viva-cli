@@ -12,6 +12,7 @@ stubs of `start`.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
 from pathlib import Path
 
@@ -71,6 +72,18 @@ def main(
     ),
 ) -> None:
     """viva-cli"""
+    # No logging configuration existed anywhere in this codebase before
+    # this -- every logger.info()/logger.debug() call (e.g. orchestrator
+    # .py's planning-decision log, docs/system-design/18-phase-13-
+    # architecture-tier-questions-design.md §18.8) was silently swallowed
+    # by Python's default root-logger level (WARNING), with no way to
+    # tell from the outside. INFO by default, since "what did the tool
+    # actually decide and why" turned out to be a real diagnosability gap
+    # in practice, not a hypothetical one. Only configured here (the CLI
+    # app callback), not in web/app.py's create_app(), so importing the
+    # FastAPI app directly for tests doesn't also reconfigure pytest's
+    # global logging.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 @app.command()
