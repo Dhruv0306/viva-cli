@@ -202,6 +202,24 @@ def test_explicit_max_questions_overrides_duration_derived_default(monkeypatch):
     assert config.max_questions == 3
 
 
+def test_max_questions_explicit_flag_true_when_env_var_set(monkeypatch):
+    # Phase 13 follow-up (docs/system-design/18-phase-13-architecture-
+    # tier-questions-design.md §18.7): Orchestrator.start() needs this
+    # flag to know whether a per-session duration_minutes override
+    # should reshape the plan's budget, or whether an explicit pin
+    # should be left alone regardless of what any session asks for.
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("MAX_QUESTIONS", "3")
+    config = Config.load(env_file=None)
+    assert config.max_questions_explicit is True
+
+
+def test_max_questions_explicit_flag_false_when_derived(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    config = Config.load(env_file=None)
+    assert config.max_questions_explicit is False
+
+
 def test_invalid_max_files_raises(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
     monkeypatch.setenv("MAX_FILES", "not-a-number")

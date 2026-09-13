@@ -111,6 +111,15 @@ class Config:
     # --- Session ---
     viva_duration_minutes: int
     max_questions: int
+    # Phase 13 (docs/system-design/18-phase-13-architecture-tier-
+    # questions-design.md §18.5): True iff MAX_QUESTIONS was set
+    # explicitly rather than derived from viva_duration_minutes.
+    # Orchestrator.start() needs this to decide whether a per-session
+    # duration_minutes override should reshape the plan's budget, or
+    # whether an explicit pin takes precedence over any session's
+    # chosen duration -- see §18.7 for why the derived value alone
+    # can't answer that question.
+    max_questions_explicit: bool
     max_followup_depth: int
     session_retention_days: int
 
@@ -219,6 +228,7 @@ class Config:
         # MAX_QUESTIONS still wins when a caller sets it explicitly, so
         # this only changes the default, not the override.
         default_max_questions = str(max(1, viva_duration_minutes // 2))
+        max_questions_explicit = os.getenv("MAX_QUESTIONS") is not None
         max_questions = _get_positive_int("MAX_QUESTIONS", default_max_questions)
         # 0 is a legitimate choice here (no follow-ups at all), so this is
         # non-negative rather than strictly positive like the others.
@@ -315,6 +325,7 @@ class Config:
             ollama_host=ollama_host,
             viva_duration_minutes=viva_duration_minutes,
             max_questions=max_questions,
+            max_questions_explicit=max_questions_explicit,
             max_followup_depth=max_followup_depth,
             session_retention_days=session_retention_days,
             max_files=max_files,

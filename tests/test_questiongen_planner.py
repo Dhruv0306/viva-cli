@@ -26,6 +26,7 @@ def _config(max_questions: int = 8) -> Config:
     return Config(
         llm_model="test-model", embedding_model="nomic-embed-text", temperature=0.3,
         ollama_host="http://localhost:11434", viva_duration_minutes=30, max_questions=max_questions,
+        max_questions_explicit=True,
         max_followup_depth=1, session_retention_days=7, max_files=500, test_file_quota_pct=10,
         github_token=None, map_reduce_batch_size=8, max_reduce_context_tokens=100_000,
         line_window_size=60, line_window_overlap=15, vector_db_path="./data/chroma", top_k_retrieval=5,

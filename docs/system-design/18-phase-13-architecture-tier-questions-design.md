@@ -280,3 +280,47 @@ document why, not just what.
 - The embedding-similarity duplicate check (`_is_semantic_duplicate`) —
   untouched; it already operates session-wide regardless of category or
   topic.
+
+## 18.8 Real-World Bug: Session Duration Never Reached the Planner
+
+Found via a real timed session against `Dhruv0306/throttle4j`, web UI,
+5-minute duration selected. The resulting report showed 9 questions
+planned — exactly `_BASELINE_SLOTS` (5 architecture topics + 4 other
+categories), with zero room for the Pass 1.5 top-up — regardless of the
+5-minute choice.
+
+**Root cause:** `Config.max_questions` is computed once, at
+`Config.load()` time, from the *process-wide* `VIVA_DURATION_MINUTES`
+environment value. `Orchestrator.start()` already accepted a per-call
+`duration_minutes` (both the CLI's `--duration` flag and the web UI's
+session-creation request already threaded a per-session choice all the
+way to `start()`), but that value was used *only* to compute
+`duration_seconds` for the live-session timer. `_run_planning()` called
+`build_coverage_plan(profile, self.config)` — `self.config` was fixed at
+process startup, so it had no way to know this particular session had
+asked for something shorter (or longer) than the `.env` default. §18.5's
+"budget scales with duration" fix scaled the wrong duration: the
+environment-level default, not the session-level actual.
+
+**Fix:** `Config` gains `max_questions_explicit: bool`, set at load time
+from whether `MAX_QUESTIONS` was present in the environment at all — this
+is the piece that was missing before, since a plain `int` value can't
+distinguish "the operator pinned this" from "this was derived and could
+legitimately be recomputed for a different duration." `start()` computes
+`effective_duration_minutes` (the caller's explicit choice, or
+`config.viva_duration_minutes` as before) and passes it to
+`_run_planning()`, which builds a per-session planning `Config` via
+`dataclasses.replace()` — recomputing `max_questions` from *this
+session's* duration — whenever `max_questions_explicit` is `False`. An
+explicit `MAX_QUESTIONS` pin is left untouched regardless of what any
+individual session asks for, matching the existing "explicit always
+wins" rule from §18.5.
+
+This is the same discipline as any other bug found via real-world
+testing (docs/system-design/10-phase-5-questiongen-design.md §10.8,
+§10.9, §10.10; docs/system-design/11-phase-6-session-loop-design.md
+§11.9) — documented here rather than fixed silently, even though it
+surfaced after this phase's patches had already been delivered as a
+series. Per the project's standing rule, this is landed as a new patch
+on top of the already-delivered series, not a rebase of any prior
+commit.

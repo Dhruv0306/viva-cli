@@ -31,7 +31,7 @@ from viva.web.app import create_app
 def _config(tmp_path):
     return Config(
         llm_model="gemma4:e4b", embedding_model="nomic-embed-text", temperature=0.3,
-        ollama_host="http://localhost:11434", viva_duration_minutes=30, max_questions=20,
+        ollama_host="http://localhost:11434", viva_duration_minutes=30, max_questions=20, max_questions_explicit=True,
         max_followup_depth=2, session_retention_days=30, max_files=200,
         test_file_quota_pct=30, github_token=None, map_reduce_batch_size=10,
         max_reduce_context_tokens=None, line_window_size=60, line_window_overlap=10,

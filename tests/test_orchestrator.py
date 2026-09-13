@@ -63,6 +63,7 @@ def _config(tmp_path, **overrides) -> Config:
     values = dict(
         llm_model="test-model", embedding_model="nomic-embed-text", temperature=0.3,
         ollama_host="http://localhost:11434", viva_duration_minutes=30, max_questions=8,
+        max_questions_explicit=True,
         max_followup_depth=1, session_retention_days=7, max_files=500, test_file_quota_pct=10,
         github_token=None, map_reduce_batch_size=8, max_reduce_context_tokens=100_000,
         line_window_size=60, line_window_overlap=15, vector_db_path="./data/chroma",
@@ -185,6 +186,79 @@ def test_start_runs_full_pipeline_to_complete(tmp_path, monkeypatch):
     assert ui.summary.questions_answered == 2
     assert ui.summary.questions_asked == 2
     assert ("session_started", session_id) in ui.events
+
+
+def test_start_derives_max_questions_from_session_duration_when_not_explicit(tmp_path, monkeypatch):
+    """Regression test: reported via a real 5-minute web-UI session
+    against Dhruv0306/throttle4j that still produced a 9-question plan.
+    self.config.max_questions had been fixed at process-startup time
+    from the .env file's process-wide VIVA_DURATION_MINUTES, and the
+    per-session duration_minutes passed to start() never reached
+    build_coverage_plan() at all -- see docs/system-design/
+    18-phase-13-architecture-tier-questions-design.md §18.7 for the full
+    root-cause trace.
+    """
+    config = _config(tmp_path, viva_duration_minutes=30, max_questions=15, max_questions_explicit=False)
+    _patch_pipeline(monkeypatch)
+    captured_configs = []
+
+    def spying_build(profile, cfg):
+        captured_configs.append(cfg)
+        return _fake_plan()
+
+    monkeypatch.setattr(orchestrator_module, "build_coverage_plan", spying_build)
+    ui = FakeSessionUI(answers=["a1", "a2"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    orch.start("https://github.com/owner/repo", branch="main", duration_minutes=5)
+
+    # The first call is _run_planning's initial plan build; a second call
+    # may follow from _replenish_plan once the 2-item fake plan drains
+    # (expected here, since 5 minutes is plenty of unused timer left) --
+    # only the first call's ceiling is what this regression is about.
+    assert captured_configs[0].max_questions == 2  # 5 // 2, not the process-wide default of 15
+
+
+def test_start_keeps_explicit_max_questions_regardless_of_session_duration(tmp_path, monkeypatch):
+    # An explicit MAX_QUESTIONS pin is a deliberate operator choice and
+    # must not be silently overridden just because one particular
+    # session asked for a short duration.
+    config = _config(tmp_path, viva_duration_minutes=30, max_questions=15, max_questions_explicit=True)
+    _patch_pipeline(monkeypatch)
+    captured_configs = []
+
+    def spying_build(profile, cfg):
+        captured_configs.append(cfg)
+        return _fake_plan()
+
+    monkeypatch.setattr(orchestrator_module, "build_coverage_plan", spying_build)
+    ui = FakeSessionUI(answers=["a1", "a2"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    orch.start("https://github.com/owner/repo", branch="main", duration_minutes=5)
+
+    assert captured_configs[0].max_questions == 15
+
+
+def test_start_falls_back_to_config_duration_when_none_given(tmp_path, monkeypatch):
+    # No per-call duration_minutes -- falls back to
+    # config.viva_duration_minutes for both the timer and the derived
+    # max_questions, same as before this fix existed.
+    config = _config(tmp_path, viva_duration_minutes=10, max_questions=5, max_questions_explicit=False)
+    _patch_pipeline(monkeypatch)
+    captured_configs = []
+
+    def spying_build(profile, cfg):
+        captured_configs.append(cfg)
+        return _fake_plan()
+
+    monkeypatch.setattr(orchestrator_module, "build_coverage_plan", spying_build)
+    ui = FakeSessionUI(answers=["a1", "a2"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    orch.start("https://github.com/owner/repo", branch="main")
+
+    assert captured_configs[0].max_questions == 5  # 10 // 2, matching config's own derived default
 
 
 def test_start_persists_profile_for_resume(tmp_path, monkeypatch):

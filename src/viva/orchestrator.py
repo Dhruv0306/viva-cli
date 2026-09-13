@@ -150,7 +150,8 @@ class Orchestrator:
         session_name: str | None = None,
     ) -> str:
         session_id = uuid.uuid4().hex[:12]
-        duration_seconds = float((duration_minutes or self.config.viva_duration_minutes) * 60)
+        effective_duration_minutes = duration_minutes or self.config.viva_duration_minutes
+        duration_seconds = float(effective_duration_minutes * 60)
 
         # Row created (status=INGESTING) and session_id handed to the UI
         # before cloning starts, so it's captured even if this crashes --
@@ -163,7 +164,7 @@ class Orchestrator:
 
         try:
             profile, collection_name = self._run_setup_pipeline(session_id, repo_url, branch)
-            plan = self._run_planning(session_id, profile)
+            plan = self._run_planning(session_id, profile, effective_duration_minutes)
         except Exception as exc:
             self.store.set_failed(session_id, str(exc))
             self.ui.error(f"Session setup failed: {exc}")
@@ -213,10 +214,35 @@ class Orchestrator:
         )
         return profile, index_result.collection_name
 
-    def _run_planning(self, session_id: str, profile: ProjectProfile) -> list[QuestionPlanItem]:
+    def _run_planning(
+        self, session_id: str, profile: ProjectProfile, duration_minutes: int
+    ) -> list[QuestionPlanItem]:
+        """Builds the initial coverage plan (FR12) and persists it.
+
+        `duration_minutes` is the *effective* duration for this specific
+        session (the caller's explicit choice, or `self.config
+        .viva_duration_minutes` when none was given -- see `start()`),
+        not necessarily the same as `self.config.viva_duration_minutes`
+        itself. Found via a real session (docs/system-design/
+        18-phase-13-architecture-tier-questions-design.md §18.7): a
+        5-minute session picked in the web UI still produced a 9-question
+        plan, because `self.config.max_questions` had already been fixed
+        at process-startup time from the `.env` file's global
+        `VIVA_DURATION_MINUTES`, and `build_coverage_plan(profile,
+        self.config)` had no way to know this particular session asked
+        for something shorter. `duration_minutes` here is what closes
+        that gap -- when `MAX_QUESTIONS` wasn't pinned explicitly, the
+        budget used for *this* plan is rederived from *this* session's
+        actual duration, not the process-wide default.
+        """
         self.store.update_status(session_id, "PLANNING")
         self.ui.stage_started("Planning question coverage")
-        plan = build_coverage_plan(profile, self.config)
+        planning_config = self.config
+        if not self.config.max_questions_explicit:
+            planning_config = dataclasses.replace(
+                self.config, max_questions=max(1, duration_minutes // 2)
+            )
+        plan = build_coverage_plan(profile, planning_config)
         self.store.save_plan(session_id, plan)
         self.ui.stage_completed("Planning", f"{len(plan)} question(s) planned")
         return plan
