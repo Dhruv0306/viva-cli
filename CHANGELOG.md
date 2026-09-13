@@ -9,6 +9,35 @@ for general use."
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-13
+
+Phase 13 (architecture-tier questions) plus three real-world fixes found
+while validating it against timed sessions, and a CI change.
+
+### Added
+
+- Architecture-tier questions: the `architecture` category is now spread
+  across an extensible set of topics (system overview, pipeline/data
+  flow, security boundaries, external integrations, concurrency) instead
+  of a single guaranteed slot, each capable of holding more than one
+  question. Every architecture-topic question is asked ahead of the
+  other four categories in a session, rather than interleaved with them
+  from question one -- previously `architecture` shared a system prompt
+  with `implementation_detail` that demanded exact-function-level
+  specificity, so real architecture questions came out reading like "why
+  did you use this particular line of code" instead of "how does X flow
+  through Y."
+- The question budget now scales with each session's own chosen
+  duration (roughly one question per two minutes) instead of a flat
+  default, and a session that gets answered faster than expected has its
+  plan extended rather than ending early with real time still on the
+  clock. An explicit `MAX_QUESTIONS` still overrides this regardless of
+  session duration, for anyone who wants a fixed count.
+- CI now tests Python 3.11, 3.12, and 3.13 across both Ubuntu and
+  Windows -- one Python version at a time (each version's two-OS pair
+  runs in parallel with itself, but the next version doesn't start until
+  the current one finishes).
+
 ### Changed
 
 - Widened `rich` from `>=13.7,<14.0` to `>=13.7,<16.0` (Dependabot).
@@ -16,6 +45,27 @@ for general use."
   (Dependabot).
 - Bumped `actions/checkout` from `v4` to `v7` and `actions/setup-python`
   from `v5` to `v7` in `tests.yml` and `release.yml` (Dependabot).
+
+### Fixed
+
+Three real-world bugs found via actual timed sessions against real
+repos (not caught by the test suite) while validating the duration-based
+question budget above -- full write-up in
+`docs/system-design/18-phase-13-architecture-tier-questions-design.md`
+§18.7-§18.8:
+
+- The question budget was being derived from the server process's
+  global default duration at startup, not the duration actually chosen
+  for an individual session -- a 5-minute session picked in the browser
+  could still plan a 30-minute-sized set of questions.
+- `.env.example` shipped `MAX_QUESTIONS` set explicitly (uncommented),
+  so the standard "copy the example file" setup step silently opted
+  every fresh install out of duration-based scaling entirely, with
+  nothing indicating why.
+- There was no logging configuration anywhere in the codebase -- even
+  after the two fixes above, there was no way to see from outside the
+  process what duration or question-budget decision a session had
+  actually made.
 
 ## [0.1.0] - 2026-09-11
 

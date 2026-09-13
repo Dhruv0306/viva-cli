@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viva-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "A local-LLM RAG tool that conducts a timed, code-grounded viva on a GitHub project."
 readme = "README.md"
 requires-python = ">=3.11"
