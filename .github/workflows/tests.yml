@@ -1,5 +1,14 @@
 name: Tests
 
+# Three Python versions x two OSes, but deliberately not one 3x2 matrix
+# run all at once: each Python version's two-OS pair (ubuntu + windows,
+# run in parallel with each other) must finish before the next Python
+# version starts -- 3.11 first, then 3.12, then 3.13, chained via
+# `needs:`. Splitting into three jobs is the tradeoff for that ordering
+# guarantee: a single `strategy.matrix` with `max-parallel` only caps
+# how many legs run at once, it doesn't guarantee which legs GitHub
+# Actions picks first, so it can't express "one Python version's pair at
+# a time, in this specific version order" on its own.
 on:
   push:
     branches: ['**']
@@ -7,8 +16,8 @@ on:
     branches: [main]
 
 jobs:
-  pytest:
-    name: pytest (${{ matrix.os }}, py${{ matrix.python-version }})
+  pytest-py311:
+    name: pytest (${{ matrix.os }}, py3.11)
     runs-on: ${{ matrix.os }}
     strategy:
       # Don't cancel the whole matrix if one leg fails -- Windows-specific
@@ -18,15 +27,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.11
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
           cache: pip
 
       - name: Install viva-cli (dev)
@@ -47,4 +55,52 @@ jobs:
         # workflow is ever moved to a self-hosted runner or the repo
         # later enables egress restrictions, that's the first thing to
         # check if analyzer tests start failing only in CI.
+        run: pytest -q
+
+  pytest-py312:
+    name: pytest (${{ matrix.os }}, py3.12)
+    needs: pytest-py311
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install viva-cli (dev)
+        run: pip install -e ".[dev]"
+
+      - name: Run pytest
+        run: pytest -q
+
+  pytest-py313:
+    name: pytest (${{ matrix.os }}, py3.13)
+    needs: pytest-py312
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install viva-cli (dev)
+        run: pip install -e ".[dev]"
+
+      - name: Run pytest
         run: pytest -q
