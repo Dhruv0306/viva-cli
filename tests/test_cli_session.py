@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 from viva.cli import app
 from viva.ingest.clone import CloneError
 from viva.orchestrator import (
+    InvalidParametersError,
     OrchestratorError,
     SessionAlreadyCompleteError,
     SessionNotFoundError,
@@ -86,6 +87,20 @@ def test_start_clone_error_exits_2(mocker, monkeypatch, tmp_path):
     mocker.patch("viva.cli.Orchestrator", return_value=fake)
 
     result = runner.invoke(app, ["start", "not-a-real-url"])
+
+    assert result.exit_code == 2
+
+
+def test_start_invalid_parameters_error_exits_2(mocker, monkeypatch, tmp_path):
+    # docs/system-design/19-panel-review-findings-2026-09.md §19.3.1 --
+    # bad-input rejections (a non-positive --duration) get the same
+    # exit code as a bad repo_url, not the generic OrchestratorError
+    # exit(1) an unexpected pipeline failure gets.
+    _patch_env_and_store(monkeypatch, mocker, tmp_path)
+    fake = _FakeOrchestrator(start_exc=InvalidParametersError("duration_minutes must be positive, got 0."))
+    mocker.patch("viva.cli.Orchestrator", return_value=fake)
+
+    result = runner.invoke(app, ["start", "https://github.com/owner/repo", "--duration", "0"])
 
     assert result.exit_code == 2
 

@@ -27,7 +27,7 @@ from viva.evaluator import Evaluator
 from viva.indexer import index_repo
 from viva.indexer.store import VectorStore
 from viva.ingest import ingest_repo
-from viva.ingest.clone import CloneError
+from viva.ingest.clone import CloneError, validate_repo_url
 from viva.llm_client import LLMClient, OllamaClient
 from viva.profile import ProjectProfile
 from viva.questiongen import build_coverage_plan, generate_question
@@ -114,6 +114,18 @@ class SessionNotResumableError(OrchestratorError):
     see `NOT_RESUMABLE_PRE_SESSION_STATUSES`."""
 
 
+class InvalidParametersError(OrchestratorError):
+    """Raised when a caller-supplied session parameter is malformed --
+    e.g. a non-positive `duration_minutes` (docs/system-design/
+    19-panel-review-findings-2026-09.md §19.3.1). Distinct from a
+    generic `OrchestratorError` the same way `SessionNotFoundError`/
+    `SessionAlreadyCompleteError`/`SessionNotResumableError` already are,
+    so both `cli.py` and `web/app.py` can map "the caller passed a bad
+    value" to a specific exit code / HTTP status ahead of their
+    respective catch-alls, rather than the generic "unexpected failure"
+    code path."""
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -152,8 +164,26 @@ class Orchestrator:
         duration_minutes: int | None = None,
         session_name: str | None = None,
     ) -> str:
+        # Validate before any side effect (session-id generation, the row
+        # write below) -- see docs/system-design/20-phase-14-security-
+        # hardening-design.md §20.1.3/§20.2. validate_repo_url()'s return
+        # value is discarded here; it exists purely to raise CloneError
+        # early for a malformed repo_url so no session row gets persisted
+        # for a request that should never have been accepted. The real
+        # slug is derived again, cheaply, inside clone_repo() moments
+        # later -- not worth threading through as a parameter just to
+        # avoid recomputing a regex match.
+        validate_repo_url(repo_url)
+        if duration_minutes is not None and duration_minutes <= 0:
+            raise InvalidParametersError(
+                f"duration_minutes must be positive, got {duration_minutes}."
+            )
+
         session_id = uuid.uuid4().hex[:12]
-        effective_duration_minutes = duration_minutes or self.config.viva_duration_minutes
+        effective_duration_minutes = (
+            duration_minutes if duration_minutes is not None
+            else self.config.viva_duration_minutes
+        )
         duration_seconds = float(effective_duration_minutes * 60)
 
         # Row created (status=INGESTING) and session_id handed to the UI

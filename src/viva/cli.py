@@ -32,6 +32,7 @@ from viva.ingest import ingest_repo
 from viva.ingest.clone import CloneError
 from viva.llm_client import OllamaClient
 from viva.orchestrator import (
+    InvalidParametersError,
     Orchestrator,
     OrchestratorError,
     SessionAlreadyCompleteError,
@@ -475,7 +476,7 @@ def start(
     orchestrator, store = _build_orchestrator(config)
     try:
         orchestrator.start(repo_url, branch=branch, duration_minutes=duration, session_name=session_name)
-    except CloneError as exc:
+    except (CloneError, InvalidParametersError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=2)
     except OrchestratorError as exc:

@@ -261,6 +261,77 @@ def test_start_falls_back_to_config_duration_when_none_given(tmp_path, monkeypat
     assert captured_configs[0].max_questions == 5  # 10 // 2, matching config's own derived default
 
 
+def test_start_rejects_zero_duration_minutes_before_persisting_a_session(tmp_path, monkeypatch):
+    # docs/system-design/19-panel-review-findings-2026-09.md §19.3.1 --
+    # duration_minutes or self.config.viva_duration_minutes used to treat
+    # an explicit 0 the same as None and silently fall back to the
+    # config default. It must now be rejected outright, and rejected
+    # before any session row is written.
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    create_session_calls = []
+    monkeypatch.setattr(
+        store, "create_session",
+        lambda *a, **kw: create_session_calls.append((a, kw)),
+    )
+
+    with pytest.raises(orchestrator_module.InvalidParametersError):
+        orch.start("https://github.com/owner/repo", duration_minutes=0)
+
+    assert create_session_calls == []
+
+
+def test_start_rejects_negative_duration_minutes_before_persisting_a_session(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    create_session_calls = []
+    monkeypatch.setattr(
+        store, "create_session",
+        lambda *a, **kw: create_session_calls.append((a, kw)),
+    )
+
+    with pytest.raises(orchestrator_module.InvalidParametersError):
+        orch.start("https://github.com/owner/repo", duration_minutes=-5)
+
+    assert create_session_calls == []
+
+
+def test_start_rejects_malformed_repo_url_before_persisting_a_session(tmp_path, monkeypatch):
+    # docs/system-design/19-panel-review-findings-2026-09.md §19.5.2 --
+    # a repo_url that can never clone shouldn't get a session row either.
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    create_session_calls = []
+    monkeypatch.setattr(
+        store, "create_session",
+        lambda *a, **kw: create_session_calls.append((a, kw)),
+    )
+
+    with pytest.raises(orchestrator_module.CloneError):
+        orch.start("https://attacker.example/x/github.com/owner/repo")
+
+    assert create_session_calls == []
+
+
+def test_start_still_accepts_none_duration_minutes(tmp_path, monkeypatch):
+    # No regression on the existing default-fallback path.
+    config = _config(tmp_path, viva_duration_minutes=10)
+    _patch_pipeline(monkeypatch)
+    ui = FakeSessionUI(answers=["a1", "a2"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    session_id = orch.start("https://github.com/owner/repo")
+
+    record = store.get_session(session_id)
+    assert record.duration_seconds == 600.0  # 10 minutes, config default
+
+
 def test_start_persists_profile_for_resume(tmp_path, monkeypatch):
     config = _config(tmp_path)
     _patch_pipeline(monkeypatch)
