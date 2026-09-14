@@ -162,6 +162,97 @@ Each phase is independently testable and produces a working, demoable slice.
   `QUESTIONS_EXHAUSTED` early, and a thin repo with no groundable
   security/concurrency code skips those topics without error.
 
+## Phase 14 — Input Validation & Quick Security Fixes
+- Closes the fast, low-complexity items from the September 2026 panel
+  review (`docs/system-design/19-panel-review-findings-2026-09.md`),
+  bundled into one phase because each fix is small, independently
+  testable, and doesn't require a design decision to be made first, only
+  a regression test written against pre-fix code, per the usual pattern.
+- **§19.4.3 — validate `repo_url` scheme before it reaches `git clone`.**
+  Parse with `urlsplit` and reject anything outside an explicit
+  `{https, ssh}` allowlist before `clone.py` ever builds a clone URL.
+  Highest priority item in the whole review — the only one with a
+  plausible path to code execution rather than disclosure or corruption.
+- **§19.4.2 — fix the `GITHUB_TOKEN` host-bypass.** Validate the *parsed*
+  host from the same `urlsplit` call used for §19.4.3 (not a tail-anchored
+  regex against the raw string) before `_with_token` attaches the token.
+  One validation function change covers both this and §19.4.3.
+- **§19.5.1 — stop building the session-list table row with `innerHTML`.**
+  Switch `web/static/app.js`'s row construction to `textContent`
+  assignments, matching every other dynamic value in the same file.
+- **§19.5.2 — reject malformed `repo_url` at the API boundary** (empty,
+  absurdly long, no parseable scheme/netloc) before a session row is
+  persisted, so garbage values don't reach the store in the first place.
+- **§19.3.1 — fix the `duration_minutes` falsy-zero bug.** Add
+  `Field(ge=1)` to `StartSessionRequest.duration_minutes`, and replace the
+  `duration_minutes or self.config.viva_duration_minutes` fallback in
+  `orchestrator.py` with an explicit `is not None` check.
+- **Exit criteria:** a fixture URL of the exact
+  `https://attacker.example/x/github.com/owner/repo` shape (§19.4.2) is
+  confirmed to never receive the token, both a non-`{https,ssh}`-scheme
+  `repo_url` and a `duration_minutes` of `0` and `-1` are rejected with a
+  clear error before any session row is written, and the session-list page
+  renders a `repo_url` containing `<img src=x onerror=...>` as inert text
+  in the browser, not as executed markup. Each of the five items above
+  gets its own regression test confirmed to fail against pre-fix code.
+
+## Phase 15 — `viva serve` Authentication
+- Addresses §19.4.1: every route in `web/app.py` is currently
+  unauthenticated, and `--host 0.0.0.0` is a normal, one-flag-away choice
+  for anyone demoing the tool on a shared network.
+- Unlike Phase 14, this needs a design decision confirmed before
+  implementation, per the usual "agree before code" step — candidates
+  worth weighing: a loud warning gate on any non-loopback `--host` value
+  (cheapest, lowest friction, no real access control); a shared-secret
+  token printed at startup and required on every route once bound
+  non-locally; or a fuller session-cookie/login flow, which is likely
+  disproportionate for a local-first single-user tool and should be
+  argued against explicitly in the design doc rather than silently
+  skipped.
+- Design doc: `docs/system-design/20-phase-14-15-security-hardening-
+  design.md` (to be written before implementation begins, covering both
+  Phase 14 and this phase, since Phase 14's `urlsplit` validation work and
+  this phase's threat model overlap).
+- **Exit criteria:** `viva serve --host 0.0.0.0` either refuses to start
+  without an explicit second acknowledgment flag, or requires a
+  credential on every route once bound non-locally — the chosen behavior
+  is validated against a real non-loopback bind, not just a unit test of
+  the check itself.
+
+## Phase 16 — Grading Integrity & Retrieval Observability
+- Groups the remaining medium/low items that affect question and
+  evaluation quality rather than infrastructure security, from
+  `docs/system-design/19-panel-review-findings-2026-09.md`:
+- **§19.1.1 — instruction-injection boundary for retrieved repo content.**
+  Wrap retrieved chunks in an explicit untrusted-content delimiter in both
+  the question-gen and evaluator system prompts, with a line stating that
+  content inside it is data to reason about, never instructions to
+  follow. Add a golden-repo fixture (matching the Phase 3 fixture
+  strategy) containing a deliberately adversarial docstring.
+- **§19.1.2 — fallback for empty per-topic architecture retrieval.** Add a
+  minimum-relevance/chunk threshold per `ARCHITECTURE_TOPICS` topic;
+  below it, skip the topic and redistribute its question budget rather
+  than asking a thin, weakly-grounded question.
+- **§19.6.2 — retrieval-quality logging.** Extend the Phase 13
+  planning-decision log line to also record chunk count and a
+  relevance-score summary per topic at planning time.
+- **Exit criteria:** the adversarial-docstring fixture is confirmed not to
+  flip the evaluator's classification; a thin/sparse test repo triggers
+  at least one topic skip with a corresponding log line, rather than a
+  generic question reaching the candidate; and Phase 13's existing
+  exit-criteria repos are re-run to confirm no regression in question
+  grounding quality.
+
+## Backlog (not yet scheduled)
+- **§19.2.2 — split `orchestrator.py`'s planning/ranking logic into its
+  own module.** A maintainability refactor, not a behavior change; no
+  user-facing exit criteria to attach it to. Deferred the same way the
+  Phase 9 web-UI stretch goal was deferred into its own phase rather than
+  forced into an unrelated one — revisit once Phase 16 or a future phase
+  needs to touch planning/ranking again, since that's the natural trigger
+  to do the split rather than as a standalone phase with no functional
+  payoff.
+
 ## Cross-Cutting: Testing
 - A small fixture set of real "golden repos" (a few small, varied-language
   repos) is checked into the test suite from Phase 2 onward and reused
