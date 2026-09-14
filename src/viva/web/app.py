@@ -29,7 +29,9 @@ from starlette.concurrency import run_in_threadpool
 from viva.cleanup import run_cleanup
 from viva.config import Config
 from viva.indexer.store import VectorStore
+from viva.ingest.clone import CloneError
 from viva.orchestrator import (
+    InvalidParametersError,
     OrchestratorError,
     SessionAlreadyCompleteError,
     SessionNotFoundError,
@@ -80,7 +82,15 @@ def create_app(config: Config) -> FastAPI:
                 body.repo_url, branch=body.branch,
                 duration_minutes=body.duration_minutes, session_name=body.session_name,
             )
-        except Exception as exc:  # noqa: BLE001 - registry.start_session() only raises here for a failure *before* a session_id exists (SessionStore/config problem), the same class of thing cli.py's `start` command maps to exit code 1
+        except (CloneError, InvalidParametersError) as exc:
+            # A malformed repo_url or a non-positive duration_minutes --
+            # rejected by Orchestrator.start() before a session_id ever
+            # exists, same as cli.py's `start` command maps these to
+            # exit code 2. See docs/system-design/19-panel-review-
+            # findings-2026-09.md §19.3.1/§19.5.2 and docs/system-design/
+            # 20-phase-14-security-hardening-design.md §20.3.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - any other failure before a session_id exists (SessionStore/config problem) is unexpected, the same class of thing cli.py's `start` command maps to exit code 1
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return {"session_id": session_id}
 

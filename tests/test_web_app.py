@@ -17,7 +17,9 @@ import xml.etree.ElementTree as ET
 from fastapi.testclient import TestClient
 
 from viva.config import Config
+from viva.ingest.clone import CloneError
 from viva.orchestrator import (
+    InvalidParametersError,
     SessionAlreadyCompleteError,
     SessionNotFoundError,
     SessionNotResumableError,
@@ -144,6 +146,31 @@ def test_start_session_failure_returns_500(mocker, tmp_path):
     response = client.post("/api/sessions", json={"repo_url": "https://github.com/owner/repo"})
 
     assert response.status_code == 500
+
+
+def test_start_session_clone_error_returns_400(mocker, tmp_path):
+    # docs/system-design/19-panel-review-findings-2026-09.md §19.5.2 --
+    # a malformed repo_url is bad input, not an unexpected server error.
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.start_exc = CloneError("Could not derive a github.com owner/repo slug from ...")
+
+    response = client.post("/api/sessions", json={"repo_url": "not-a-real-url"})
+
+    assert response.status_code == 400
+
+
+def test_start_session_invalid_parameters_error_returns_400(mocker, tmp_path):
+    # docs/system-design/19-panel-review-findings-2026-09.md §19.3.1 --
+    # a non-positive duration_minutes is also bad input, not a 500 and
+    # not the 422 a Pydantic Field constraint would have produced.
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.start_exc = InvalidParametersError("duration_minutes must be positive, got 0.")
+
+    response = client.post(
+        "/api/sessions", json={"repo_url": "https://github.com/owner/repo", "duration_minutes": 0},
+    )
+
+    assert response.status_code == 400
 
 
 # -- POST /api/sessions/{id}/resume ------------------------------------------
