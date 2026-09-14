@@ -129,5 +129,16 @@ history of what was tried and rejected along the way.
   replenishment), and deriving `max_questions` from session duration with
   live-loop replenishment instead of ending early on `QUESTIONS_EXHAUSTED`.
 
+- **[19-panel-review-findings-2026-09.md](19-panel-review-findings-2026-09.md)**
+  — findings from a September 2026 external panel review of the live
+  codebase (not just the design docs), grouped by reviewer persona: a
+  git-clone URL validation gap that reaches `GitPython`'s `clone_from`
+  unchecked, a related `GITHUB_TOKEN` exfiltration path via a tail-anchored
+  regex bypass, a stored XSS in the session list's `innerHTML` usage, the
+  `serve` command's no-auth-by-default posture, a prompt-injection boundary
+  gap between retrieved repo content and system instructions, and the
+  `duration_minutes` falsy-zero/negative-value bug. Nothing in it has been
+  fixed yet — it's a findings record to turn into a patch series.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
