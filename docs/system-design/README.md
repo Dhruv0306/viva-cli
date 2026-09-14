@@ -140,5 +140,17 @@ history of what was tried and rejected along the way.
   `duration_minutes` falsy-zero/negative-value bug. Nothing in it has been
   fixed yet — it's a findings record to turn into a patch series.
 
+- **[20-phase-14-security-hardening-design.md](20-phase-14-security-hardening-design.md)**
+  — the Phase 14 implementation design: why §19.4.2, §19.4.3, and §19.5.2
+  collapse into a single `validate_repo_url()` replacing `_repo_slug()`
+  rather than three separate checks, the new
+  `InvalidParametersError(OrchestratorError)` subtype for §19.3.1
+  following the existing three-subtype pattern, the exact
+  `web/app.py`/`cli.py` exception-to-status-code wiring, why
+  `duration_minutes` gets explicit validation instead of a Pydantic
+  `Field` constraint (422 vs. this API's documented 400 contract), the
+  `web/static/app.js` `textContent` fix for §19.5.1, and the full test
+  plan and bisect-safe patch ordering.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

@@ -168,6 +168,18 @@ Each phase is independently testable and produces a working, demoable slice.
   bundled into one phase because each fix is small, independently
   testable, and doesn't require a design decision to be made first, only
   a regression test written against pre-fix code, per the usual pattern.
+- Design doc: `docs/system-design/20-phase-14-security-hardening-
+  design.md`. Key decision: §19.4.2, §19.4.3, and §19.5.2 turned out to
+  be one fix, not three — all three trace back to `ingest/clone.py`'s
+  `_repo_slug()`, replaced by a single `validate_repo_url()` that both
+  `clone_repo()` and `Orchestrator.start()` call, rather than three
+  independently-maintained checks. §19.3.1 gets a new
+  `InvalidParametersError(OrchestratorError)` subtype, following the
+  same pattern as the three `OrchestratorError` subtypes that already
+  exist, so both `cli.py` and `web/app.py` can map it to the right
+  exit code / status code ahead of their generic catch-alls. §19.5.1 is
+  a one-file `innerHTML` → `textContent` fix with no Python-side
+  dependency.
 - **§19.4.3 — validate `repo_url` scheme before it reaches `git clone`.**
   Parse with `urlsplit` and reject anything outside an explicit
   `{https, ssh}` allowlist before `clone.py` ever builds a clone URL.
@@ -183,10 +195,12 @@ Each phase is independently testable and produces a working, demoable slice.
 - **§19.5.2 — reject malformed `repo_url` at the API boundary** (empty,
   absurdly long, no parseable scheme/netloc) before a session row is
   persisted, so garbage values don't reach the store in the first place.
-- **§19.3.1 — fix the `duration_minutes` falsy-zero bug.** Add
-  `Field(ge=1)` to `StartSessionRequest.duration_minutes`, and replace the
+- **§19.3.1 — fix the `duration_minutes` falsy-zero bug.** Replace the
   `duration_minutes or self.config.viva_duration_minutes` fallback in
-  `orchestrator.py` with an explicit `is not None` check.
+  `orchestrator.py` with an explicit `is not None` check, and reject
+  non-positive values via the new `InvalidParametersError` rather than a
+  Pydantic `Field` constraint (which would return `422`, not the `400`
+  this API's own documented contract specifies).
 - **Exit criteria:** a fixture URL of the exact
   `https://attacker.example/x/github.com/owner/repo` shape (§19.4.2) is
   confirmed to never receive the token, both a non-`{https,ssh}`-scheme
@@ -209,10 +223,9 @@ Each phase is independently testable and produces a working, demoable slice.
   disproportionate for a local-first single-user tool and should be
   argued against explicitly in the design doc rather than silently
   skipped.
-- Design doc: `docs/system-design/20-phase-14-15-security-hardening-
-  design.md` (to be written before implementation begins, covering both
-  Phase 14 and this phase, since Phase 14's `urlsplit` validation work and
-  this phase's threat model overlap).
+- Design doc: not yet written — to be drafted once Phase 14 is merged,
+  since it needs its own "agree before code" discussion rather than
+  reusing Phase 14's.
 - **Exit criteria:** `viva serve --host 0.0.0.0` either refuses to start
   without an explicit second acknowledgment flag, or requires a
   credential on every route once bound non-locally — the chosen behavior
