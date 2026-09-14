@@ -111,14 +111,23 @@
         const tr = document.createElement("tr");
         const shortId = s.session_id.length > 12 ? `${s.session_id.slice(0, 10)}\u2026` : s.session_id;
         const repoLabel = s.repo_slug || s.repo_url;
-        tr.innerHTML = `
-          <td title="${s.session_id}">${shortId}</td>
-          <td title="${repoLabel}">${repoLabel}</td>
-          <td>${s.status}</td>
-          <td>${s.updated_at}</td>
-          <td></td>
-        `;
-        const actionCell = tr.lastElementChild;
+        // repo_url is a raw, user-supplied string (docs/system-design/
+        // 19-panel-review-findings-2026-09.md §19.5.1) -- built with
+        // textContent/property assignment, not innerHTML, matching every
+        // other dynamic value in this file, so it can never be parsed as
+        // markup regardless of what a session's repo_url contains.
+        const idCell = document.createElement("td");
+        idCell.title = s.session_id;
+        idCell.textContent = shortId;
+        const repoCell = document.createElement("td");
+        repoCell.title = repoLabel;
+        repoCell.textContent = repoLabel;
+        const statusCell = document.createElement("td");
+        statusCell.textContent = s.status;
+        const updatedCell = document.createElement("td");
+        updatedCell.textContent = s.updated_at;
+        const actionCell = document.createElement("td");
+        tr.append(idCell, repoCell, statusCell, updatedCell, actionCell);
         // s.resumable comes straight from Orchestrator.resume()'s own
         // validation (is_resumable() in orchestrator.py) -- not
         // re-derived here, so this can't drift out of sync with what
