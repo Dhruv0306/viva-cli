@@ -256,6 +256,63 @@ Each phase is independently testable and produces a working, demoable slice.
   exit-criteria repos are re-run to confirm no regression in question
   grounding quality.
 
+## Phase 17 — CLI Logging Hygiene
+- Root cause: Phase 13's `logging.basicConfig(level=logging.INFO, ...)`
+  in `cli.py`'s `main()` callback configures the *root* logger, and
+  `httpx` (used for every Ollama call) logs each request at INFO and
+  propagates to the root logger by default, same as viva's own loggers.
+  The result, confirmed during Phase 14's real-world verification run:
+  a `viva start` session's terminal fills with
+  `httpx: HTTP Request: POST http://localhost:11434/api/... "HTTP/1.1
+  200 OK"` lines interleaved with the actual question/answer UI, one per
+  Ollama call (chat, embed, occasionally show) — noisy enough during a
+  live multi-question session to bury the planning-decision log line
+  Phase 13 specifically added for diagnosability.
+- **Not a removal.** The Ollama request trace has real debugging value
+  (confirming retries, spotting a hung request, correlating timing with
+  a slow answer) — silently dropping it trades one diagnosability gap
+  for another, the same mistake Phase 13's design doc already called out
+  for the planning-decision log. It moves to a file instead of stdout.
+- **Design:**
+  - A dedicated `logs/` directory (created if missing, alongside the
+    existing `session_db_path` convention rather than requiring its own
+    config field).
+  - One file per day, named `log_<YYYY_MM_DD>.log` (e.g.
+    `log_2026_09_15.log`), so a day's worth of Ollama request traces
+    stay together and the file naming makes retention trivial to reason
+    about.
+  - Only `httpx` (and `httpcore`, which `httpx` logs through for
+    lower-level connection events) get redirected to the file handler
+    with `propagate=False`, so they stop reaching the root logger's
+    console handler entirely. Viva's own loggers (`orchestrator`,
+    `evaluator`, `llm_client`, `analyzer.extract`) keep logging to
+    console exactly as Phase 13 set up — this phase narrows *what* goes
+    to the terminal, it doesn't touch the existing on-screen
+    diagnosability work.
+  - **3-day retention**, implemented as a housekeeping step (delete any
+    `logs/log_*.log` file more than 3 days old) run once at CLI startup
+    in the same `main()` callback that configures logging — the same
+    "run housekeeping on startup" shape `cleanup.py`'s `run_cleanup()`
+    already established for stale sessions, just scoped to log files
+    instead of session rows. No new CLI command needed; this isn't
+    something a user needs to trigger on demand the way session cleanup
+    is.
+  - Only configured in `cli.py`'s `main()`, matching the existing
+    Phase 13 comment's reasoning for why logging setup lives there and
+    not in `web/app.py`'s `create_app()` (so importing the FastAPI app
+    for tests doesn't also start writing log files or touch the
+    filesystem).
+- **Exit criteria:** a `viva start` session against a real Ollama
+  instance produces a clean terminal, no `httpx`/`httpcore` lines mixed
+  into the question/answer UI, while a same-day `logs/log_<today>.log`
+  file exists and contains those request traces. Running `viva start`
+  again the next day produces a second, separate dated file rather than
+  appending to the first. A log file dated more than 3 days ago is gone
+  after the next CLI invocation; one dated within the last 3 days is
+  untouched. Existing Phase 13 exit criteria (planning-decision log line
+  visible on the console) still hold — this phase must not silence that
+  the way it silences `httpx`.
+
 ## Backlog (not yet scheduled)
 - **§19.2.2 — split `orchestrator.py`'s planning/ranking logic into its
   own module.** A maintainability refactor, not a behavior change; no
