@@ -152,5 +152,18 @@ history of what was tried and rejected along the way.
   `web/static/app.js` `textContent` fix for §19.5.1, and the full test
   plan and bisect-safe patch ordering.
 
+- **[21-phase-15-serve-authentication-design.md](21-phase-15-serve-authentication-design.md)**
+  — the Phase 15 decision doc for §19.4.1 (`viva serve` has no auth).
+  Recommends a shared-secret bearer token, generated per invocation,
+  required on `/api/*` only when the bind address isn't loopback — the
+  default case is untouched. Weighs and rejects a warning-only flag
+  (doesn't actually stop deliberate access) and a full login system
+  (solves a multi-user problem this tool doesn't have). Traces every
+  network call in `app.js` to identify the three places a token needs
+  wiring in (the central `api()` helper, one raw `fetch()` for question
+  audio, and two `<a href>` report-download links that can't carry a
+  header and need the query-string form instead). Needs sign-off on the
+  recommendation before implementation starts.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

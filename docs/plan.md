@@ -223,9 +223,15 @@ Each phase is independently testable and produces a working, demoable slice.
   disproportionate for a local-first single-user tool and should be
   argued against explicitly in the design doc rather than silently
   skipped.
-- Design doc: not yet written — to be drafted once Phase 14 is merged,
-  since it needs its own "agree before code" discussion rather than
-  reusing Phase 14's.
+- Design doc: `docs/system-design/21-phase-15-serve-authentication-
+  design.md`. Recommends a shared-secret bearer token, generated fresh
+  per `viva serve` invocation, enforced on `/api/*` only and only when
+  the bind address isn't loopback — the default, frictionless case is
+  untouched. Two alternatives (warning-only flag; full login/session
+  system) are written up and rejected in the doc with reasoning. This
+  recommendation still needs to be confirmed before implementation
+  starts, per the "agree before code" step this phase was split out
+  for in the first place.
 - **Exit criteria:** `viva serve --host 0.0.0.0` either refuses to start
   without an explicit second acknowledgment flag, or requires a
   credential on every route once bound non-locally — the chosen behavior
