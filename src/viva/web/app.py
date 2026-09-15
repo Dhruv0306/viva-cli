@@ -16,12 +16,13 @@ input) -> 400, 3 (not found / wrong state) -> 404/409, 1 (unexpected)
 """
 from __future__ import annotations
 
+import secrets
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -46,6 +47,17 @@ from viva.web.web_session_ui import STAGE_AWAITING_ANSWER
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
+# docs/system-design/19-panel-review-findings-2026-09.md §19.4.1 /
+# docs/system-design/21-phase-15-serve-authentication-design.md §21.3 --
+# an explicit allowlist, not a "looks private" heuristic. Anything not in
+# this set (0.0.0.0, a real LAN IP, ...) requires a token; fail-open-to-
+# requiring-auth is the safer direction if this list is ever incomplete.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _requires_auth(host: str) -> bool:
+    return host not in _LOOPBACK_HOSTS
+
 
 class StartSessionRequest(BaseModel):
     repo_url: str
@@ -63,8 +75,16 @@ class CleanupRequest(BaseModel):
     all: bool = False
 
 
-def create_app(config: Config) -> FastAPI:
+def create_app(config: Config, host: str = "127.0.0.1") -> FastAPI:
     registry = SessionRegistry(config)
+    # §21.3/§21.4 -- every existing create_app(config) call site (9 of
+    # them, all in test_web_app.py) omits `host`, so this defaults to the
+    # loopback address and require_token/token below evaluate to
+    # False/None exactly as before this phase existed. Only a real,
+    # non-loopback `host` (as passed by cli.py's `serve` command) turns
+    # auth on at all.
+    require_token = _requires_auth(host)
+    token = secrets.token_urlsafe(24) if require_token else None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -72,8 +92,10 @@ def create_app(config: Config) -> FastAPI:
         registry.shutdown()
 
     app = FastAPI(title="viva room", lifespan=lifespan)
+    app.state.viva_token = token
 
     # -- live session lifecycle (start/resume/state/answer) --------------------
+
 
     @app.post("/api/sessions")
     def start_session(body: StartSessionRequest) -> dict:
@@ -282,8 +304,18 @@ def create_app(config: Config) -> FastAPI:
         return {**asdict(result), "is_empty": result.is_empty}
 
     @app.get("/", include_in_schema=False)
-    def index() -> FileResponse:
-        return FileResponse(_STATIC_DIR / "index.html")
+    def index() -> Response:
+        # §21.6 -- no templating engine in this codebase (§15.2's "no new
+        # frontend toolchain"), so this is a plain string substitution
+        # against a placeholder already in index.html, not a Jinja
+        # render. When token is None (the loopback/default case, by far
+        # the common one) this substitutes an empty string --
+        # `window.__VIVA_TOKEN__ = "";` -- so the page renders byte-for-
+        # byte the same as it always has for anyone not opting into a
+        # non-loopback bind.
+        html = (_STATIC_DIR / "index.html").read_text()
+        html = html.replace("{{VIVA_TOKEN}}", token or "")
+        return Response(content=html, media_type="text/html")
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> FileResponse:
@@ -297,6 +329,23 @@ def create_app(config: Config) -> FastAPI:
         # the .ico extension) works in every current browser -- none of
         # them actually require the legacy ICO binary format.
         return FileResponse(_STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
+
+    # §19.4.1/§21.5 -- required on /api/* only, and only when bound to a
+    # non-loopback address (require_token is False for the default case,
+    # making this a single closed-over boolean check per request with no
+    # measurable cost added to the common path). / and /static/* stay
+    # reachable without a token even on a non-loopback bind: the browser
+    # has to successfully load index.html and app.js before any
+    # JS-driven auth can run at all, and neither route exposes session
+    # data -- only /api/* does, which is the boundary that matters.
+    @app.middleware("http")
+    async def _require_token(request: Request, call_next):
+        if not require_token or not request.url.path.startswith("/api/"):
+            return await call_next(request)
+        supplied = request.headers.get("x-viva-token") or request.query_params.get("token")
+        if supplied != token:
+            return JSONResponse(status_code=401, content={"detail": "Missing or invalid access token."})
+        return await call_next(request)
 
     # index.html references its assets as absolute /static/... paths
     # (static/index.html), so the mount point has to be /static, not /

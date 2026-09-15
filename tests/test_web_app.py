@@ -27,7 +27,7 @@ from viva.orchestrator import (
 from viva.questiongen.models import QuestionPlanItem
 from viva.schemas import EvaluationRecord
 from viva.storage import SessionStore
-from viva.web.app import create_app
+from viva.web.app import create_app, _requires_auth
 
 
 def _config(tmp_path):
@@ -466,6 +466,17 @@ def _app_client(mocker, tmp_path) -> TestClient:
     return TestClient(create_app(config))
 
 
+def _app_client_with_host(mocker, tmp_path, host: str) -> tuple[TestClient, str | None]:
+    # docs/system-design/21-phase-15-serve-authentication-design.md
+    # §21.7 -- returns the client plus whatever token create_app()
+    # generated (None for a loopback host), since the tests below need
+    # to assert against the real token value, not just its presence.
+    config = _config(tmp_path)
+    mocker.patch("viva.web.app.SessionRegistry", return_value=_FakeRegistry(config))
+    web_app = create_app(config, host=host)
+    return TestClient(web_app), web_app.state.viva_token
+
+
 def test_report_not_found_returns_404(mocker, tmp_path):
     client = _app_client(mocker, tmp_path)
 
@@ -660,3 +671,93 @@ def test_favicon_svg_is_well_formed_xml(mocker, tmp_path):
     response = client.get("/static/favicon.svg")
 
     ET.fromstring(response.content)  # raises ParseError if malformed
+
+
+# -- Phase 15: /api/* token auth for non-loopback binds (docs/system-
+# design/19-panel-review-findings-2026-09.md §19.4.1, docs/system-
+# design/21-phase-15-serve-authentication-design.md) -----------------
+
+
+def test_requires_auth_false_for_loopback_hosts():
+    assert _requires_auth("127.0.0.1") is False
+    assert _requires_auth("localhost") is False
+    assert _requires_auth("::1") is False
+
+
+def test_requires_auth_true_for_non_loopback_hosts():
+    assert _requires_auth("0.0.0.0") is True
+    assert _requires_auth("192.168.1.42") is True
+
+
+def test_default_create_app_call_sites_have_no_token(mocker, tmp_path):
+    # All 9 pre-Phase-15 create_app(config) call sites in this file omit
+    # `host` entirely -- confirms that shape still means "no auth",
+    # matching every other test in this file that never touches auth.
+    config = _config(tmp_path)
+    mocker.patch("viva.web.app.SessionRegistry", return_value=_FakeRegistry(config))
+    web_app = create_app(config)
+
+    assert web_app.state.viva_token is None
+
+
+def test_api_request_without_token_returns_401_on_non_loopback_bind(mocker, tmp_path):
+    client, token = _app_client_with_host(mocker, tmp_path, host="0.0.0.0")
+    assert token is not None  # sanity check the fixture actually generated one
+
+    response = client.get("/api/sessions")
+
+    assert response.status_code == 401
+
+
+def test_api_request_with_wrong_token_returns_401(mocker, tmp_path):
+    client, _token = _app_client_with_host(mocker, tmp_path, host="0.0.0.0")
+
+    response = client.get("/api/sessions", headers={"X-Viva-Token": "definitely-wrong"})
+
+    assert response.status_code == 401
+
+
+def test_api_request_with_correct_header_token_succeeds(mocker, tmp_path):
+    client, token = _app_client_with_host(mocker, tmp_path, host="0.0.0.0")
+
+    response = client.get("/api/sessions", headers={"X-Viva-Token": token})
+
+    assert response.status_code == 200
+
+
+def test_api_request_with_correct_query_param_token_succeeds(mocker, tmp_path):
+    # Covers the report-download-link case (app.js §21.6) without
+    # actually exercising browser navigation here.
+    client, token = _app_client_with_host(mocker, tmp_path, host="0.0.0.0")
+
+    response = client.get(f"/api/sessions?token={token}")
+
+    assert response.status_code == 200
+
+
+def test_index_and_static_reachable_without_token_even_non_loopback(mocker, tmp_path):
+    # §21.5 -- the token boundary is /api/* only; the browser has to
+    # load index.html/app.js before any JS-driven auth can run at all.
+    client, _token = _app_client_with_host(mocker, tmp_path, host="0.0.0.0")
+
+    assert client.get("/").status_code == 200
+    assert client.get("/favicon.ico").status_code == 200
+    assert client.get("/static/app.js").status_code == 200
+
+
+def test_index_embeds_real_token_for_non_loopback_bind(mocker, tmp_path):
+    client, token = _app_client_with_host(mocker, tmp_path, host="0.0.0.0")
+
+    response = client.get("/")
+
+    assert f'window.__VIVA_TOKEN__ = "{token}";' in response.text
+
+
+def test_index_embeds_empty_token_for_default_loopback_bind(mocker, tmp_path):
+    # Proves the "no behavior change on the default path" claim in
+    # §21.6, not just that the placeholder substitution ran at all.
+    client = _app_client(mocker, tmp_path)
+
+    response = client.get("/")
+
+    assert 'window.__VIVA_TOKEN__ = "";' in response.text

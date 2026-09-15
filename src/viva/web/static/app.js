@@ -84,8 +84,13 @@
     errorBanner.textContent = "";
   }
 
-  async function api(path, options) {
-    const response = await fetch(path, options);
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    // §21.6 -- empty string on the default loopback bind (see
+    // index.html), so this is a no-op for anyone not running a
+    // non-loopback `viva serve`.
+    if (window.__VIVA_TOKEN__) headers["X-Viva-Token"] = window.__VIVA_TOKEN__;
+    const response = await fetch(path, { ...options, headers });
     if (!response.ok) {
       let detail = response.statusText;
       try {
@@ -351,6 +356,7 @@
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(liveSessionId)}/question-audio`,
+        window.__VIVA_TOKEN__ ? { headers: { "X-Viva-Token": window.__VIVA_TOKEN__ } } : {},
       );
       if (!response.ok) return; // 409/503 -- question text is already on screen either way
       const blob = await response.blob();
@@ -574,10 +580,17 @@
       const reportPath = `/api/sessions/${encodeURIComponent(sessionId)}/report`;
       const htmlFragment = await api(`${reportPath}?format=html&allow_partial=true`);
       document.getElementById("report-body").innerHTML = htmlFragment;
+      // §21.6 -- these two are plain <a href> browser navigations, not
+      // fetch() calls, so they can't carry the X-Viva-Token header the
+      // way api() does above; the token rides in the query string
+      // instead, which app.py's middleware accepts as an alternative.
+      const tokenSuffix = window.__VIVA_TOKEN__
+        ? `&token=${encodeURIComponent(window.__VIVA_TOKEN__)}`
+        : "";
       document.getElementById("report-download-md").href =
-        `${reportPath}?format=md&allow_partial=true&download=true`;
+        `${reportPath}?format=md&allow_partial=true&download=true${tokenSuffix}`;
       document.getElementById("report-download-json").href =
-        `${reportPath}?format=json&allow_partial=true&download=true`;
+        `${reportPath}?format=json&allow_partial=true&download=true${tokenSuffix}`;
       showView("report");
     } catch (err) {
       showError(`Couldn't load report: ${err.message}`);

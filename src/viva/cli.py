@@ -731,7 +731,12 @@ def serve(
 
     Binds to 127.0.0.1 by default: this is a local single-user tool with
     the same trust boundary the CLI itself already has, not a hardened
-    multi-user service (design doc \u00a715.2).
+    multi-user service (design doc \u00a715.2). Binding to any other address
+    (e.g. --host 0.0.0.0) requires an access token on every /api/*
+    request -- printed here at startup -- since that's no longer just
+    this machine talking to itself (docs/system-design/19-panel-review-
+    findings-2026-09.md \u00a719.4.1, docs/system-design/21-phase-15-serve-
+    authentication-design.md).
     """
     try:
         config = Config.load()
@@ -747,7 +752,16 @@ def serve(
     from viva.web.app import create_app
 
     console.print(f"[green]Starting viva room on http://{host}:{port}[/green]")
-    uvicorn.run(create_app(config), host=host, port=port)
+    web_app = create_app(config, host=host)
+    if web_app.state.viva_token:
+        console.print(
+            "[yellow]Binding to a non-loopback address -- an access token is "
+            "required for every /api/* request.[/yellow]\n"
+            f"[yellow]Token: {web_app.state.viva_token}[/yellow]\n"
+            f"[yellow]Append ?token={web_app.state.viva_token} to the URL, "
+            "or send it as the X-Viva-Token header.[/yellow]"
+        )
+    uvicorn.run(web_app, host=host, port=port)
 
 
 if __name__ == "__main__":

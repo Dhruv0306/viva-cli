@@ -22,6 +22,11 @@
   <title>viva room</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="stylesheet" href="/static/style.css" />
+  <!-- docs/system-design/21-phase-15-serve-authentication-design.md
+       §21.6 -- substituted server-side by app.py's index() route. Empty
+       string on the default loopback bind (no auth active); a real
+       token only when `viva serve --host` is bound non-locally. -->
+  <script>window.__VIVA_TOKEN__ = "{{VIVA_TOKEN}}";</script>
 </head>
 <body>
   <header class="topbar">

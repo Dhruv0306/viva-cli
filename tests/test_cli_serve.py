@@ -50,10 +50,26 @@ def test_serve_config_error_exits_2(monkeypatch, tmp_path):
     assert result.exit_code == 2
 
 
+class _FakeAppState:
+    def __init__(self, viva_token=None):
+        self.viva_token = viva_token
+
+
+class _FakeApp:
+    """Stand-in for the FastAPI instance create_app() returns -- just
+    enough surface (`.state.viva_token`) for serve() to read, since a
+    bare object() no longer suffices now that serve() checks it to
+    decide whether to print a token (docs/system-design/21-phase-15-
+    serve-authentication-design.md §21.4)."""
+
+    def __init__(self, viva_token=None):
+        self.state = _FakeAppState(viva_token)
+
+
 def test_serve_calls_uvicorn_run_with_host_and_port(mocker, monkeypatch, tmp_path):
     monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
     monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
-    fake_app = object()
+    fake_app = _FakeApp(viva_token=None)
     mocker.patch("viva.web.app.create_app", return_value=fake_app)
     run_mock = mocker.patch("uvicorn.run")
 
@@ -61,3 +77,44 @@ def test_serve_calls_uvicorn_run_with_host_and_port(mocker, monkeypatch, tmp_pat
 
     assert result.exit_code == 0
     run_mock.assert_called_once_with(fake_app, host="0.0.0.0", port=9001)
+
+
+def test_serve_passes_host_through_to_create_app(mocker, monkeypatch, tmp_path):
+    # §21.4 -- create_app() needs the real host to decide require_token;
+    # a regression here (e.g. reverting to create_app(config) with no
+    # host arg) would silently turn auth off for every non-loopback bind.
+    monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
+    monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    fake_app = _FakeApp(viva_token=None)
+    create_app_mock = mocker.patch("viva.web.app.create_app", return_value=fake_app)
+    mocker.patch("uvicorn.run")
+
+    runner.invoke(app, ["serve", "--host", "0.0.0.0", "--port", "9001"])
+
+    create_app_mock.assert_called_once()
+    assert create_app_mock.call_args.kwargs.get("host") == "0.0.0.0"
+
+
+def test_serve_prints_token_when_one_was_generated(mocker, monkeypatch, tmp_path):
+    monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
+    monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    fake_app = _FakeApp(viva_token="fake-token-abc123")
+    mocker.patch("viva.web.app.create_app", return_value=fake_app)
+    mocker.patch("uvicorn.run")
+
+    result = runner.invoke(app, ["serve", "--host", "0.0.0.0"])
+
+    assert "fake-token-abc123" in result.output
+
+
+def test_serve_prints_no_token_for_default_loopback_host(mocker, monkeypatch, tmp_path):
+    monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
+    monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    fake_app = _FakeApp(viva_token=None)
+    mocker.patch("viva.web.app.create_app", return_value=fake_app)
+    mocker.patch("uvicorn.run")
+
+    result = runner.invoke(app, ["serve"])
+
+    assert "Token:" not in result.output
+    assert "access token" not in result.output.lower()
