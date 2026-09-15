@@ -745,12 +745,39 @@ def test_index_and_static_reachable_without_token_even_non_loopback(mocker, tmp_
     assert client.get("/static/app.js").status_code == 200
 
 
-def test_index_embeds_real_token_for_non_loopback_bind(mocker, tmp_path):
+def test_index_embeds_real_token_when_request_already_supplies_it(mocker, tmp_path):
+    client, token = _app_client_with_host(mocker, tmp_path, host="0.0.0.0")
+
+    response = client.get(f"/?token={token}")
+
+    assert f'window.__VIVA_TOKEN__ = "{token}";' in response.text
+
+
+def test_index_does_not_leak_token_to_a_request_without_one(mocker, tmp_path):
+    # Regression test for a real bug caught during Phase 15's manual
+    # verification: an earlier version of index() embedded the real
+    # token into every response to `/`, regardless of whether the
+    # request itself supplied it. Since `/` is deliberately left
+    # unauthenticated (§21.5), that meant anyone could load the bare
+    # URL with no token at all and read the real secret straight out of
+    # the page source -- the ?token= requirement on the printed link
+    # was cosmetic, not enforced. This is the case that must never
+    # embed the real token: a bare GET / with no query param.
     client, token = _app_client_with_host(mocker, tmp_path, host="0.0.0.0")
 
     response = client.get("/")
 
-    assert f'window.__VIVA_TOKEN__ = "{token}";' in response.text
+    assert 'window.__VIVA_TOKEN__ = "";' in response.text
+    assert token not in response.text
+
+
+def test_index_does_not_leak_token_to_a_request_with_the_wrong_one(mocker, tmp_path):
+    client, token = _app_client_with_host(mocker, tmp_path, host="0.0.0.0")
+
+    response = client.get("/?token=definitely-wrong")
+
+    assert 'window.__VIVA_TOKEN__ = "";' in response.text
+    assert token not in response.text
 
 
 def test_index_embeds_empty_token_for_default_loopback_bind(mocker, tmp_path):

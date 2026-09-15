@@ -304,7 +304,7 @@ def create_app(config: Config, host: str = "127.0.0.1") -> FastAPI:
         return {**asdict(result), "is_empty": result.is_empty}
 
     @app.get("/", include_in_schema=False)
-    def index() -> Response:
+    def index(request: Request) -> Response:
         # §21.6 -- no templating engine in this codebase (§15.2's "no new
         # frontend toolchain"), so this is a plain string substitution
         # against a placeholder already in index.html, not a Jinja
@@ -313,8 +313,25 @@ def create_app(config: Config, host: str = "127.0.0.1") -> FastAPI:
         # `window.__VIVA_TOKEN__ = "";` -- so the page renders byte-for-
         # byte the same as it always has for anyone not opting into a
         # non-loopback bind.
+        #
+        # Real-world testing caught a serious bug in an earlier version
+        # of this route: it embedded the real `token` unconditionally on
+        # every visit to `/`, regardless of whether the visitor had
+        # supplied it. Since `/` is deliberately left unauthenticated
+        # (§21.5 -- the browser has to load the page before any
+        # JS-driven auth can run), that meant anyone could load the bare
+        # URL with no token at all, read the real secret straight out of
+        # the page source, and use it for every /api/* call from then
+        # on -- the ?token= requirement on the printed link was
+        # cosmetic, not enforced. The fix: only embed the real token
+        # when *this* request already proves it, via the same query
+        # param the /api/* middleware accepts. A request to `/` with no
+        # token, or the wrong one, gets an empty string embedded, same
+        # as the loopback case -- its page's JS calls will correctly
+        # 401 against /api/*, matching the actual security boundary.
+        embed_token = token if (not require_token or request.query_params.get("token") == token) else None
         html = (_STATIC_DIR / "index.html").read_text()
-        html = html.replace("{{VIVA_TOKEN}}", token or "")
+        html = html.replace("{{VIVA_TOKEN}}", embed_token or "")
         return Response(content=html, media_type="text/html")
 
     @app.get("/favicon.ico", include_in_schema=False)

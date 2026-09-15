@@ -167,9 +167,18 @@ string substitution against a placeholder already sitting in
 
 ```python
 @app.get("/", include_in_schema=False)
-def index() -> Response:
+def index(request: Request) -> Response:
+    # Only embed the real token when *this* request already proves it,
+    # via the same query param the /api/* middleware accepts -- a bare
+    # GET / with no token, or the wrong one, gets an empty string
+    # embedded instead. Embedding it unconditionally here would hand
+    # the secret to anyone who simply loads the page (this route is
+    # deliberately left unauthenticated, per §21.5's reasoning that the
+    # browser has to load the page before any JS-driven auth can run),
+    # which defeats the whole point of gating /api/* on it.
+    embed_token = token if (not require_token or request.query_params.get("token") == token) else None
     html = (_STATIC_DIR / "index.html").read_text()
-    html = html.replace("{{VIVA_TOKEN}}", token or "")
+    html = html.replace("{{VIVA_TOKEN}}", embed_token or "")
     return Response(content=html, media_type="text/html")
 ```
 
@@ -230,6 +239,29 @@ non-OK response and falls back to text-only, so a missed token there
 would look like "voice mode is being flaky," not an obvious bug). The
 HTML report *view* (as opposed to the two download links) goes through
 `api()` like everything else and needed no separate handling.
+
+### 21.6.2 Real-world bug: `index()` leaked the token unconditionally
+
+Caught during this phase's real-world verification, not by the test
+suite (the original test only checked `GET /` on a fresh, still-current
+token and asserted it appeared — true, but not the case that mattered).
+The first implementation embedded the real `token` into every response
+to `/`, regardless of whether the request itself supplied it. Since `/`
+is intentionally unauthenticated (§21.5), that meant loading the bare
+URL with no token at all was sufficient to read the real secret straight
+out of the page source and use it for every subsequent `/api/*` call —
+the `?token=` requirement on the printed link was cosmetic, not
+enforced. Confirmed live: a second browser tab opened at the bare
+`http://localhost:8000/` (no query string) successfully listed and
+started sessions.
+
+Fixed by making `index()` check its own request the same way the
+`/api/*` middleware checks its requests — the real token is only
+embedded when the `GET /` request already carries the correct
+`?token=` query param (shown in the corrected snippet in §21.6 above).
+A bare `/` or one with the wrong token now embeds an empty string, so
+that page's JS calls correctly 401 against `/api/*`, matching the
+actual access-control boundary rather than only appearing to.
 
 ## 21.7 Test plan
 
