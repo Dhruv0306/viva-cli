@@ -199,8 +199,18 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-13 (walking skeleton through architecture-tier questions) are
-implemented.** Phase 13 split the single `architecture` category into an
+**Phases 0-15 (walking skeleton through `viva serve` authentication) are
+implemented.** Phase 14/15 closed the security-review findings in
+[`docs/system-design/19-panel-review-findings-2026-09.md`](docs/system-design/19-panel-review-findings-2026-09.md):
+Phase 14 fixed a `git clone` URL-scheme/host validation gap (a crafted
+`repo_url` could reach an unrestricted git transport or exfiltrate
+`GITHUB_TOKEN` to the wrong host), a stored XSS in the session list, and
+a `duration_minutes` input-validation bug. Phase 15 added a
+shared-secret access token, required on every `/api/*` request once
+`viva serve` is bound to a non-loopback address -- the default,
+loopback-only case is unaffected -- see
+[`docs/system-design/21-phase-15-serve-authentication-design.md`](docs/system-design/21-phase-15-serve-authentication-design.md).
+Phase 13 split the single `architecture` category into an
 extensible set of topics (system overview, pipeline/data flow, security
 boundaries, external integrations, concurrency), each capable of holding
 more than one question and now asked ahead of the other four categories

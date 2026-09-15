@@ -9,6 +9,35 @@ for general use."
 
 ## [Unreleased]
 
+### Security
+
+- Fixed a `git clone` URL validation gap: a crafted `repo_url` could
+  satisfy the old validation regex while resolving to a different host
+  under actual URL parsing, letting `GITHUB_TOKEN` be sent to the wrong
+  host, and nothing restricted the URL scheme to `{https, ssh}` before
+  it reached `git clone`, leaving an unrestricted git transport
+  reachable from user input. See
+  [`docs/system-design/19-panel-review-findings-2026-09.md`](docs/system-design/19-panel-review-findings-2026-09.md)
+  §19.4.2/§19.4.3 and
+  [`docs/system-design/20-phase-14-security-hardening-design.md`](docs/system-design/20-phase-14-security-hardening-design.md).
+- Fixed a stored XSS in `viva serve`'s session list: a session's
+  `repo_url` was rendered via `innerHTML` instead of `textContent`, so
+  a crafted value would execute in the browser of anyone viewing the
+  list (§19.5.1).
+- `viva serve` now requires a shared-secret access token on every
+  `/api/*` request once bound to a non-loopback address (e.g.
+  `--host 0.0.0.0`) -- the default, loopback-only case is unaffected.
+  See
+  [`docs/system-design/21-phase-15-serve-authentication-design.md`](docs/system-design/21-phase-15-serve-authentication-design.md).
+
+### Fixed
+
+- `duration_minutes=0` sent to `viva start` or the web API no longer
+  silently falls back to the configured default; `0` and negative
+  values are now rejected outright (§19.3.1).
+- A malformed `repo_url` is now rejected before a session row is
+  persisted, instead of surfacing several layers downstream (§19.5.2).
+
 ## [0.2.0] - 2026-09-13
 
 Phase 13 (architecture-tier questions) plus three real-world fixes found
