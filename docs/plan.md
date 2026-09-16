@@ -241,26 +241,47 @@ Each phase is independently testable and produces a working, demoable slice.
 ## Phase 16 — Grading Integrity & Retrieval Observability
 - Groups the remaining medium/low items that affect question and
   evaluation quality rather than infrastructure security, from
-  `docs/system-design/19-panel-review-findings-2026-09.md`:
-- **§19.1.1 — instruction-injection boundary for retrieved repo content.**
-  Wrap retrieved chunks in an explicit untrusted-content delimiter in both
-  the question-gen and evaluator system prompts, with a line stating that
-  content inside it is data to reason about, never instructions to
-  follow. Add a golden-repo fixture (matching the Phase 3 fixture
-  strategy) containing a deliberately adversarial docstring.
-- **§19.1.2 — fallback for empty per-topic architecture retrieval.** Add a
-  minimum-relevance/chunk threshold per `ARCHITECTURE_TOPICS` topic;
-  below it, skip the topic and redistribute its question budget rather
-  than asking a thin, weakly-grounded question.
-- **§19.6.2 — retrieval-quality logging.** Extend the Phase 13
-  planning-decision log line to also record chunk count and a
-  relevance-score summary per topic at planning time.
-- **Exit criteria:** the adversarial-docstring fixture is confirmed not to
-  flip the evaluator's classification; a thin/sparse test repo triggers
-  at least one topic skip with a corresponding log line, rather than a
-  generic question reaching the candidate; and Phase 13's existing
-  exit-criteria repos are re-run to confirm no regression in question
-  grounding quality.
+  `docs/system-design/19-panel-review-findings-2026-09.md`. Design doc:
+  `docs/system-design/22-phase-16-grading-integrity-observability-
+  design.md`. Two of the three findings turned out to be one mechanism
+  (§19.1.2's thin-retrieval detection and §19.6.2's logging both read
+  the same `distance` value `VectorStore.query()` already returns), and
+  the "redistribute the question budget" behavior §19.1.2 asked for
+  already exists in `orchestrator.py`'s live loop (a `None`-returning
+  `generate_question()` is already marked `SKIPPED_NO_GROUNDING` and the
+  loop already moves to the next ranked candidate) — it just wasn't
+  under test, which this phase also fixes.
+- **§19.1.2 + §19.6.2 — retrieval-quality threshold and logging,
+  shipped as one change in two patches.** Patch A adds the distance-
+  based filter to `retrieve_grounding_chunks()` and the log line, but
+  ships with filtering *disabled by default*
+  (`Config.max_retrieval_distance: float | None = None`) — there's no
+  textbook-correct L2 distance threshold for this project's embeddings
+  without real data, the same reasoning that led to pressure-testing
+  before picking `gemma4:e4b` rather than guessing. Patch B sets a real
+  default once patch A's logging has produced actual numbers from a
+  real session against a real repo.
+- **§19.1.1 — instruction-injection boundary for retrieved repo
+  content.** Not a new delimiter scheme — the existing `[CODE_CONTEXT]`/
+  `[GROUND_TRUTH_CODE_CONTEXT]` labeled-section convention already
+  provides the structural boundary. One paragraph added to each of the
+  four system prompts in `llm_client.py` stating that content inside
+  those sections (and `[USER_ANSWER]`) is data to reason about, never
+  instructions to follow. A golden-repo fixture with a deliberately
+  adversarial docstring is added for manual pressure-testing against
+  the real configured model during this phase's real-world validation
+  step — whether a model actually resists the injection is a model-
+  behavior question CI can't assert, only prompt-content presence can
+  be checked automatically.
+- **Exit criteria:** patch A's logging shows real distance numbers from
+  at least one real session, informing patch B's threshold; a thin/
+  sparse test repo triggers at least one topic skip with a
+  corresponding log line, proven by a new orchestrator-level test (none
+  existed before this phase) rather than asserted as already covered;
+  the adversarial-docstring fixture is manually confirmed, against the
+  real configured model, not to flip the evaluator's classification;
+  and Phase 13's existing exit-criteria repos are re-run to confirm no
+  regression in question grounding quality.
 
 ## Phase 17 — CLI Logging Hygiene
 - Root cause: Phase 13's `logging.basicConfig(level=logging.INFO, ...)`

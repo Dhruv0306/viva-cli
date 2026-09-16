@@ -165,5 +165,22 @@ history of what was tried and rejected along the way.
   header and need the query-string form instead). Needs sign-off on the
   recommendation before implementation starts.
 
+- **[22-phase-16-grading-integrity-observability-design.md](22-phase-16-grading-integrity-observability-design.md)**
+  — the Phase 16 design for §19.1.1/§19.1.2/§19.6.2. Finds that the
+  thin-retrieval-detection and retrieval-quality-logging findings are
+  one mechanism (both read the `distance` value `VectorStore.query()`
+  already returns), and that the "redistribute the question budget"
+  behavior already exists in `orchestrator.py`'s live loop — it just
+  wasn't under test. Recommends shipping the distance filter disabled
+  by default in one patch (no textbook-correct threshold exists without
+  real data) and setting a real default in a follow-up patch informed
+  by that logging. For the instruction-injection boundary, finds the
+  fix is one paragraph added to each of four system prompts, not a new
+  delimiter scheme, since the existing `[CODE_CONTEXT]`-style labeled
+  sections already provide the structural boundary — and is explicit
+  that whether a model actually resists an injection is a question CI
+  can't answer, only prompt-content presence can be asserted
+  automatically.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
