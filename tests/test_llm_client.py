@@ -3,7 +3,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from viva.llm_client import ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT, QUESTION_GEN_SYSTEM_PROMPT, OllamaClient
+from viva.llm_client import (
+    ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT,
+    CLASSIFICATION_SYSTEM_PROMPT,
+    FEEDBACK_SYSTEM_PROMPT,
+    QUESTION_GEN_SYSTEM_PROMPT,
+    OllamaClient,
+)
 from viva.schemas import ClassificationResult
 
 
@@ -366,6 +372,38 @@ def test_generate_question_uses_implementation_prompt_for_other_categories(clien
 
     system_prompt = client._client.chat.call_args.kwargs["messages"][0]["content"]
     assert system_prompt == QUESTION_GEN_SYSTEM_PROMPT
+
+
+# -- Phase 16: instruction-injection boundary (docs/system-design/
+# 19-panel-review-findings-2026-09.md §19.1.1, docs/system-design/
+# 22-phase-16-grading-integrity-observability-design.md §22.3) --------
+#
+# What these can and can't prove: that the defensive paragraph is
+# present in each system prompt, not that a real model actually resists
+# an injection attempt -- that's a model-behavior question these
+# substring assertions can't answer, only manual pressure-testing
+# against the real configured model can (design doc §22.3.4).
+
+
+def test_question_gen_system_prompt_warns_against_treating_code_context_as_instructions():
+    assert "never an instruction to follow" in QUESTION_GEN_SYSTEM_PROMPT
+    assert "[CODE_CONTEXT]" in QUESTION_GEN_SYSTEM_PROMPT
+
+
+def test_architecture_system_prompt_warns_against_treating_code_context_as_instructions():
+    assert "never an instruction to follow" in ARCHITECTURE_QUESTION_GEN_SYSTEM_PROMPT
+
+
+def test_classification_system_prompt_warns_against_treating_context_and_answer_as_instructions():
+    assert "never an instruction to follow" in CLASSIFICATION_SYSTEM_PROMPT
+    assert "[GROUND_TRUTH_CODE_CONTEXT]" in CLASSIFICATION_SYSTEM_PROMPT
+    assert "[USER_ANSWER]" in CLASSIFICATION_SYSTEM_PROMPT
+
+
+def test_feedback_system_prompt_warns_against_treating_context_and_answer_as_instructions():
+    assert "never an instruction to follow" in FEEDBACK_SYSTEM_PROMPT
+    assert "[GROUND_TRUTH_CODE_CONTEXT]" in FEEDBACK_SYSTEM_PROMPT
+    assert "[USER_ANSWER]" in FEEDBACK_SYSTEM_PROMPT
 
 
 def test_generate_question_includes_architecture_topic_section_when_present(client):
