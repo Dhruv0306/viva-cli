@@ -23,7 +23,7 @@ def _config(line_window_size: int = 60, line_window_overlap: int = 15) -> Config
         max_followup_depth=1, session_retention_days=7, max_files=500, test_file_quota_pct=10,
         github_token=None, map_reduce_batch_size=8, max_reduce_context_tokens=None,
         line_window_size=line_window_size, line_window_overlap=line_window_overlap,
-        vector_db_path="./data/chroma", top_k_retrieval=5,
+        vector_db_path="./data/chroma", top_k_retrieval=5, max_retrieval_distance=None,
         session_db_path="./data/viva.db", avg_time_per_category_seconds=180,
         question_similarity_threshold=0.90,
         eval_flush_timeout_seconds=60,

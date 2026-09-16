@@ -63,12 +63,12 @@ def test_is_test_path_detects_test_directories_and_filenames():
     assert _is_test_path("src/payments/handler.py") is False
 
 
-def _chunk(cid: str, filepath: str) -> dict:
+def _chunk(cid: str, filepath: str, distance: float = 0.1) -> dict:
     return {
         "id": cid,
         "text": f"body of {cid}",
         "metadata": {"filepath": filepath, "start_line": 1, "end_line": 2},
-        "distance": 0.1,
+        "distance": distance,
     }
 
 
@@ -157,3 +157,89 @@ def test_retrieve_grounding_chunks_filters_by_filepath_for_file_level_items():
 
     # File-level items narrow to the exact file, not the whole module.
     assert store.query.call_args.kwargs["where"] == {"filepath": "src/core.py"}
+
+
+# -- Phase 16: retrieval-quality distance filter (docs/system-design/
+# 19-panel-review-findings-2026-09.md §19.1.2, docs/system-design/
+# 22-phase-16-grading-integrity-observability-design.md §22.2) --------
+
+
+def test_retrieve_grounding_chunks_drops_candidates_beyond_max_distance():
+    plan_item = QuestionPlanItem(id="q_01", category="implementation_detail", target_module="auth")
+    store = MagicMock()
+    store.query.return_value = [
+        _chunk("c1", "src/auth/handler.py", distance=0.2),
+        _chunk("c2", "src/auth/session.py", distance=1.8),
+    ]
+    embedding_client = MagicMock()
+    embedding_client.embed.return_value = [[0.1, 0.2]]
+
+    results = retrieve_grounding_chunks(
+        plan_item, "auth module summary", store, "collection", embedding_client,
+        top_k=5, max_distance=1.0,
+    )
+
+    ids = [r["id"] for r in results]
+    assert ids == ["c1"]
+
+
+def test_retrieve_grounding_chunks_returns_empty_when_everything_is_too_thin():
+    # Reuses the exact same "empty list -> caller skips" contract as the
+    # true zero-candidate case, no new status needed -- see
+    # questiongen/__init__.py's generate_question() docstring.
+    plan_item = QuestionPlanItem(id="q_01", category="architecture", target_module="thin")
+    store = MagicMock()
+    store.query.return_value = [
+        _chunk("c1", "src/thin.py", distance=2.5),
+        _chunk("c2", "src/thin2.py", distance=3.1),
+    ]
+    embedding_client = MagicMock()
+    embedding_client.embed.return_value = [[0.1, 0.2]]
+
+    results = retrieve_grounding_chunks(
+        plan_item, "thin module summary", store, "collection", embedding_client,
+        top_k=5, max_distance=1.0,
+    )
+
+    assert results == []
+
+
+def test_retrieve_grounding_chunks_max_distance_none_is_a_no_op():
+    # The default-off rollout's own regression guarantee (design doc
+    # §22.2.2): every existing caller that doesn't pass max_distance
+    # must see identical behavior to before this phase.
+    plan_item = QuestionPlanItem(id="q_01", category="implementation_detail", target_module="auth")
+    store = MagicMock()
+    store.query.return_value = [_chunk("c1", "src/auth/handler.py", distance=99.0)]
+    embedding_client = MagicMock()
+    embedding_client.embed.return_value = [[0.1, 0.2]]
+
+    results = retrieve_grounding_chunks(
+        plan_item, "auth module summary", store, "collection", embedding_client, top_k=5,
+    )
+
+    assert [r["id"] for r in results] == ["c1"]
+
+
+def test_retrieve_grounding_chunks_logs_outcome(caplog):
+    plan_item = QuestionPlanItem(
+        id="q_01", category="architecture", target_module="auth", architecture_topic="security",
+    )
+    store = MagicMock()
+    store.query.return_value = [
+        _chunk("c1", "src/auth/handler.py", distance=0.2),
+        _chunk("c2", "src/auth/session.py", distance=1.8),
+    ]
+    embedding_client = MagicMock()
+    embedding_client.embed.return_value = [[0.1, 0.2]]
+
+    with caplog.at_level("INFO", logger="viva.questiongen.retrieval"):
+        retrieve_grounding_chunks(
+            plan_item, "auth module summary", store, "collection", embedding_client,
+            top_k=5, max_distance=1.0,
+        )
+
+    assert "category=architecture" in caplog.text
+    assert "architecture_topic=security" in caplog.text
+    assert "2 candidate(s) fetched" in caplog.text
+    assert "1 after relevance filter" in caplog.text

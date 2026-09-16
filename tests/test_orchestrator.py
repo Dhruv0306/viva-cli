@@ -67,7 +67,7 @@ def _config(tmp_path, **overrides) -> Config:
         max_followup_depth=1, session_retention_days=7, max_files=500, test_file_quota_pct=10,
         github_token=None, map_reduce_batch_size=8, max_reduce_context_tokens=100_000,
         line_window_size=60, line_window_overlap=15, vector_db_path="./data/chroma",
-        top_k_retrieval=5, session_db_path=str(tmp_path / "viva.db"),
+        top_k_retrieval=5, max_retrieval_distance=None, session_db_path=str(tmp_path / "viva.db"),
         avg_time_per_category_seconds=1, question_similarity_threshold=0.90,
         eval_flush_timeout_seconds=1,
         report_max_items_per_section=10,
@@ -411,6 +411,48 @@ def test_ungrounded_item_is_skipped_not_asked(tmp_path, monkeypatch):
     assert record.status == "COMPLETE"
     assert ui.summary.questions_asked == 0
     assert ui.summary.questions_skipped == 2
+
+
+def test_ungrounded_item_does_not_block_a_grounded_one_from_being_asked(tmp_path, monkeypatch):
+    # docs/system-design/22-phase-16-grading-integrity-observability-
+    # design.md §22.2.4 -- proves the "redistribute the question budget"
+    # claim rather than just asserting it in a design doc. A plan with
+    # one ungrounded item and one grounded one must still ask the
+    # grounded question, not stall or end the session on the first
+    # SKIPPED_NO_GROUNDING it hits. This didn't have a test before
+    # Phase 16 -- SKIPPED_NO_GROUNDING was only exercised at the
+    # questiongen-stats/report/SessionStore layers, never through this
+    # live loop.
+    config = _config(tmp_path)
+    _patch_pipeline(
+        monkeypatch,
+        plan=[
+            QuestionPlanItem(id="q1", category="architecture", target_module=None),
+            QuestionPlanItem(id="q2", category="implementation_detail", target_module="core"),
+        ],
+    )
+
+    def fake_generate_question(plan_item, *a, **kw):
+        if plan_item.id == "q1":
+            return None  # thin/no grounding -- Phase 16's distance filter, or the pre-existing zero-chunk case
+        return GeneratedQuestion(
+            plan_item=plan_item, question_text="Question about implementation_detail?",
+            grounding_chunk_ids=["chunk1"],
+        )
+
+    monkeypatch.setattr(orchestrator_module, "generate_question", fake_generate_question)
+    ui = FakeSessionUI(answers=["a1"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+
+    session_id = orch.start("https://github.com/owner/repo")
+
+    record = store.get_session(session_id)
+    assert record.status == "COMPLETE"
+    assert ui.summary.questions_asked == 1
+    assert ui.summary.questions_skipped == 1
+    plan_items = {item.question_id: item for item in store.get_qa_records(session_id)}
+    assert plan_items["q1"].status == "skipped_no_grounding"
+    assert plan_items["q2"].status == "answered"
 
 
 def test_resume_raises_for_unknown_session(tmp_path):

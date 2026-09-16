@@ -23,6 +23,7 @@ def _clean_env(monkeypatch):
         "LINE_WINDOW_OVERLAP",
         "VECTOR_DB_PATH",
         "TOP_K_RETRIEVAL",
+        "MAX_RETRIEVAL_DISTANCE",
         "SESSION_DB_PATH",
         "AVG_TIME_PER_CATEGORY_SECONDS",
         "QUESTION_SIMILARITY_THRESHOLD",
@@ -268,6 +269,38 @@ def test_max_reduce_context_tokens_invalid_raises(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
     monkeypatch.setenv("MAX_REDUCE_CONTEXT_TOKENS", "-100")
     with pytest.raises(ConfigError, match="MAX_REDUCE_CONTEXT_TOKENS"):
+        Config.load(env_file=None)
+
+
+def test_max_retrieval_distance_unset_is_none(monkeypatch):
+    # Phase 16 (docs/system-design/22-phase-16-grading-integrity-
+    # observability-design.md §22.2.2) ships the retrieval-quality
+    # filter disabled by default -- there's no textbook-correct L2
+    # distance threshold for this project's embeddings without real
+    # session data, so unset must mean "don't filter," not an error.
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    config = Config.load(env_file=None)
+    assert config.max_retrieval_distance is None
+
+
+def test_max_retrieval_distance_valid_value(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("MAX_RETRIEVAL_DISTANCE", "1.25")
+    config = Config.load(env_file=None)
+    assert config.max_retrieval_distance == 1.25
+
+
+def test_max_retrieval_distance_non_numeric_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("MAX_RETRIEVAL_DISTANCE", "not-a-number")
+    with pytest.raises(ConfigError, match="MAX_RETRIEVAL_DISTANCE"):
+        Config.load(env_file=None)
+
+
+def test_max_retrieval_distance_non_positive_raises(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("MAX_RETRIEVAL_DISTANCE", "0")
+    with pytest.raises(ConfigError, match="MAX_RETRIEVAL_DISTANCE"):
         Config.load(env_file=None)
 
 

@@ -100,6 +100,26 @@ def _get_optional_positive_int(name: str) -> int | None:
     return value
 
 
+def _get_optional_positive_float(name: str) -> float | None:
+    # docs/system-design/22-phase-16-grading-integrity-observability-
+    # design.md §22.2.3 -- mirrors _get_optional_positive_int() exactly.
+    # Unset means "no retrieval-quality filtering" (Phase 16 ships this
+    # disabled by default; there's no textbook-correct L2 distance
+    # threshold for this project's embeddings without real session
+    # data, the same reasoning that led to pressure-testing before
+    # picking a default LLM_MODEL rather than guessing).
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number if set, got {raw!r}") from exc
+    if value <= 0:
+        raise ConfigError(f"{name} must be positive if set, got {value}")
+    return value
+
+
 @dataclass(frozen=True)
 class Config:
     # --- LLM / Embeddings (Ollama) ---
@@ -137,6 +157,10 @@ class Config:
     # --- RAG ---
     vector_db_path: str
     top_k_retrieval: int
+    # None disables filtering (Phase 16 default, until a real session's
+    # logging informs a real threshold -- design doc §22.2.2). See
+    # _get_optional_positive_float()'s docstring above.
+    max_retrieval_distance: float | None
 
     # --- Session persistence / loop (Phase 6, docs/design.md §8) ---
     session_db_path: str
@@ -261,6 +285,7 @@ class Config:
             raise ConfigError("VECTOR_DB_PATH must not be empty if set")
 
         top_k_retrieval = _get_positive_int("TOP_K_RETRIEVAL", "5")
+        max_retrieval_distance = _get_optional_positive_float("MAX_RETRIEVAL_DISTANCE")
 
         session_db_path = os.getenv("SESSION_DB_PATH", "./data/viva.db").strip()
         if not session_db_path:
@@ -337,6 +362,7 @@ class Config:
             line_window_overlap=line_window_overlap,
             vector_db_path=vector_db_path,
             top_k_retrieval=top_k_retrieval,
+            max_retrieval_distance=max_retrieval_distance,
             session_db_path=session_db_path,
             avg_time_per_category_seconds=avg_time_per_category_seconds,
             question_similarity_threshold=question_similarity_threshold,

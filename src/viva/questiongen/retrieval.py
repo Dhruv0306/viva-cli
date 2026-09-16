@@ -21,14 +21,37 @@ docs/system-design/10-phase-5-questiongen-design.md §10.4:
    string (see `indexer/store.py::_chunk_metadata`), and reaching into
    another component's private helper would break the "no cross-component
    direct imports" convention.
+
+A third, optional mitigation as of Phase 16 (docs/system-design/
+22-phase-16-grading-integrity-observability-design.md §19.1.2/§19.6.2):
+a relevance-distance filter. Chroma always returns up to `top_k *
+_OVERFETCH_FACTOR` results whenever the collection has any content at
+all, sorted nearest-first -- it has no built-in notion of "no good
+match," only "closest available." A category/topic with genuinely no
+relevant code in the repo (e.g. "concurrency" on a single-threaded
+script) still gets *something* back, and without a quality check that
+something silently becomes the grounding for a question that only looks
+well-grounded. `max_distance`, when set, drops any candidate whose
+distance exceeds it before the final `top_k` slice; a plan item left
+with zero candidates after that reuses the exact same "return an empty
+list, caller skips" contract this module already had for the true
+zero-candidate case -- no new status or return shape, see
+`questiongen/__init__.py`'s `generate_question()`. Every retrieval also
+now logs its outcome at INFO regardless of whether filtering is enabled,
+since knowing *why* a question felt weakly grounded was hard to diagnose
+before this (the same reasoning behind orchestrator.py's Phase 13
+planning-decision log line).
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from viva.embedding_client import EmbeddingClient
 from viva.indexer.store import VectorStore
 from viva.questiongen.models import QuestionCategory, QuestionPlanItem
+
+logger = logging.getLogger(__name__)
 
 _CATEGORY_QUERY_TEMPLATES: dict[QuestionCategory, str] = {
     "architecture": "the overall architecture, design decisions, and how the major components fit together",
@@ -127,10 +150,12 @@ def retrieve_grounding_chunks(
     collection_name: str,
     embedding_client: EmbeddingClient,
     top_k: int,
+    max_distance: float | None = None,
 ) -> list[dict]:
     """Retrieve up to `top_k` grounding chunks for one plan item (FR13).
 
-    Returns an empty list if the collection has nothing relevant --
+    Returns an empty list if the collection has nothing relevant, or
+    (Phase 16) if `max_distance` is set and nothing relevant enough --
     callers (`questiongen/__init__.py`) must treat that as "skip this
     plan item," never as an excuse to generate an ungrounded question.
     """
@@ -150,6 +175,7 @@ def retrieve_grounding_chunks(
     candidates = vector_store.query(
         collection_name, query_embedding, n_results=top_k * _OVERFETCH_FACTOR, where=where
     )
+    raw_count = len(candidates)
 
     if plan_item.category == "testing_strategy":
         # Prefer test chunks for this category rather than filtering them
@@ -165,5 +191,26 @@ def retrieve_grounding_chunks(
         # happened to be tests -- fall back to the unfiltered candidates
         # rather than incorrectly skipping the question entirely.
         candidates = filtered or candidates
+    post_testpath_count = len(candidates)
 
-    return candidates[:top_k]
+    # Phase 16 (§19.1.2/§19.6.2): filter on the full over-fetched,
+    # test-path-filtered pool *before* the final top_k slice, the same
+    # reason the test-path filter itself runs before that slice --
+    # dropping some candidates for quality shouldn't starve top_k if the
+    # over-fetched pool still has enough good ones. max_distance is None
+    # (filtering off) by default -- see config.py's Config.
+    # max_retrieval_distance docstring for why.
+    if max_distance is not None:
+        candidates = [c for c in candidates if c["distance"] <= max_distance]
+
+    result = candidates[:top_k]
+    logger.info(
+        "Retrieval for category=%s architecture_topic=%s target_module=%s target_file=%s: "
+        "%d candidate(s) fetched, %d after test-path filter, %d after relevance filter "
+        "(distances: min=%s max=%s)",
+        plan_item.category, plan_item.architecture_topic, plan_item.target_module,
+        plan_item.target_file, raw_count, post_testpath_count, len(result),
+        f"{min(c['distance'] for c in result):.3f}" if result else "n/a",
+        f"{max(c['distance'] for c in result):.3f}" if result else "n/a",
+    )
+    return result

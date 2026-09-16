@@ -67,6 +67,7 @@ EMBEDDING_MODEL=nomic-embed-text
 VECTOR_DB_PATH=./data/chroma
 # MAX_QUESTIONS=8   # commented out by default -- see note below
 TOP_K_RETRIEVAL=5
+# MAX_RETRIEVAL_DISTANCE=1.2   # commented out by default -- see note below
 MAX_FILES=500
 TEST_FILE_QUOTA_PCT=10
 MAX_FOLLOWUP_DEPTH=1
@@ -94,6 +95,16 @@ per two minutes) instead of a flat count, so a short session naturally
 plans fewer questions than a long one. Uncomment `MAX_QUESTIONS` and set
 a number to pin the budget regardless of what duration any individual
 session picks.
+
+`MAX_RETRIEVAL_DISTANCE` is also unset by default -- Phase 16 ships the
+retrieval-quality distance filter disabled until a real session's own
+logging (a `Retrieval for category=... (distances: min=... max=...)`
+line at INFO, alongside every question generated) produces real numbers
+to pick a threshold from; there's no textbook-correct value for this
+project's embeddings to guess at instead. Uncomment it once you've read
+a few of those log lines from your own sessions and have a sense of
+what distance actually separates a well-grounded question from a
+weak one.
 
 ## Usage
 

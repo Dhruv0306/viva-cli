@@ -61,6 +61,7 @@ def generate_question(
         collection_name=collection_name,
         embedding_client=embedding_client,
         top_k=config.top_k_retrieval,
+        max_distance=config.max_retrieval_distance,
     )
     if not chunks:
         return None
