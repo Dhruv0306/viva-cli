@@ -25,6 +25,11 @@ venv/
 # dev-time backstop, not the actual retention mechanism)
 data/
 
+# Phase 17 (docs/plan.md): per-day CLI log files, logs/log_YYYY_MM_DD.log
+# — the 3-day retention sweep at startup is the real mechanism, this is
+# just a dev-time backstop against them ending up in a commit.
+logs/
+
 # Claude-specific files
 .claude/*
 claude/*

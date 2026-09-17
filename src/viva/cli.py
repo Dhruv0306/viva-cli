@@ -11,6 +11,7 @@ stubs of `start`.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 from dataclasses import asdict
@@ -62,6 +63,60 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+_LOG_RETENTION_DAYS = 3
+_NOISY_LOGGER_NAMES = ("httpx", "httpcore")
+
+
+def _configure_logging() -> None:
+    # No logging configuration existed anywhere in this codebase before
+    # Phase 13 -- every logger.info()/logger.debug() call (e.g. orchestrator
+    # .py's planning-decision log, docs/system-design/18-phase-13-
+    # architecture-tier-questions-design.md §18.8) was silently swallowed
+    # by Python's default root-logger level (WARNING), with no way to
+    # tell from the outside. INFO by default, since "what did the tool
+    # actually decide and why" turned out to be a real diagnosability gap
+    # in practice, not a hypothetical one.
+    logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
+
+    # Phase 17 (docs/plan.md, docs/system-design/19-panel-review-
+    # findings-2026-09.md's logging-hygiene follow-up): the line above
+    # configures the *root* logger, and httpx (used for every Ollama
+    # call) logs each request at INFO and propagates to the root logger
+    # by default, same as viva's own loggers -- flooding a live
+    # session's terminal with "HTTP Request: POST http://localhost:11434
+    # /..." lines interleaved with the actual question/answer UI. Not a
+    # removal: that request trace has real debugging value (confirming
+    # retries, spotting a hung request, correlating timing with a slow
+    # answer). It moves to a per-day file instead of stdout -- httpx/
+    # httpcore specifically get propagate=False and their own
+    # FileHandler; every other logger (orchestrator, evaluator,
+    # llm_client, analyzer.extract, questiongen.retrieval) is untouched
+    # and keeps logging to console exactly as before.
+    logs_dir = Path("logs")
+    logs_dir.mkdir(exist_ok=True)
+
+    cutoff = dt.datetime.now() - dt.timedelta(days=_LOG_RETENTION_DAYS)
+    for old_log in logs_dir.glob("log_*.log"):
+        try:
+            if dt.datetime.fromtimestamp(old_log.stat().st_mtime) < cutoff:
+                old_log.unlink()
+        except OSError:
+            # Best-effort housekeeping -- a file another process has open,
+            # or a permissions hiccup, shouldn't block the CLI from
+            # starting.
+            pass
+
+    log_path = logs_dir / f"log_{dt.date.today():%Y_%m_%d}.log"
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    for name in _NOISY_LOGGER_NAMES:
+        noisy_logger = logging.getLogger(name)
+        noisy_logger.setLevel(logging.INFO)
+        noisy_logger.propagate = False
+        noisy_logger.addHandler(file_handler)
+
+
 @app.callback()
 def main(
     version: bool = typer.Option(
@@ -73,18 +128,11 @@ def main(
     ),
 ) -> None:
     """viva-cli"""
-    # No logging configuration existed anywhere in this codebase before
-    # this -- every logger.info()/logger.debug() call (e.g. orchestrator
-    # .py's planning-decision log, docs/system-design/18-phase-13-
-    # architecture-tier-questions-design.md §18.8) was silently swallowed
-    # by Python's default root-logger level (WARNING), with no way to
-    # tell from the outside. INFO by default, since "what did the tool
-    # actually decide and why" turned out to be a real diagnosability gap
-    # in practice, not a hypothetical one. Only configured here (the CLI
-    # app callback), not in web/app.py's create_app(), so importing the
-    # FastAPI app directly for tests doesn't also reconfigure pytest's
-    # global logging.
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # Only configured here (the CLI app callback), not in web/app.py's
+    # create_app(), so importing the FastAPI app directly for tests
+    # doesn't also reconfigure pytest's global logging or write log files
+    # as a side effect of an unrelated test.
+    _configure_logging()
 
 
 @app.command()
