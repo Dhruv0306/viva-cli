@@ -356,6 +356,14 @@ Each phase is independently testable and produces a working, demoable slice.
   untouched. Existing Phase 13 exit criteria (planning-decision log line
   visible on the console) still hold — this phase must not silence that
   the way it silences `httpx`.
+- **Verified**, live, on 2026-09-18: terminal stayed clean across
+  multiple real sessions (no `httpx`/`httpcore` lines, planning-decision
+  line still visible); `logs/log_2026_09_17.log` and
+  `logs/log_2026_09_18.log` both exist as separate per-day files, the
+  latter's tail full of the `HTTP Request: POST http://localhost:11434
+  /...` lines that used to be on-screen; a simulated 10-day-old log file
+  was removed by the next `viva` invocation while a simulated 1-day-old
+  one was kept. All five exit criteria met.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
