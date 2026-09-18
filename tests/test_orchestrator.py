@@ -1232,6 +1232,37 @@ def test_maybe_queue_followup_adds_item_when_classification_available(tmp_path):
     assert "q1_f1" in pending_ids
 
 
+def test_maybe_queue_followup_preserves_architecture_topic(tmp_path):
+    # Real bug, caught live: a follow-up to an architecture question was
+    # silently created with architecture_topic=None regardless of the
+    # parent's real topic, violating QuestionPlanItem's own documented
+    # invariant ("set if and only if category == 'architecture'"). Every
+    # such follow-up then issued retrieval.py's generic, topic-less
+    # architecture query -- identical every time, regardless of which
+    # topic the follow-up was supposed to dig into -- producing
+    # duplicate or near-duplicate questions across a session.
+    config = _config(tmp_path, max_followup_depth=1)
+    ui = FakeSessionUI(answers=[])
+    store = SessionStore(str(tmp_path / "viva.db"))
+    orch = Orchestrator(
+        config=config, session_store=store, ui=ui,
+        llm_client=object(), embedding_client=object(), vector_store=object(),
+        classification_provider=_AlwaysPartialProvider(),
+    )
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    item = QuestionPlanItem(
+        id="q1", category="architecture", target_module=None, architecture_topic="security",
+    )
+    store.save_plan("sess1", [item])
+    store.record_question_asked("sess1", "q1", "text", [])
+    qa_row = {r.question_id: r for r in store.get_qa_records("sess1")}["q1"]
+
+    orch._maybe_queue_followup("sess1", qa_row, "a weak answer")
+
+    followup_row = {r.question_id: r for r in store.get_qa_records("sess1")}["q1_f1"]
+    assert followup_row.architecture_topic == "security"
+
+
 def test_maybe_queue_followup_respects_max_depth(tmp_path):
     config = _config(tmp_path, max_followup_depth=1)
     ui = FakeSessionUI(answers=[])

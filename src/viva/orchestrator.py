@@ -727,10 +727,14 @@ class Orchestrator:
         ]
 
     def _maybe_queue_followup(self, session_id: str, item: QARecordRow, answer_text: str) -> None:
-        """FR14 seam. `classify()` always returns `None` in Phase 6 (see
-        `viva.classification`), so this never actually queues a follow-up
-        yet -- the mechanism exists so Phase 7 only has to swap the
-        injected `ClassificationProvider`."""
+        """FR14. `classification_provider` defaults to the real `Evaluator`
+        (see `__init__`), so this is live in every normal session, not
+        just a dormant seam -- a stale Phase 6 comment here previously
+        claimed `classify()` "always returns None" and this branch "never
+        actually queues a follow-up yet", which stopped being true once
+        Phase 7 wired in the real evaluator as the default. Still
+        unreachable end-to-end only when a caller explicitly injects
+        `NullClassificationProvider` (see the test of that name)."""
         classification = self.classification_provider.classify(item.question_id, answer_text)
         if classification not in ("partial", "incorrect"):
             return
@@ -742,6 +746,22 @@ class Orchestrator:
             category=item.category,
             target_module=item.target_module,
             target_file=item.target_file,
+            # docs/system-design/18-phase-13-architecture-tier-questions-
+            # design.md §18.2 introduced this field after this follow-up
+            # constructor already existed, and it was never updated to
+            # carry it -- QuestionPlanItem's own docstring states the
+            # invariant "set if and only if category == 'architecture'";
+            # omitting it here silently violated that for every
+            # follow-up to an architecture question. retrieval.py's
+            # build_query() falls back to one generic, topic-less
+            # architecture query whenever architecture_topic is None, so
+            # every such follow-up -- regardless of which of the five
+            # real topics its parent was actually about -- retrieved the
+            # exact same grounding_context and tended to regenerate the
+            # same or a near-identical question, observed live as five
+            # of fourteen questions in one real session being literal
+            # duplicates.
+            architecture_topic=item.architecture_topic,
             is_followup_of=item.question_id,
         )
         self.store.add_followup_item(session_id, followup)
