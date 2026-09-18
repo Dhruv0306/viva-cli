@@ -358,6 +358,33 @@ Each phase is independently testable and produces a working, demoable slice.
   the way it silences `httpx`.
 
 ## Backlog (not yet scheduled)
+- **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
+  the categories/cases no data exists for yet.** The default set in
+  Patch B (docs/system-design/22-phase-16-grading-integrity-
+  observability-design.md §22.2.2.1) is real, data-backed — not a
+  guess — but the data has two known gaps: no `error_handling` or
+  `testing_strategy` samples were ever collected, and only one
+  thin-repo case (`octocat/Hello-World`) exists. Not blocking, the
+  value is already better than the previous "disabled" state either
+  way, but worth tracking rather than trusting silently.
+  - **Concrete signal to watch for**, from the `Retrieval for
+    category=...` log line every real session already prints: an
+    `error_handling` or `testing_strategy` question getting
+    `SKIPPED_NO_GROUNDING` unexpectedly often on repos that clearly
+    have real error-handling code or a real test suite, or the reverse
+    — a visibly thin/sparse repo's questions in those two categories
+    still coming through as detailed and well-grounded, which would
+    suggest 0.85 is too loose for them specifically.
+  - **What to do if it happens:** paste the relevant `Retrieval for
+    category=error_handling|testing_strategy ...` log lines the same
+    way the original data collection worked, distance numbers from a
+    few more real sessions are enough to tell whether 0.85 needs a
+    per-category value or just a different single number.
+  - Revisit the *number*, not the mechanism, if this comes up — the
+    filter/logging/skip-and-redistribute machinery itself is already
+    proven correct (§22.2.4's test, plus the live
+    `MAX_RETRIEVAL_DISTANCE=0.01` forced-skip run).
+
 - **§19.2.2 — split `orchestrator.py`'s planning/ranking logic into its
   own module.** A maintainability refactor, not a behavior change; no
   user-facing exit criteria to attach it to. Deferred the same way the
