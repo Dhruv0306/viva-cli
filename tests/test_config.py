@@ -272,18 +272,18 @@ def test_max_reduce_context_tokens_invalid_raises(monkeypatch):
         Config.load(env_file=None)
 
 
-def test_max_retrieval_distance_unset_is_none(monkeypatch):
-    # Phase 16 (docs/system-design/22-phase-16-grading-integrity-
-    # observability-design.md §22.2.2) ships the retrieval-quality
-    # filter disabled by default -- there's no textbook-correct L2
-    # distance threshold for this project's embeddings without real
-    # session data, so unset must mean "don't filter," not an error.
+def test_max_retrieval_distance_unset_defaults_to_085(monkeypatch):
+    # Phase 16 Patch B (docs/system-design/22-phase-16-grading-integrity-
+    # observability-design.md §22.2.2): real data from three repos
+    # across five categories informed this default -- Patch A shipped
+    # unset meaning "don't filter" since no threshold could be picked
+    # without that data yet.
     monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
     config = Config.load(env_file=None)
-    assert config.max_retrieval_distance is None
+    assert config.max_retrieval_distance == 0.85
 
 
-def test_max_retrieval_distance_valid_value(monkeypatch):
+def test_max_retrieval_distance_valid_value_overrides_the_default(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
     monkeypatch.setenv("MAX_RETRIEVAL_DISTANCE", "1.25")
     config = Config.load(env_file=None)

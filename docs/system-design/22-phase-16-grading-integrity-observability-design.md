@@ -89,6 +89,48 @@ sequencing for a threshold with no textbook-correct value, and it keeps
 patch A itself immediately useful (better diagnosability) independent
 of whether patch B's number turns out right on the first try.
 
+### 22.2.2.1 Patch B's resolved value: 0.85
+
+Real data, collected from four separate sessions against three repos
+(`octocat/Hello-World`, `Dhruv0306/Dhruv0306`, and `Dhruv0306/viva-cli`
+itself) across six categories:
+
+| Category / topic | Distance range |
+|---|---|
+| architecture / overview (thin repo) | 0.909–0.951 |
+| architecture / overview (real content) | 0.583–0.651 |
+| architecture / pipeline | 0.540–0.605 |
+| architecture / security | 0.565–0.651 |
+| architecture / integration | 0.543–0.673 |
+| architecture / concurrency | 0.575–0.626 |
+| implementation_detail | 0.686–0.767 |
+| tech_choice_rationale | 0.766–0.790 |
+
+Two things the data showed that weren't predicted going in: real
+architecture content across every topic clusters tighter (0.54–0.67)
+than assumed, and `implementation_detail`/`tech_choice_rationale` —
+narrower, file-scoped queries — actually sit *higher* (0.69–0.79) than
+architecture's broad, whole-repo queries, the opposite of the initial
+guess that broad queries would be the higher-distance ones. Had a
+default been picked off architecture data alone, it would have quietly
+started filtering out well-grounded `implementation_detail`/
+`tech_choice_rationale` questions, exactly the failure mode this
+section opened by warning against.
+
+The one genuinely thin sample collected (`octocat/Hello-World`, a
+near-empty repo) landed at 0.909–0.951 — clearly separated from every
+real-content sample above it. `0.85` sits above every real sample
+collected and below the one thin sample, `Config.load()`'s new default
+when `MAX_RETRIEVAL_DISTANCE` is unset (`config.py`, mirroring how
+`TOP_K_RETRIEVAL`'s own default is set inline rather than requiring an
+env var).
+
+Still provisional in one sense: no `error_handling` or
+`testing_strategy` samples were collected, and no second genuinely-thin
+non-architecture case. If real usage surfaces either category behaving
+differently, or produces a thin case closer to the boundary than
+Hello-World's, this number is the one to revisit — not the mechanism.
+
 ### 22.2.3 The change to `retrieve_grounding_chunks()`
 
 ```python

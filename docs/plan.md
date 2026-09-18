@@ -274,14 +274,31 @@ Each phase is independently testable and produces a working, demoable slice.
   behavior question CI can't assert, only prompt-content presence can
   be checked automatically.
 - **Exit criteria:** patch A's logging shows real distance numbers from
-  at least one real session, informing patch B's threshold; a thin/
+  at least one real session, informing patch B's threshold ✅ — 4
+  sessions across 3 repos and 6 categories, resolved to
+  `MAX_RETRIEVAL_DISTANCE=0.85` (docs/system-design/22-phase-16-
+  grading-integrity-observability-design.md §22.2.2.1); a thin/
   sparse test repo triggers at least one topic skip with a
   corresponding log line, proven by a new orchestrator-level test (none
-  existed before this phase) rather than asserted as already covered;
-  the adversarial-docstring fixture is manually confirmed, against the
-  real configured model, not to flip the evaluator's classification;
-  and Phase 13's existing exit-criteria repos are re-run to confirm no
-  regression in question grounding quality.
+  existed before this phase) rather than asserted as already covered
+  ✅ — confirmed live with `MAX_RETRIEVAL_DISTANCE=0.01` against
+  `octocat/Hello-World` (17/17 questions skipped, session still
+  completed cleanly); the adversarial-docstring fixture is manually
+  confirmed, against the real configured model, not to flip the
+  evaluator's classification ✅ — `not_attempted`, not `correct`, for a
+  deliberately wrong answer; and Phase 13's existing exit-criteria
+  repos are re-run to confirm no regression in question grounding
+  quality ✅ — `viva-cli` itself, 7/7 questions asked, no duplicates
+  after the `_maybe_queue_followup` fix below.
+- **Bonus finding, fixed in the same phase:** real-world testing of the
+  above surfaced a separate, unrelated bug — `_maybe_queue_followup()`
+  in `orchestrator.py` silently dropped `architecture_topic` when
+  constructing a follow-up item, violating `QuestionPlanItem`'s own
+  documented invariant and collapsing every architecture follow-up
+  into one generic, topic-less retrieval bucket regardless of which of
+  the five real topics its parent was about. Produced literal duplicate
+  questions in a live session (5 of 14 questions asked were word-for-
+  word identical). Fixed and covered by a new regression test.
 
 ## Phase 17 — CLI Logging Hygiene
 - Root cause: Phase 13's `logging.basicConfig(level=logging.INFO, ...)`

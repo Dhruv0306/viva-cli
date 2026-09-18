@@ -103,11 +103,11 @@ def _get_optional_positive_int(name: str) -> int | None:
 def _get_optional_positive_float(name: str) -> float | None:
     # docs/system-design/22-phase-16-grading-integrity-observability-
     # design.md §22.2.3 -- mirrors _get_optional_positive_int() exactly.
-    # Unset means "no retrieval-quality filtering" (Phase 16 ships this
-    # disabled by default; there's no textbook-correct L2 distance
-    # threshold for this project's embeddings without real session
-    # data, the same reasoning that led to pressure-testing before
-    # picking a default LLM_MODEL rather than guessing).
+    # An unset env var returns None here; MAX_RETRIEVAL_DISTANCE's own
+    # call site in Config.load() is what turns that into a real default
+    # (0.85, as of Phase 16 Patch B) rather than leaving the resolved
+    # Config with no filtering -- this helper itself stays a generic
+    # "optional positive float from the environment" primitive.
     raw = os.getenv(name, "").strip()
     if not raw:
         return None
@@ -157,9 +157,10 @@ class Config:
     # --- RAG ---
     vector_db_path: str
     top_k_retrieval: int
-    # None disables filtering (Phase 16 default, until a real session's
-    # logging informs a real threshold -- design doc §22.2.2). See
-    # _get_optional_positive_float()'s docstring above.
+    # None disables filtering entirely -- Config.load() itself never
+    # produces None anymore as of Phase 16 Patch B (defaults to a real
+    # 0.85, see that call site), but the field stays Optional so direct
+    # construction (tests, or any future caller) can still opt out.
     max_retrieval_distance: float | None
 
     # --- Session persistence / loop (Phase 6, docs/design.md §8) ---
@@ -285,7 +286,20 @@ class Config:
             raise ConfigError("VECTOR_DB_PATH must not be empty if set")
 
         top_k_retrieval = _get_positive_int("TOP_K_RETRIEVAL", "5")
+        # Phase 16 Patch A shipped this disabled (None) -- no threshold
+        # could be picked without real data. Patch B sets a real default
+        # once that logging produced it: 0.85 sits above every real-
+        # content sample collected across three repos and five
+        # categories (architecture's five topics at 0.54-0.65,
+        # implementation_detail/tech_choice_rationale at 0.69-0.79) and
+        # below the one thin-repo sample collected (octocat/Hello-World
+        # at 0.91-0.95). See docs/system-design/22-phase-16-grading-
+        # integrity-observability-design.md §22.2.2 for the full data
+        # and reasoning. An explicit MAX_RETRIEVAL_DISTANCE still
+        # overrides this, same as before.
         max_retrieval_distance = _get_optional_positive_float("MAX_RETRIEVAL_DISTANCE")
+        if max_retrieval_distance is None:
+            max_retrieval_distance = 0.85
 
         session_db_path = os.getenv("SESSION_DB_PATH", "./data/viva.db").strip()
         if not session_db_path:
