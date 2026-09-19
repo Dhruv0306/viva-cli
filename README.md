@@ -1,5 +1,7 @@
 # viva-cli
 
+[![Latest Release](https://img.shields.io/github/v/release/Dhruv0306/viva-cli?label=release&sort=semver)](https://github.com/Dhruv0306/viva-cli/releases/latest)
+
 **A local-LLM RAG tool that analyzes a GitHub project and conducts a timed, code-grounded viva (oral exam) on it — then reports what you knew, what you missed, and how to improve.**
 
 Point it at a repo, and it clones the project, builds a real understanding of its architecture via retrieval-augmented analysis, then runs a configurable timed Q&A session grounded entirely in your actual code — not generic interview questions. Every question is traceable to a real file/function, and every evaluation is judged against that same code, not against the model's general opinions.
