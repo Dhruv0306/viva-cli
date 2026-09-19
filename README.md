@@ -1,5 +1,6 @@
 # viva-cli
 
+[![Tests](https://github.com/Dhruv0306/viva-cli/actions/workflows/tests.yml/badge.svg)](https://github.com/Dhruv0306/viva-cli/actions/workflows/tests.yml)
 [![Latest Release](https://img.shields.io/github/v/release/Dhruv0306/viva-cli?label=release&sort=semver)](https://github.com/Dhruv0306/viva-cli/releases/latest)
 
 **A local-LLM RAG tool that analyzes a GitHub project and conducts a timed, code-grounded viva (oral exam) on it — then reports what you knew, what you missed, and how to improve.**
