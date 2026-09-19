@@ -31,7 +31,14 @@ runner = CliRunner()
 _PLAIN_TERMINAL_ENV = {"_TYPER_FORCE_DISABLE_TERMINAL": "1"}
 
 
-def test_serve_help_lists_host_and_port_options():
+def test_serve_help_lists_host_and_port_options(monkeypatch, tmp_path):
+    # --help still runs main()'s group callback (and therefore
+    # _configure_logging()) before Click short-circuits into printing
+    # help text -- confirmed empirically (a real logs/ directory showed
+    # up in the repo root from this test alone before chdir was added
+    # here), not just theorized.
+    monkeypatch.chdir(tmp_path)
+
     result = runner.invoke(app, ["serve", "--help"], env=_PLAIN_TERMINAL_ENV)
 
     assert result.exit_code == 0
@@ -69,6 +76,7 @@ class _FakeApp:
 def test_serve_calls_uvicorn_run_with_host_and_port(mocker, monkeypatch, tmp_path):
     monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
     monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    monkeypatch.chdir(tmp_path)
     fake_app = _FakeApp(viva_token=None)
     mocker.patch("viva.web.app.create_app", return_value=fake_app)
     run_mock = mocker.patch("uvicorn.run")
@@ -85,6 +93,7 @@ def test_serve_passes_host_through_to_create_app(mocker, monkeypatch, tmp_path):
     # host arg) would silently turn auth off for every non-loopback bind.
     monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
     monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    monkeypatch.chdir(tmp_path)
     fake_app = _FakeApp(viva_token=None)
     create_app_mock = mocker.patch("viva.web.app.create_app", return_value=fake_app)
     mocker.patch("uvicorn.run")
@@ -98,6 +107,7 @@ def test_serve_passes_host_through_to_create_app(mocker, monkeypatch, tmp_path):
 def test_serve_prints_token_when_one_was_generated(mocker, monkeypatch, tmp_path):
     monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
     monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    monkeypatch.chdir(tmp_path)
     fake_app = _FakeApp(viva_token="fake-token-abc123")
     mocker.patch("viva.web.app.create_app", return_value=fake_app)
     mocker.patch("uvicorn.run")
@@ -110,6 +120,7 @@ def test_serve_prints_token_when_one_was_generated(mocker, monkeypatch, tmp_path
 def test_serve_prints_no_token_for_default_loopback_host(mocker, monkeypatch, tmp_path):
     monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
     monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    monkeypatch.chdir(tmp_path)
     fake_app = _FakeApp(viva_token=None)
     mocker.patch("viva.web.app.create_app", return_value=fake_app)
     mocker.patch("uvicorn.run")

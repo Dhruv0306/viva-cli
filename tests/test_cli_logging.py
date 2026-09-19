@@ -12,18 +12,19 @@ already uses) -- without isolating cwd, running this file would create
 a real logs/ directory in whatever directory pytest happens to run
 from.
 
-_reset_noisy_loggers is an autouse fixture, not a plain helper called
-manually at the start/end of each test body. A real bug shipped from
-the manual-call version: if a test's assertions raised before reaching
-its own trailing cleanup call, or pytest ran this file's tests
-interleaved with other files' global logging-module state in a way the
-manual calls didn't anticipate, propagate=False could leak into an
-unrelated test in a different file later in the same session (observed
-live: test_questiongen_retrieval.py's caplog-based test came back empty
-because viva.questiongen.retrieval's propagate was still False from
-here). A yield-based fixture's teardown half runs via pytest's own
-finally-equivalent regardless of whether the test body raised, which a
-bare function call at the end of a test body cannot guarantee.
+Isolation for the loggers _configure_logging() mutates
+(httpx/httpcore/viva.questiongen.retrieval) is handled by a suite-wide
+autouse fixture in tests/conftest.py, not anything file-local here.
+Two real bugs shipped before that fixture existed, in order: first, a
+helper called manually at the start/end of each test body, where
+anything raising before the trailing call skipped cleanup; then a
+fixture scoped to just this file, where any of the other 10 test files
+that also call runner.invoke(app, ...) -- none of which know this
+global state exists -- could leave propagate=False behind for whichever
+test ran next in the same process, wherever in the suite that landed
+(observed live, twice: test_questiongen_retrieval.py's caplog-based
+test coming back empty each time). Only a suite-wide fixture actually
+closes that gap.
 """
 from __future__ import annotations
 
@@ -31,14 +32,12 @@ import datetime as dt
 import logging
 import os
 
-import pytest
 from typer.testing import CliRunner
 
+import viva.cli
 from viva.cli import app
 
 runner = CliRunner()
-
-_REDIRECTED_LOGGER_NAMES = ("httpx", "httpcore", "viva.questiongen.retrieval")
 
 
 def _env(monkeypatch, tmp_path):
@@ -47,28 +46,16 @@ def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("VECTOR_DB_PATH", str(tmp_path / "chroma"))
 
 
-def _reset_noisy_loggers():
-    # _configure_logging() runs on every CLI invocation within a single
-    # test process (unlike a real `viva` process, which only runs it
-    # once) -- without resetting handlers between invocations,
-    # FileHandlers from earlier tests accumulate on the same logger
-    # objects (they're module-level singletons via logging.getLogger())
-    # and every assertion below would see stale state from a previous
-    # test's tmp_path.
-    for name in _REDIRECTED_LOGGER_NAMES:
-        logger = logging.getLogger(name)
-        for handler in list(logger.handlers):
-            logger.removeHandler(handler)
-            handler.close()
-        logger.propagate = True
-        logger.setLevel(logging.NOTSET)
+def test_conftest_noisy_logger_list_matches_cli_module():
+    # conftest.py's suite-wide reset fixture duplicates this list rather
+    # than importing viva.cli at collection time for every test file in
+    # the suite (most of which have nothing to do with the CLI) -- this
+    # guards against the two silently drifting apart, which would bring
+    # back exactly the leak this file's own history is about, just for
+    # a logger name added to one list and not the other.
+    import conftest
 
-
-@pytest.fixture(autouse=True)
-def _isolated_logging_state():
-    _reset_noisy_loggers()
-    yield
-    _reset_noisy_loggers()
+    assert set(conftest._NOISY_LOGGER_NAMES) == set(viva.cli._NOISY_LOGGER_NAMES)
 
 
 def test_httpx_logger_stops_propagating_to_the_console(monkeypatch, tmp_path):
