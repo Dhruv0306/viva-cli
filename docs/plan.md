@@ -364,6 +364,12 @@ Each phase is independently testable and produces a working, demoable slice.
   /...` lines that used to be on-screen; a simulated 10-day-old log file
   was removed by the next `viva` invocation while a simulated 1-day-old
   one was kept. All five exit criteria met.
+- **Extended, 2026-09-19:** `viva.questiongen.retrieval`'s own per-
+  question INFO line (Phase 16 §19.6.2) joined `httpx`/`httpcore` on
+  the redirected-to-file list, once real usage showed it was just as
+  disruptive to the live question/answer UI, printed once per question
+  asked. `orchestrator`'s planning-decision line (fires once per
+  session, not once per question) stays on console, unchanged.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against

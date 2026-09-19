@@ -65,7 +65,7 @@ def _version_callback(value: bool) -> None:
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 _LOG_RETENTION_DAYS = 3
-_NOISY_LOGGER_NAMES = ("httpx", "httpcore")
+_NOISY_LOGGER_NAMES = ("httpx", "httpcore", "viva.questiongen.retrieval")
 
 
 def _configure_logging() -> None:
@@ -90,9 +90,20 @@ def _configure_logging() -> None:
     # retries, spotting a hung request, correlating timing with a slow
     # answer). It moves to a per-day file instead of stdout -- httpx/
     # httpcore specifically get propagate=False and their own
-    # FileHandler; every other logger (orchestrator, evaluator,
-    # llm_client, analyzer.extract, questiongen.retrieval) is untouched
-    # and keeps logging to console exactly as before.
+    # FileHandler.
+    #
+    # questiongen.retrieval's own INFO line (Phase 16 §19.6.2 -- category
+    # /topic/module/file, fetch/filter counts, min/max distance) joined
+    # this list once real usage confirmed it: useful for diagnosing why
+    # a question felt weakly grounded, but printed once per question
+    # asked, interleaved with the live question/answer UI the same way
+    # httpx's lines were -- moved here for the same reason, not because
+    # it stopped being useful. Every *other* logger (orchestrator,
+    # evaluator, llm_client, analyzer.extract) is untouched and keeps
+    # logging to console exactly as before -- in particular, Phase 13's
+    # planning-decision line (orchestrator.py) is deliberately not on
+    # this list; it fires once per session, not once per question, and
+    # was the original reason INFO-level logging exists at all.
     logs_dir = Path("logs")
     logs_dir.mkdir(exist_ok=True)
 

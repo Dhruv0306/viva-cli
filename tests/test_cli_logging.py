@@ -1,6 +1,9 @@
 """Tests for Phase 17's CLI logging hygiene (docs/plan.md Phase 17):
 httpx/httpcore get redirected to a per-day file under logs/ instead of
-the console, with a 3-day retention sweep at CLI startup.
+the console, with a 3-day retention sweep at CLI startup. Extended to
+also redirect viva.questiongen.retrieval's own per-question INFO line
+(Phase 16 §19.6.2) once real usage confirmed it was just as disruptive
+to the live question/answer UI as httpx's lines were.
 
 Every test runs with monkeypatch.chdir(tmp_path) first, since
 _configure_logging() creates ./logs relative to the current working
@@ -20,6 +23,8 @@ from viva.cli import app
 
 runner = CliRunner()
 
+_REDIRECTED_LOGGER_NAMES = ("httpx", "httpcore", "viva.questiongen.retrieval")
+
 
 def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
@@ -35,7 +40,7 @@ def _reset_noisy_loggers():
     # module-level singletons via logging.getLogger()) and every
     # assertion below would see stale state from a previous test's
     # tmp_path.
-    for name in ("httpx", "httpcore"):
+    for name in _REDIRECTED_LOGGER_NAMES:
         logger = logging.getLogger(name)
         for handler in list(logger.handlers):
             logger.removeHandler(handler)
@@ -54,6 +59,58 @@ def test_httpx_logger_stops_propagating_to_the_console(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert logging.getLogger("httpx").propagate is False
     assert logging.getLogger("httpcore").propagate is False
+    _reset_noisy_loggers()
+
+
+def test_questiongen_retrieval_logger_stops_propagating_to_the_console(monkeypatch, tmp_path):
+    # Joined httpx/httpcore on this list once real usage confirmed it
+    # was just as disruptive: one line per question generated,
+    # interleaved with the live question/answer UI.
+    _env(monkeypatch, tmp_path)
+    _reset_noisy_loggers()
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["cleanup"])
+
+    assert result.exit_code == 0
+    assert logging.getLogger("viva.questiongen.retrieval").propagate is False
+    _reset_noisy_loggers()
+
+
+def test_questiongen_retrieval_logger_writes_to_a_dated_log_file(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    _reset_noisy_loggers()
+    monkeypatch.chdir(tmp_path)
+
+    runner.invoke(app, ["cleanup"])
+    logging.getLogger("viva.questiongen.retrieval").info(
+        "Retrieval for category=architecture architecture_topic=overview "
+        "target_module=None target_file=None: 15 candidate(s) fetched, "
+        "15 after test-path filter, 5 after relevance filter "
+        "(distances: min=0.583 max=0.626)"
+    )
+
+    expected_path = tmp_path / "logs" / f"log_{dt.date.today():%Y_%m_%d}.log"
+    assert expected_path.exists()
+    assert "Retrieval for category=architecture" in expected_path.read_text()
+    _reset_noisy_loggers()
+
+
+def test_questiongen_retrieval_lines_do_not_reach_stdout(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    _reset_noisy_loggers()
+    monkeypatch.chdir(tmp_path)
+
+    runner.invoke(app, ["cleanup"])
+    logging.getLogger("viva.questiongen.retrieval").info(
+        "Retrieval for category=architecture architecture_topic=overview "
+        "target_module=None target_file=None: 15 candidate(s) fetched, "
+        "15 after test-path filter, 5 after relevance filter "
+        "(distances: min=0.583 max=0.626)"
+    )
+    result = runner.invoke(app, ["cleanup"])
+
+    assert "Retrieval for category=" not in result.stdout
     _reset_noisy_loggers()
 
 
