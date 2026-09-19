@@ -9,6 +9,14 @@ for general use."
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-19
+
+Everything closing out a September 2026 external panel review
+(`docs/system-design/19-panel-review-findings-2026-09.md`): Phases
+14-17 in full, plus two real bugs found via actual timed sessions
+against real repos while validating them (not caught by the test suite)
+-- full write-ups in the phase design docs referenced below.
+
 ### Security
 
 - Fixed a `git clone` URL validation gap: a crafted `repo_url` could
@@ -27,8 +35,41 @@ for general use."
 - `viva serve` now requires a shared-secret access token on every
   `/api/*` request once bound to a non-loopback address (e.g.
   `--host 0.0.0.0`) -- the default, loopback-only case is unaffected.
-  See
+  A follow-up fix closed a real gap found during manual testing of
+  this: the page shell at `/` was embedding the real token into every
+  response regardless of whether the request already supplied it,
+  letting anyone who loaded the bare URL read the token straight out of
+  the page source and use it for every subsequent `/api/*` call. See
   [`docs/system-design/21-phase-15-serve-authentication-design.md`](docs/system-design/21-phase-15-serve-authentication-design.md).
+- Added an instruction-injection boundary to all four LLM system
+  prompts (question generation, architecture questions, answer
+  classification, feedback): retrieved code and the candidate's own
+  spoken answer are now explicitly described as data to reason about,
+  never instructions to follow, even if phrased as one -- closing a gap
+  where a candidate could plant a comment in their own repo (or say
+  something in an answer) attempting to talk the grader into marking
+  any answer correct. Confirmed live against the real configured model
+  with a deliberately adversarial docstring and a deliberately wrong
+  answer (`not_attempted`, not `correct`). See §19.1.1.
+
+### Added
+
+- A retrieval-quality distance filter: a retrieved code chunk whose
+  distance from the query exceeds `MAX_RETRIEVAL_DISTANCE` (default
+  `0.85`, informed by real session data across three repos and six
+  question categories, not a guess) is dropped, and a question left
+  with nothing well-grounded to ask about is skipped rather than asked
+  anyway. Every retrieval now logs its outcome (category, topic,
+  module, file, fetch/filter counts, min/max distance) for
+  diagnosability. See §19.1.2/§19.6.2 and
+  [`docs/system-design/22-phase-16-grading-integrity-observability-design.md`](docs/system-design/22-phase-16-grading-integrity-observability-design.md).
+- CLI logging hygiene: `httpx`/`httpcore`'s per-request trace and the
+  retrieval-quality log line above no longer print to the live session
+  terminal -- both were flooding the question/answer UI, one line per
+  Ollama call and one per question. Redirected to a per-day file
+  instead (`logs/log_<YYYY_MM_DD>.log`), with a 3-day retention sweep
+  at CLI startup. Not a removal -- the trace still has real debugging
+  value, it's just off-screen during an actual session now.
 
 ### Fixed
 
@@ -37,6 +78,12 @@ for general use."
   values are now rejected outright (§19.3.1).
 - A malformed `repo_url` is now rejected before a session row is
   persisted, instead of surfacing several layers downstream (§19.5.2).
+- A follow-up question to an architecture question was silently losing
+  its architecture topic, collapsing every such follow-up -- regardless
+  of which of the five real topics (overview/pipeline/security/
+  integration/concurrency) its parent was actually about -- into one
+  generic, always-identical retrieval query. Found live: 5 of 14
+  questions in one real session came back as literal duplicates.
 
 ## [0.2.0] - 2026-09-13
 
