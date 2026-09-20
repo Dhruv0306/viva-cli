@@ -371,6 +371,151 @@ Each phase is independently testable and produces a working, demoable slice.
   asked. `orchestrator`'s planning-decision line (fires once per
   session, not once per question) stays on console, unchanged.
 
+## Phase 18 — Dependency & Auth Hygiene
+- Root cause, three unrelated small items bundled the way Phase 14
+  bundled multiple unrelated panel-review fixes into one phase:
+  1. `pyproject.toml`'s `dev` extra lists `httpx2>=2.0,<3.0`, not
+     `httpx`. `httpx2` is a real, unrelated PyPI package, not an alias.
+     `fastapi.testclient.TestClient` needs the real `httpx` at runtime;
+     this only works today because `ollama` (a direct dependency)
+     transitively pulls in real `httpx>=0.27`, masking the typo.
+  2. `web/app.py`'s `_require_token` middleware compares the supplied
+     token with plain `supplied != token` instead of
+     `hmac.compare_digest`. Not a response to a demonstrated exploit —
+     the token is a 192-bit `secrets.token_urlsafe(24)` value, a timing
+     attack is impractical — but constant-time comparison is the
+     correct primitive for any credential check, on principle.
+  3. `pyproject.toml` has `license = { text = "TBD" }` and the README's
+     License section just says "TBD." Public repo, `CONTRIBUTING.md`
+     actively invites contributions, but with no LICENSE file default
+     copyright applies and nobody has a clear right to use, fork, or
+     redistribute the code.
+- **Design:**
+  - Item 1: `httpx2>=2.0,<3.0` → `httpx>=0.27,<1.0` in both
+    `pyproject.toml`'s `dev` extra and `requirements.txt`'s dev/test
+    section, matching the version floor `ollama` itself already
+    requires.
+  - Item 2: swap the equality check for `hmac.compare_digest(supplied
+    or "", token)` — guard the `None` case explicitly, since
+    `compare_digest` requires two strings (or two bytes objects) of
+    matching type, and `supplied` is `None` when no token/header was
+    sent at all.
+  - Item 3: add an MIT `LICENSE` file at repo root (fits "no API keys,
+    nothing leaves your machine, freely usable"); update
+    `pyproject.toml`'s `license` field to `{ text = "MIT" }`; replace
+    the README's "TBD" with a one-line MIT summary linking to the file.
+- **Exit criteria:**
+  - A clean `pip install -e ".[dev]"` in a fresh venv shows `httpx`
+    (not `httpx2`) in `pip list`; `pytest -q` still passes.
+  - A test asserting `_require_token` still rejects a wrong token and
+    still accepts the correct one (behavior-preserving, so this is a
+    check that the swap didn't regress anything, not a pre-fix-failing
+    regression test — no user-observable behavior changes).
+  - `viva serve --host 0.0.0.0` real-world run: correct token still
+    accepted, wrong token still 401s, missing token still 401s.
+  - `LICENSE` file present at repo root; `pyproject.toml` and README no
+    longer say "TBD."
+
+## Phase 19 — CI Quality Gates
+- Root cause: no static analysis runs in CI today (checked
+  `pyproject.toml`, `CONTRIBUTING.md`, `.github/workflows/tests.yml` —
+  none reference `ruff`, `mypy`, `black`, or `pytest-cov`). The
+  Phase 18 `httpx2` typo is exactly the class of mistake a linter
+  catches for free before merge, not after a deep-dive review finds it.
+- **Design:**
+  - `ruff`: default rule set plus `B` (bugbear) and `UP` (pyupgrade),
+    run via a new CI job and documented in `CONTRIBUTING.md`.
+  - `mypy`: start at `--strict` against `src/viva/` — the codebase is
+    already fully typed (dataclasses, type hints throughout), so this
+    is a "see what a strict pass finds" run rather than a ratchet-up
+    from a loose baseline; scope narrows in the design doc if `--strict`
+    turns up more noise than signal on first run.
+  - `pytest-cov`: added for visibility first (a coverage report in CI
+    output), not a hard minimum threshold — decide in the design doc
+    whether a threshold gets added later once a baseline number exists.
+  - New dependencies (`ruff`, `mypy`, `pytest-cov`) land in the `dev`
+    extra, which by this phase already has the Phase 18 `httpx` fix in
+    it.
+- **Sequencing note:** land this **before or alongside** Phase 18, not
+  after — Phase 18 is exactly the kind of change these gates should be
+  catching, and demonstrating that on a real PR (see exit criteria) only
+  works if the gates exist first.
+- **Exit criteria:** clean `ruff`/`mypy`/`pytest-cov` runs against
+  current `main`; a throwaway branch that reintroduces the `httpx2`-style
+  typo confirmed to fail the new `ruff` check (demonstrating the gate
+  actually catches this class of error, not just a hypothetical); a real
+  PR that trips one `ruff` rule and one `mypy` error confirmed to block
+  CI the same way a `pytest` failure already does.
+
+## Phase 20 — Serve Hardening & Onboarding
+- Root cause, two items both touching the `viva serve` / first-run path:
+  1. No rate limiting on `POST /api/sessions`. Once a non-loopback bind
+     is in use (Phase 15), any request carrying the correct token can
+     start unlimited concurrent sessions, each triggering a real `git
+     clone` plus Ollama load — a local resource-exhaustion vector for
+     anyone who has the token, distinct from the "no token at all" gap
+     Phase 15 already closed.
+  2. Getting a new install running today requires three separate manual
+     steps (start Ollama, `ollama pull` two specific models, `cp
+     .env.example .env`) with no single command to verify all three
+     succeeded before `viva start` is attempted — the given care that's
+     gone into diagnosability elsewhere (Phase 13/16/17's logging work)
+     hasn't yet extended to first-run setup itself.
+- **Design:**
+  - Rate limiting: a per-token in-memory counter on `SessionRegistry`
+    capping concurrent `IN_PROGRESS` sessions started by the same
+    token (small fixed limit, e.g. 3) — matches the "simplest thing
+    that works" reasoning already used for the token design itself
+    (`21-phase-15-serve-authentication-design.md`), not a general
+    request-rate middleware or an external library. Returns 429 with a
+    clear message when the cap is hit. Loopback (no token) case is
+    unaffected — the cap only applies when `require_token` is true.
+  - `viva doctor` (new CLI command): checks Ollama reachability against
+    `Config.ollama_host`, confirms `LLM_MODEL` and `EMBEDDING_MODEL` are
+    both pulled (via the Ollama API's model-list endpoint, not a shell
+    call to `ollama list`), prints a pass/fail line per check with a
+    concrete fix instruction (e.g. the exact `ollama pull <model>` to
+    run), exits 0 if all checks pass and 1 otherwise. No changes to
+    `viva start`/`serve` themselves — this is a new, separate,
+    read-only diagnostic command.
+- **Exit criteria:**
+  - Rate limit: a test asserting the (cap + 1)th concurrent session
+    request from the same token is rejected with 429, confirmed failing
+    against pre-fix code first; real-world run against `viva serve
+    --host 0.0.0.0` confirms the same behavior live.
+  - `viva doctor`: unit tests mocking Ollama reachable/unreachable and
+    model-present/absent, asserting the correct exit code and message
+    per case; real-world run with Ollama stopped, then with a model
+    missing, then fully correct, confirming each state reports
+    accurately.
+
+## Phase 21 — Containerized Setup
+- Root cause: no `Dockerfile` or `docker-compose.yml` exists. Given the
+  whole pitch is "local-first, works against your own Ollama instance,"
+  a one-command containerized path removes the biggest onboarding
+  friction point for anyone evaluating the tool before committing to a
+  full native install.
+- **Open question to resolve in the design doc before implementation:**
+  does the container bundle Ollama itself (heavier image, works
+  standalone) or expect an external Ollama reachable via
+  `Config.ollama_host` (lighter image, matches how most people already
+  run Ollama on bare metal for GPU access)? Leaning toward the latter —
+  voice mode already treats native deps as optional-by-design, and GPU
+  passthrough into a container for Ollama is a separate concern this
+  phase shouldn't need to own.
+- **Design:** `Dockerfile` for `viva serve`; `docker-compose.yml` with a
+  volume for `data/` (so sessions persist across container restarts,
+  matching `SESSION_DB_PATH`/`VECTOR_DB_PATH`'s existing convention) and
+  an `.env` mount; README section documenting the containerized path
+  alongside the existing native-install instructions, not replacing
+  them.
+- **Exit criteria:** `docker compose up` produces a working `viva serve`
+  reachable from the host, against a locally-running (host or separately
+  containerized, per the open question above) Ollama instance; a session
+  started, answered, and reported on entirely through the containerized
+  path; restarting the container preserves prior sessions via the
+  mounted volume.
+
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
   the categories/cases no data exists for yet.** The default set in
