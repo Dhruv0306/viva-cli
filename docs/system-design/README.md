@@ -182,5 +182,15 @@ history of what was tried and rejected along the way.
   can't answer, only prompt-content presence can be asserted
   automatically.
 
+- **[23-phase-18-dependency-auth-hygiene-design.md](23-phase-18-dependency-auth-hygiene-design.md)**
+  — the Phase 18 implementation design: an expanded look at the
+  `pyproject.toml` `httpx2`/`httpx` typo finds `requirements.txt` is
+  separately missing `fastapi`/`uvicorn` entirely, breaking the README's
+  own documented install path for `viva serve`; a `hmac.compare_digest`
+  hardening for the Phase 15 token-comparison middleware; and the
+  decision to add an MIT `LICENSE` file, the one genuine decision in the
+  phase rather than a mechanical fix. Includes an explicit
+  documentation-update plan and patch-by-patch file/doc mapping.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

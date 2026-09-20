@@ -372,13 +372,19 @@ Each phase is independently testable and produces a working, demoable slice.
   session, not once per question) stays on console, unchanged.
 
 ## Phase 18 — Dependency & Auth Hygiene
+- Design doc: `docs/system-design/23-phase-18-dependency-auth-hygiene-
+  design.md`.
 - Root cause, three unrelated small items bundled the way Phase 14
   bundled multiple unrelated panel-review fixes into one phase:
   1. `pyproject.toml`'s `dev` extra lists `httpx2>=2.0,<3.0`, not
      `httpx`. `httpx2` is a real, unrelated PyPI package, not an alias.
      `fastapi.testclient.TestClient` needs the real `httpx` at runtime;
      this only works today because `ollama` (a direct dependency)
-     transitively pulls in real `httpx>=0.27`, masking the typo.
+     transitively pulls in real `httpx>=0.27`, masking the typo. Found
+     while scoping this phase: `requirements.txt` is separately missing
+     `fastapi`/`uvicorn` entirely, so the README's own documented
+     `pip install -r requirements.txt` path leaves `viva serve`
+     unrunnable until this phase's fix.
   2. `web/app.py`'s `_require_token` middleware compares the supplied
      token with plain `supplied != token` instead of
      `hmac.compare_digest`. Not a response to a demonstrated exploit —
@@ -391,10 +397,12 @@ Each phase is independently testable and produces a working, demoable slice.
      copyright applies and nobody has a clear right to use, fork, or
      redistribute the code.
 - **Design:**
-  - Item 1: `httpx2>=2.0,<3.0` → `httpx>=0.27,<1.0` in both
-    `pyproject.toml`'s `dev` extra and `requirements.txt`'s dev/test
-    section, matching the version floor `ollama` itself already
-    requires.
+  - Item 1: `httpx2>=2.0,<3.0` → `httpx>=0.27,<1.0` in
+    `pyproject.toml`'s `dev` extra, matching the version floor `ollama`
+    itself already requires; `requirements.txt` gets `fastapi`/
+    `uvicorn` added to its base section (same ranges as
+    `pyproject.toml`) and `httpx` added to its `# dev/test` section, so
+    both manifests actually provide what they claim to.
   - Item 2: swap the equality check for `hmac.compare_digest(supplied
     or "", token)` — guard the `None` case explicitly, since
     `compare_digest` requires two strings (or two bytes objects) of
@@ -407,6 +415,9 @@ Each phase is independently testable and produces a working, demoable slice.
 - **Exit criteria:**
   - A clean `pip install -e ".[dev]"` in a fresh venv shows `httpx`
     (not `httpx2`) in `pip list`; `pytest -q` still passes.
+  - A separate clean `pip install -r requirements.txt` (the README's
+    documented path) succeeds at `import fastapi, uvicorn` and
+    `viva serve --help` with no import error.
   - A test asserting `_require_token` still rejects a wrong token and
     still accepts the correct one (behavior-preserving, so this is a
     check that the swap didn't regress anything, not a pre-fix-failing
@@ -414,7 +425,11 @@ Each phase is independently testable and produces a working, demoable slice.
   - `viva serve --host 0.0.0.0` real-world run: correct token still
     accepted, wrong token still 401s, missing token still 401s.
   - `LICENSE` file present at repo root; `pyproject.toml` and README no
-    longer say "TBD."
+    longer say "TBD"; `pip show viva-cli` after a clean install reports
+    `License: MIT`.
+  - `CHANGELOG.md`'s `[Unreleased]` section and this Phase 18 entry's
+    own `**Verified**` line are both written once the above are
+    actually confirmed, not before.
 
 ## Phase 19 — CI Quality Gates
 - Root cause: no static analysis runs in CI today (checked
