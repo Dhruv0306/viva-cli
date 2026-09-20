@@ -152,8 +152,22 @@ viva serve [--host 127.0.0.1] [--port 8000]
 Open `http://127.0.0.1:8000` for a browser page that starts/resumes
 sessions, answers questions live, and views reports -- the same
 operations as `viva start`/`resume`/`list`/`report`/`cleanup` above, not
-a different feature set. See
-[`docs/system-design/15-phase-10-web-ui-design.md`](docs/system-design/15-phase-10-web-ui-design.md).
+a different feature set (see
+[`docs/system-design/15-phase-10-web-ui-design.md`](docs/system-design/15-phase-10-web-ui-design.md)).
+The default `--host 127.0.0.1` needs nothing else; it's a local
+single-user tool with the same trust boundary the CLI itself already
+has.
+
+Binding to any other address (`--host 0.0.0.0`, to reach it from another
+device on your network) is different: `viva serve` prints an access
+token at startup, and every `/api/*` request needs it from then on.
+Open the printed link as-is (it already carries `?token=...`) and the
+page picks the token up automatically for the rest of that browser tab
+-- no further action needed. To reach it from a different browser or
+device, either reuse that same link or add the token yourself, as a
+query parameter (`?token=<token>`) or an `X-Viva-Token` header. A
+request without it gets `401`. See
+[`docs/system-design/21-phase-15-serve-authentication-design.md`](docs/system-design/21-phase-15-serve-authentication-design.md).
 
 Speak your answers instead of typing, and have questions read aloud,
 in either the CLI or viva room (see
@@ -215,77 +229,24 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-**Phases 0-15 (walking skeleton through `viva serve` authentication) are
-implemented.** Phase 14/15 closed the security-review findings in
-[`docs/system-design/19-panel-review-findings-2026-09.md`](docs/system-design/19-panel-review-findings-2026-09.md):
-Phase 14 fixed a `git clone` URL-scheme/host validation gap (a crafted
-`repo_url` could reach an unrestricted git transport or exfiltrate
-`GITHUB_TOKEN` to the wrong host), a stored XSS in the session list, and
-a `duration_minutes` input-validation bug. Phase 15 added a
-shared-secret access token, required on every `/api/*` request once
-`viva serve` is bound to a non-loopback address -- the default,
-loopback-only case is unaffected -- see
-[`docs/system-design/21-phase-15-serve-authentication-design.md`](docs/system-design/21-phase-15-serve-authentication-design.md).
-Phase 13 split the single `architecture` category into an
-extensible set of topics (system overview, pipeline/data flow, security
-boundaries, external integrations, concurrency), each capable of holding
-more than one question and now asked ahead of the other four categories
-rather than interleaved with them from question one. The question budget
-also scales with each session's own chosen duration instead of a flat
-default, with a session that finishes its plan early getting it extended
-rather than ending with time still on the clock -- see
-[`docs/system-design/18-phase-13-architecture-tier-questions-design.md`](docs/system-design/18-phase-13-architecture-tier-questions-design.md).
-Phase 10 added `viva serve`, which runs viva room: a local FastAPI server
-exposing the same
-start/resume/list/report/cleanup operations as the CLI, plus the live
-question/answer loop, fronted by a single static HTML+JS page (no
-frontend framework or build step). The one real design problem --
-`Orchestrator.start()`/`.resume()` block on `SessionUI.read_answer()`,
-which can't map onto an HTTP request/response cycle -- is solved with a
-second `SessionUI` implementation, `WebSessionUI`, backed by a
-`queue.Queue`: the Orchestrator's blocking call runs on a background
-thread, never an HTTP request thread, and `Orchestrator` itself is
-unchanged — see
-[`docs/system-design/15-phase-10-web-ui-design.md`](docs/system-design/15-phase-10-web-ui-design.md).
-Phase 9 audited the rest of its own to-do list against what Phases 0-8
-already shipped (config validation, resume-session support, and
-bad-URL/model-timeout error handling all turned out to already be
-done) and implemented the one real gap: `viva cleanup`, enforcing NFR7
-retention by removing session/Q&A records, Project Profile JSON files,
-and Chroma collections past their age, with reference-counted
-collection deletion so a collection shared by more than one session
-against the same commit is never removed while another session still
-depends on it — see
-[`docs/system-design/14-phase-9-polish-design.md`](docs/system-design/14-phase-9-polish-design.md).
-Config now validates every tunable, and an `LLM_MODEL` pressure-test harness
-(`scripts/pressure_test_llm_model.py`) is in place — see
-[`docs/system-design/07-llm-model-pressure-test-results.md`](docs/system-design/07-llm-model-pressure-test-results.md)
-for results once run locally. Phase 3 added tree-sitter AST extraction and
-map-reduce Project Profile generation, including the hierarchical-reduce
-fallback for repos with many modules — see
-[`docs/system-design/08-phase-3-analyzer-design.md`](docs/system-design/08-phase-3-analyzer-design.md).
-Phase 4 added function/class-granularity chunking, local Ollama
-embedding, and a Chroma-backed vector store keyed per commit (with reuse
-for unchanged commits) — see
-[`docs/system-design/09-phase-4-indexing-design.md`](docs/system-design/09-phase-4-indexing-design.md).
-Phase 5 added the category-based coverage plan and just-in-time grounded
-question generation, plus a query-reformulation fix for a retrieval-quality
-issue found during Phase 4's real-repo testing — see
-[`docs/system-design/10-phase-5-questiongen-design.md`](docs/system-design/10-phase-5-questiongen-design.md).
-Phase 6 added the real `viva start` / `viva resume` / `viva list`
-commands: SQLite session persistence, the Orchestrator driving the full
-pipeline plus the live timed Q&A loop, and the time-budget collapse
-behavior from docs/design.md §7 — see
-[`docs/system-design/11-phase-6-session-loop-design.md`](docs/system-design/11-phase-6-session-loop-design.md).
-Phase 7 replaced the Phase 6 placeholder (every answer persisted with
-`eval_status="deferred"`) with real, grounded, structured per-answer
-evaluation: a fast classification call plus a backgrounded free-text
-feedback call — see
-[`docs/system-design/12-phase-7-evaluator-design.md`](docs/system-design/12-phase-7-evaluator-design.md).
-Phase 8 added the real `viva report` command: aggregation of a
-session's evaluations into strengths/weaknesses/topics-to-revisit,
-rendered as Markdown (default) or JSON — see
-[`docs/system-design/13-phase-8-report-design.md`](docs/system-design/13-phase-8-report-design.md).
+Phases 0-17 are implemented, currently at **v0.3.0** (see [`CHANGELOG.md`](CHANGELOG.md)):
+
+- **Phase 0 — walking skeleton.** `viva demo` (still runnable, see below) proved out the two riskiest assumptions before anything else got built: local-model structured-output reliability, and a timer that excludes LLM latency.
+- **Phase 3 — analyze.** Tree-sitter AST extraction and map-reduce Project Profile generation, with a hierarchical-reduce fallback for repos with many modules. [`08-phase-3-analyzer-design.md`](docs/system-design/08-phase-3-analyzer-design.md)
+- **Phase 4 — index.** Function/class-granularity chunking, local Ollama embedding, a Chroma vector store keyed per commit and reused for unchanged commits. [`09-phase-4-indexing-design.md`](docs/system-design/09-phase-4-indexing-design.md)
+- **Phase 5 — question generation.** Category-based coverage plan, just-in-time grounded question generation, and a query-reformulation fix for a retrieval-quality issue found during Phase 4's real-repo testing. [`10-phase-5-questiongen-design.md`](docs/system-design/10-phase-5-questiongen-design.md)
+- **Phase 6 — session loop.** The real `viva start`/`resume`/`list`: SQLite session persistence, the Orchestrator driving the full pipeline plus the live timed Q&A loop, and the time-budget collapse behavior from `docs/design.md` §7. [`11-phase-6-session-loop-design.md`](docs/system-design/11-phase-6-session-loop-design.md)
+- **Phase 7 — evaluation.** Real, grounded, structured per-answer evaluation replacing the Phase 6 placeholder: a fast classification call plus a backgrounded free-text feedback call. [`12-phase-7-evaluator-design.md`](docs/system-design/12-phase-7-evaluator-design.md)
+- **Phase 8 — reporting.** The real `viva report` command, aggregating a session's evaluations into strengths/weaknesses/topics-to-revisit. [`13-phase-8-report-design.md`](docs/system-design/13-phase-8-report-design.md)
+- **Phase 9 — polish.** `viva cleanup`, enforcing NFR7 retention with reference-counted collection deletion so a collection shared by more than one session against the same commit is never removed while another still depends on it. Config validation and the `LLM_MODEL` pressure-test harness (`scripts/pressure_test_llm_model.py`) landed here too — see [`07-llm-model-pressure-test-results.md`](docs/system-design/07-llm-model-pressure-test-results.md) for results once run locally. [`14-phase-9-polish-design.md`](docs/system-design/14-phase-9-polish-design.md)
+- **Phase 10 — web UI.** `viva serve` / viva room: a local FastAPI server exposing the same operations as the CLI plus the live Q&A loop, fronted by a single static HTML+JS page with no build step. `WebSessionUI` bridges the Orchestrator's blocking `read_answer()` call onto a background thread so it never blocks an HTTP request. [`15-phase-10-web-ui-design.md`](docs/system-design/15-phase-10-web-ui-design.md)
+- **Phase 11/12 — voice I/O.** Local speech-to-text and text-to-speech (faster-whisper, Piper), in both the CLI and viva room, with automatic fallback to typed input whenever voice fails. [`16-...`](docs/system-design/16-phase-11-voice-io-design.md) / [`17-...`](docs/system-design/17-phase-12-web-voice-io-design.md)
+- **Phase 13 — architecture-tier questions.** The `architecture` category split into an extensible set of topics (overview, pipeline, security, integration, concurrency), asked ahead of the other four categories instead of interleaved with them. The question budget now scales with a session's own duration instead of a flat default. [`18-phase-13-architecture-tier-questions-design.md`](docs/system-design/18-phase-13-architecture-tier-questions-design.md)
+- **Phase 14 — security fixes.** Closed a `git clone` URL-scheme/host validation gap that could reach an unrestricted git transport or leak `GITHUB_TOKEN` to the wrong host, a stored XSS in the session list, and a `duration_minutes` validation bug — from the September 2026 panel review. [`19-panel-review-findings-2026-09.md`](docs/system-design/19-panel-review-findings-2026-09.md) / [`20-phase-14-security-hardening-design.md`](docs/system-design/20-phase-14-security-hardening-design.md)
+- **Phase 15 — `viva serve` authentication.** A shared-secret access token, required on every `/api/*` request once bound to a non-loopback address; the default loopback-only case is unaffected. [`21-phase-15-serve-authentication-design.md`](docs/system-design/21-phase-15-serve-authentication-design.md)
+- **Phase 16 — grading integrity.** A retrieval-quality distance filter (`MAX_RETRIEVAL_DISTANCE`, default `0.85`, set from real session data) skips a question rather than asking one grounded in weakly-relevant code. An instruction-injection boundary on all four LLM system prompts stops a candidate's own repo, or their spoken answer, from talking the grader into a false verdict. [`22-phase-16-grading-integrity-observability-design.md`](docs/system-design/22-phase-16-grading-integrity-observability-design.md)
+- **Phase 17 — CLI logging hygiene.** `httpx`/`httpcore` and the retrieval-quality log line no longer print to the live session terminal; both redirect to a per-day log file (`logs/log_<date>.log`) with 3-day retention instead.
+
 This throwaway `viva demo` harness (from the original walking skeleton,
 docs/plan.md Phase 0) still exercises the two riskiest assumptions
 end-to-end (local-model structured-output reliability, and a timer that
