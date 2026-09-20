@@ -264,3 +264,53 @@ has a single clear reason to exist:
   patch 1 further; worth confirming whether it's fixed alongside 1 or
   gets its own follow-up — small enough that folding it into patch 1 is
   reasonable if there's no objection.
+
+## 23.9 Real-world correction: httpx2 was not a typo
+
+Found while validating patch 1 (fresh-venv installs, per §23.5), before
+patches 3 and 4 shipped. §23.1.1 and the original review it came from are
+left as written above rather than edited in place, per the project's own
+"not silently fixed" convention for real-world corrections — this section
+is the record of what was actually found and what changed as a result.
+
+**What was claimed:** that `httpx2` in `pyproject.toml`'s `dev` extra was
+a typo for `httpx`, an unrelated package installed for no reason.
+
+**What's actually true:** `httpx2` is [Pydantic's actively maintained
+fork of `httpx`](https://github.com/pydantic/httpx2), with `httpx`'s
+original author involved. `httpx` itself has had no release since 2024.
+Starlette's `TestClient` (which `tests/test_web_app.py` uses via
+`fastapi.testclient.TestClient`) now imports `httpx2` first and only
+falls back to plain `httpx` with a `StarletteDeprecationWarning`; the
+Starlette maintainer's own reasoning, from the PR that added this:
+`httpx` "has become somehow unmaintained... and pydantic/httpx2 is the
+least annoying path forward for every consumer of that package." FastAPI,
+the OpenAI SDK, the Anthropic SDK, and the MCP SDK have made the same
+move. Confirmed directly: running this project's test suite against an
+environment with only `httpx` installed (no `httpx2`) produces exactly
+that deprecation warning; installing `httpx2` instead removes it, with
+the full suite passing clean either way.
+
+**What was actually wrong, once this was corrected:** only what §23.1.2
+already identified independently — `requirements.txt`'s dev/test section
+never had `httpx2` *or* `httpx` in it at all, so
+`fastapi.testclient.TestClient` had nothing to import when installing via
+`pip install -r requirements.txt` rather than `pip install -e ".[dev]"`.
+`pyproject.toml`'s original `httpx2>=2.0,<3.0` line was correct as
+written and needed no change.
+
+**Corrected patch 1 content** (supersedes the `pyproject.toml` /
+`requirements.txt` rows in §23.4's table and the patch 1 description in
+§23.6):
+- `pyproject.toml`: **no change** — `httpx2>=2.0,<3.0` stays as-is.
+- `requirements.txt`: add `fastapi>=0.115,<1.0` and `uvicorn>=0.30,<1.0`
+  to the base section (unchanged from the original plan), and add
+  `httpx2>=2.0,<3.0` — not `httpx` — to the `# dev/test` section, matching
+  `pyproject.toml`'s already-correct choice rather than replacing it.
+
+**Process note:** this is exactly the kind of thing the original review
+should have caught by checking what `httpx2` actually was rather than
+stopping at "a different package exists with this name, therefore
+probably a typo." Confirming a package exists is not the same as
+confirming what it's for — worth remembering for future dependency
+findings, not just this one.

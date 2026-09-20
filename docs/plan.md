@@ -430,6 +430,17 @@ Each phase is independently testable and produces a working, demoable slice.
   - `CHANGELOG.md`'s `[Unreleased]` section and this Phase 18 entry's
     own `**Verified**` line are both written once the above are
     actually confirmed, not before.
+- **Corrected, 2026-09-20:** item 1's original framing above was wrong.
+  `httpx2` is not a typo for `httpx` — it's Pydantic's actively
+  maintained fork, now Starlette's preferred `TestClient` dependency
+  (`httpx` itself has had no release since 2024). `pyproject.toml`'s
+  original `httpx2>=2.0,<3.0` line was correct as written and needed no
+  change. The only real gap was that `requirements.txt`'s dev/test
+  section never had `httpx2` (or `httpx`) in it at all — it gets
+  `httpx2>=2.0,<3.0` added, matching `pyproject.toml`'s existing
+  choice, not a switch to `httpx`. The `fastapi`/`uvicorn` additions to
+  `requirements.txt`'s base section are unaffected. Full root-cause
+  analysis: design doc §23.9.
 
 ## Phase 19 — CI Quality Gates
 - Root cause: no static analysis runs in CI today (checked

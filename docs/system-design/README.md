@@ -183,14 +183,16 @@ history of what was tried and rejected along the way.
   automatically.
 
 - **[23-phase-18-dependency-auth-hygiene-design.md](23-phase-18-dependency-auth-hygiene-design.md)**
-  — the Phase 18 implementation design: an expanded look at the
-  `pyproject.toml` `httpx2`/`httpx` typo finds `requirements.txt` is
-  separately missing `fastapi`/`uvicorn` entirely, breaking the README's
-  own documented install path for `viva serve`; a `hmac.compare_digest`
-  hardening for the Phase 15 token-comparison middleware; and the
-  decision to add an MIT `LICENSE` file, the one genuine decision in the
-  phase rather than a mechanical fix. Includes an explicit
-  documentation-update plan and patch-by-patch file/doc mapping.
+  — the Phase 18 implementation design: `requirements.txt` is missing
+  `fastapi`/`uvicorn`/`httpx2` entirely, breaking the README's own
+  documented install path for `viva serve` and its test suite; a
+  `hmac.compare_digest` hardening for the Phase 15 token-comparison
+  middleware; and the decision to add an MIT `LICENSE` file, the one
+  genuine decision in the phase rather than a mechanical fix. §23.9
+  documents a real-world correction found during validation: `httpx2`
+  in `pyproject.toml` was originally (wrongly) flagged as a typo for
+  `httpx` — it's actually Pydantic's maintained fork and was already
+  correct as written.
 
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
