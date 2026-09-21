@@ -9,6 +9,31 @@ for general use."
 
 ## [Unreleased]
 
+### Security
+
+- `viva serve`'s access-token comparison now uses `hmac.compare_digest`
+  instead of `!=`. Defense-in-depth, not a response to a demonstrated
+  exploit -- see
+  [`docs/system-design/23-phase-18-dependency-auth-hygiene-design.md`](docs/system-design/23-phase-18-dependency-auth-hygiene-design.md)
+  §23.2.
+
+### Added
+
+- `LICENSE` (MIT). `pyproject.toml`'s `license` field and the README's
+  License section, both previously "TBD," now say so too (§23.3).
+
+### Fixed
+
+- `requirements.txt` was missing `fastapi`, `uvicorn`, and
+  `prompt_toolkit` entirely, even though `pyproject.toml` always listed
+  them as base dependencies -- the README's own documented
+  `pip install -r requirements.txt` path left `viva serve` (and the CLI's
+  live-answer input) unrunnable. `httpx2` (Pydantic's actively maintained
+  `httpx` fork, Starlette's preferred `TestClient` dependency) was
+  similarly missing from this file's dev/test section. See §23.1 and,
+  for a real-world correction found while fixing this (`httpx2` was
+  initially misdiagnosed as a typo for `httpx` -- it wasn't), §23.9.
+
 ### Added
 
 - `ruff` and `mypy --strict` now run in CI (a new `lint` job,

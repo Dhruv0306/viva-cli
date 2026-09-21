@@ -441,6 +441,18 @@ Each phase is independently testable and produces a working, demoable slice.
   choice, not a switch to `httpx`. The `fastapi`/`uvicorn` additions to
   `requirements.txt`'s base section are unaffected. Full root-cause
   analysis: design doc §23.9.
+- **Verified**, 2026-09-21: all three patches landed and confirmed —
+  fresh `pip install -e ".[dev]"` and `pip install -r requirements.txt`
+  both succeed with the right packages present; `_require_token`'s
+  `hmac.compare_digest` swap confirmed behavior-preserving against
+  `test_web_app.py`'s existing missing/wrong/correct-token tests (no new
+  tests needed) plus a real `mypy --strict` catch along the way (a new
+  `type-var` error on the `compare_digest` call, fixed with
+  `assert token is not None` to narrow the type, since `require_token`
+  and `token` are set together at `create_app()` time and never
+  reassigned); fresh `pip install .` reports `License: MIT` via
+  `pip show`. Full test suite (641 tests), `ruff`, and `mypy` all clean
+  at every commit.
 
 ## Phase 19 — CI Quality Gates
 - Design doc: `docs/system-design/24-phase-19-ci-quality-gates-design.md`.

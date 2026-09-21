@@ -229,7 +229,7 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-Phases 0-17 are implemented, currently at **v0.3.0** (see [`CHANGELOG.md`](CHANGELOG.md)):
+Phases 0-19 are implemented, currently at **v0.3.0** (see [`CHANGELOG.md`](CHANGELOG.md)):
 
 - **Phase 0 — walking skeleton.** `viva demo` (still runnable, see below) proved out the two riskiest assumptions before anything else got built: local-model structured-output reliability, and a timer that excludes LLM latency.
 - **Phase 3 — analyze.** Tree-sitter AST extraction and map-reduce Project Profile generation, with a hierarchical-reduce fallback for repos with many modules. [`08-phase-3-analyzer-design.md`](docs/system-design/08-phase-3-analyzer-design.md)
@@ -246,6 +246,8 @@ Phases 0-17 are implemented, currently at **v0.3.0** (see [`CHANGELOG.md`](CHANG
 - **Phase 15 — `viva serve` authentication.** A shared-secret access token, required on every `/api/*` request once bound to a non-loopback address; the default loopback-only case is unaffected. [`21-phase-15-serve-authentication-design.md`](docs/system-design/21-phase-15-serve-authentication-design.md)
 - **Phase 16 — grading integrity.** A retrieval-quality distance filter (`MAX_RETRIEVAL_DISTANCE`, default `0.85`, set from real session data) skips a question rather than asking one grounded in weakly-relevant code. An instruction-injection boundary on all four LLM system prompts stops a candidate's own repo, or their spoken answer, from talking the grader into a false verdict. [`22-phase-16-grading-integrity-observability-design.md`](docs/system-design/22-phase-16-grading-integrity-observability-design.md)
 - **Phase 17 — CLI logging hygiene.** `httpx`/`httpcore` and the retrieval-quality log line no longer print to the live session terminal; both redirect to a per-day log file (`logs/log_<date>.log`) with 3-day retention instead.
+- **Phase 18 — dependency & auth hygiene.** `requirements.txt` now actually provides what it always claimed to (`fastapi`, `uvicorn`, `prompt_toolkit`, `httpx2`) — previously missing entirely, breaking the plain `pip install -r requirements.txt` path. `viva serve`'s access-token check now uses `hmac.compare_digest`. `LICENSE` (MIT), previously "TBD." [`23-phase-18-dependency-auth-hygiene-design.md`](docs/system-design/23-phase-18-dependency-auth-hygiene-design.md)
+- **Phase 19 — CI quality gates.** `ruff` and `mypy --strict` now run in CI alongside `pytest-cov` (90% floor, measured baseline 95%) — grounded in real runs against this codebase, not estimated; see the design doc for exactly what that found and how the pre-existing `mypy` debt is tracked rather than silently exempted. [`24-phase-19-ci-quality-gates-design.md`](docs/system-design/24-phase-19-ci-quality-gates-design.md)
 
 This throwaway `viva demo` harness (from the original walking skeleton,
 docs/plan.md Phase 0) still exercises the two riskiest assumptions
@@ -272,4 +274,4 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for full dev setup and how to run the t
 
 ## License
 
-TBD.
+MIT — see [LICENSE](LICENSE).
