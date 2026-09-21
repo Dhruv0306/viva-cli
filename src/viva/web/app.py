@@ -16,6 +16,7 @@ input) -> 400, 3 (not found / wrong state) -> 404/409, 1 (unexpected)
 """
 from __future__ import annotations
 
+import hmac
 import secrets
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -358,8 +359,21 @@ def create_app(config: Config, host: str = "127.0.0.1") -> FastAPI:
     async def _require_token(request: Request, call_next):
         if not require_token or not request.url.path.startswith("/api/"):
             return await call_next(request)
+        # `token` is set together with `require_token` at create_app() time
+        # (`token = secrets.token_urlsafe(24) if require_token else None`)
+        # and never reassigned -- require_token=True always implies token is
+        # not None. Asserting it here narrows the type for mypy rather than
+        # defending against input; it can never actually fire.
+        assert token is not None
         supplied = request.headers.get("x-viva-token") or request.query_params.get("token")
-        if supplied != token:
+        # hmac.compare_digest, not `!=` -- defense-in-depth, not a response
+        # to a demonstrated exploit (token is a 192-bit secrets.token_urlsafe
+        # value; a network-observable timing attack against `!=` here isn't
+        # practical). `supplied or ""` guards the missing-token case, since
+        # compare_digest requires two str (or two bytes) arguments and raises
+        # on None. See docs/system-design/
+        # 23-phase-18-dependency-auth-hygiene-design.md §23.2.
+        if not hmac.compare_digest(supplied or "", token):
             return JSONResponse(status_code=401, content={"detail": "Missing or invalid access token."})
         return await call_next(request)
 
