@@ -16,6 +16,35 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: lint (ruff + mypy)
+    # Independent of the pytest-py311 -> py312 -> py313 chain below (no
+    # `needs:`), so a lint failure surfaces immediately rather than
+    # waiting behind three sequential pytest legs. Single leg only --
+    # ruff/mypy results don't meaningfully vary by OS, and 3.11 (the
+    # support matrix's floor) is the most conservative check for any
+    # accidental use of newer-than-3.11 syntax ruff's UP rules might
+    # otherwise paper over.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install viva-cli (dev)
+        run: pip install -e ".[dev]"
+
+      - name: ruff
+        run: ruff check .
+
+      - name: mypy
+        run: mypy src/viva
+
   pytest-py311:
     name: pytest (${{ matrix.os }}, py3.11)
     runs-on: ${{ matrix.os }}
@@ -55,7 +84,15 @@ jobs:
         # workflow is ever moved to a self-hosted runner or the repo
         # later enables egress restrictions, that's the first thing to
         # check if analyzer tests start failing only in CI.
-        run: pytest -q
+        #
+        # Coverage only runs on this one leg (ubuntu, py3.11) -- the
+        # number doesn't meaningfully vary by OS or Python version here,
+        # so running it on all six matrix legs would just be six times
+        # the CI minutes for the same figure. 90% is five points below
+        # the measured baseline at Phase 19 (95%), a regression
+        # guardrail rather than a ratchet toward 100% -- see
+        # docs/system-design/24-phase-19-ci-quality-gates-design.md §24.3.
+        run: pytest -q --cov=src/viva --cov-report=term-missing --cov-fail-under=90
 
   pytest-py312:
     name: pytest (${{ matrix.os }}, py3.12)
