@@ -521,6 +521,8 @@ Each phase is independently testable and produces a working, demoable slice.
   added to `[tool.ruff]`'s `exclude` before any fix touched it.
 
 ## Phase 20 — Serve Hardening & Onboarding
+- Design doc: `docs/system-design/25-phase-20-serve-hardening-
+  onboarding-design.md`.
 - Root cause, two items both touching the `viva serve` / first-run path:
   1. No rate limiting on `POST /api/sessions`. Once a non-loopback bind
      is in use (Phase 15), any request carrying the correct token can
@@ -561,6 +563,25 @@ Each phase is independently testable and produces a working, demoable slice.
     per case; real-world run with Ollama stopped, then with a model
     missing, then fully correct, confirming each state reports
     accurately.
+- **Corrected, 2026-09-21:** the rate-limiting design above turned out
+  wrong in two places once checked directly against `web/registry.py`
+  rather than trusting this bullet's own wording. "Per-token" isn't a
+  real dimension — `create_app()` generates exactly one shared token per
+  `viva serve` process, so there's no per-caller identity to key a
+  per-token counter on; the cap is process-wide. And
+  `SessionRegistry._sessions` never removes a completed session's entry
+  (confirmed: no `del`/`.pop()` anywhere against it), so a raw
+  `len(self._sessions)` cap would permanently lock the server after a
+  handful of *finished* sessions, not actually limit concurrency — the
+  cap has to filter on `LiveSession.thread.is_alive()` instead. Also:
+  the cap now applies to `resume_session()` too, not just
+  `start_session()` (both spawn a live thread and are the same resource
+  concern), and the suggested default is 5, not the original "e.g. 3"
+  (a solo user with a couple of browser tabs open is a real case this
+  shouldn't false-positive on). Full reasoning: design doc §25.1/§25.2.
+  Corrected exit criteria: see design doc §25.5, including a test that
+  actually keeps a session's thread alive to distinguish "concurrent"
+  from "ever started" — the bug this correction exists to avoid.
 
 ## Phase 21 — Containerized Setup
 - Root cause: no `Dockerfile` or `docker-compose.yml` exists. Given the

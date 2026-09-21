@@ -206,5 +206,17 @@ history of what was tried and rejected along the way.
   Phase 19 entry along the way (§24.6, §23.9's `httpx2` lesson almost
   repeated).
 
+- **[25-phase-20-serve-hardening-onboarding-design.md](25-phase-20-serve-hardening-onboarding-design.md)**
+  — the Phase 20 implementation design: two corrections to `plan.md`'s
+  original rate-limiting bullet found by checking `SessionRegistry`
+  directly rather than trusting the bullet's own wording (there's only
+  one shared token per `viva serve` process, so "per-token" isn't a real
+  dimension; `len(self._sessions)` never shrinks, so the cap has to
+  track `thread.is_alive()`, not dict size) — plus `viva doctor`, a new
+  read-only diagnostic command, whose Ollama-reachability check turned
+  up a real finding: a connection refused and a connection timeout raise
+  two different, differently-wrapped exception types from the same
+  `ollama.Client.list()` call.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
