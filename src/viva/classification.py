@@ -41,15 +41,15 @@ class ClassificationProvider(abc.ABC):
         `None` -- there is no Evaluator to call yet)."""
         raise NotImplementedError
 
-    def bind_session(self, session_id: str, collection_name: str) -> None:
+    def bind_session(self, session_id: str, collection_name: str) -> None:  # noqa: B027 - deliberate no-op default, see module docstring
         """Called once, right where the Orchestrator enters
         `IN_PROGRESS`, before the first `classify()`. No-op by default."""
 
-    def requeue_unfinished(self) -> None:
+    def requeue_unfinished(self) -> None:  # noqa: B027 - deliberate no-op default, see module docstring
         """Called on `viva resume`, after `bind_session()`, before the
         live loop resumes. No-op by default."""
 
-    def flush(self, timeout: float) -> None:
+    def flush(self, timeout: float) -> None:  # noqa: B027 - deliberate no-op default, see module docstring
         """Called at `FINALIZING_EVALS`. No-op by default."""
 
 

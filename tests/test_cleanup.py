@@ -8,7 +8,6 @@ and test_cli_report.py already use -- nothing here is worth mocking.
 from __future__ import annotations
 
 import json
-import sqlite3
 
 import pytest
 
@@ -16,6 +15,7 @@ from viva.cleanup import run_cleanup
 from viva.indexer.models import Chunk
 from viva.indexer.store import VectorStore
 from viva.storage.session_store import SessionStore
+from datetime import UTC
 
 
 @pytest.fixture
@@ -46,9 +46,9 @@ def _age_session(store: SessionStore, session_id: str, days_old: int) -> None:
     a retention test needs to bypass that, same as any test that needs
     to simulate "time has passed" without an injectable clock.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    backdated = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+    backdated = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
     with store._lock:  # noqa: SLF001 - test-only direct access, see docstring
         store._conn.execute(
             "UPDATE sessions SET updated_at = ? WHERE session_id = ?",

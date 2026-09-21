@@ -17,7 +17,7 @@ from __future__ import annotations
 import html
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from viva.schemas import EvaluationRecord
 from viva.storage.session_store import (
@@ -233,7 +233,7 @@ class ReportBuilder:
             repo_slug=session.repo_slug,
             commit_sha=session.commit_sha,
             status=session.status,
-            generated_at=datetime.now(timezone.utc).isoformat(),
+            generated_at=datetime.now(UTC).isoformat(),
             total_questions=len(qa_records),
             answered_count=len(answered),
             classification_counts=classification_counts,

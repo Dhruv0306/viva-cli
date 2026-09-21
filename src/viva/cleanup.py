@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from viva.indexer.store import VectorStore
 from viva.storage.session_store import SessionRecord, SessionStore
@@ -47,7 +47,7 @@ class CleanupReport:
 
 
 def _cutoff_iso(older_than_days: int) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=older_than_days)).isoformat()
+    return (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
 
 
 def run_cleanup(

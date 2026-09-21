@@ -89,7 +89,7 @@ _REPLENISH_INCREMENT = 6
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
     if norm_a == 0 or norm_b == 0:
@@ -197,7 +197,7 @@ class Orchestrator:
 
         try:
             profile, collection_name = self._run_setup_pipeline(session_id, repo_url, branch)
-            plan = self._run_planning(session_id, profile, effective_duration_minutes)
+            self._run_planning(session_id, profile, effective_duration_minutes)
         except Exception as exc:
             self.store.set_failed(session_id, str(exc))
             self.ui.error(f"Session setup failed: {exc}")

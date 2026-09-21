@@ -23,7 +23,6 @@ import abc
 import logging
 import time
 from dataclasses import dataclass
-from typing import Union
 
 import ollama
 from pydantic import BaseModel, ValidationError
@@ -199,7 +198,7 @@ class LLMCallResult:
     user-facing answer clock (docs/design.md §7, FR17).
     """
 
-    result: Union[ClassificationResult, EvaluationFeedback]
+    result: ClassificationResult | EvaluationFeedback
     duration_seconds: float
     attempts: int
 

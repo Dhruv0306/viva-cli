@@ -20,7 +20,7 @@ import json
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from viva.storage import schema
 
@@ -82,7 +82,7 @@ class QARecordRow:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _session_from_row(row: sqlite3.Row) -> SessionRecord:
@@ -140,7 +140,7 @@ class SessionStore:
         with self._lock:
             self._conn.close()
 
-    def __enter__(self) -> "SessionStore":
+    def __enter__(self) -> SessionStore:
         return self
 
     def __exit__(self, *exc_info: object) -> None:

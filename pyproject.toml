@@ -29,6 +29,9 @@ dev = [
     "pytest>=8.0,<10.0",
     "pytest-mock>=3.14,<4.0",
     "httpx2>=2.0,<3.0",
+    "ruff>=0.16,<1.0",
+    "mypy>=2.0,<3.0",
+    "pytest-cov>=6.0,<8.0",
 ]
 # Phase 11 (docs/system-design/16-phase-11-voice-io-design.md): kept as an
 # optional extra rather than a base dependency -- these pull in native
@@ -71,3 +74,117 @@ testpaths = ["tests"]
 # tests, since they import from an "app" package that doesn't exist in
 # this project's environment.
 norecursedirs = ["tests/fixtures/golden_repos"]
+
+[tool.ruff]
+line-length = 88
+# tests/fixtures/golden_repos/ holds small synthetic repos used as ingest
+# test data -- deliberately not "clean" code (an unused import, e.g., may
+# be there on purpose to exercise the analyzer/indexer against it), not
+# this project's own source. Same reasoning as
+# [tool.pytest.ini_options].norecursedirs above, applied here too.
+exclude = ["tests/fixtures/golden_repos"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP"]
+# E501 (line-too-long) is deliberately excluded, not an oversight: 720
+# lines in this codebase already exceed the default 88-column limit as of
+# Phase 19. Enforcing it now means either a large mechanical reformat
+# riding along with "add CI gates," or picking an arbitrary wider limit
+# that doesn't actually decide anything. Line-length enforcement belongs
+# with a future, separately-scoped `ruff format`/`black` adoption. See
+# docs/system-design/24-phase-19-ci-quality-gates-design.md §24.1.2.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Typer's own idiomatic API is typer.Option(...)/typer.Argument(...) as
+# parameter defaults -- B008 ("function call in default argument") can't
+# tell this apart from an accidental mutable-default-style bug. FastAPI's
+# Depends() pattern would trigger the same false positive if web/app.py
+# ever adopts it (it doesn't today, checked directly). See §24.1.3.
+"src/viva/cli.py" = ["B008"]
+
+[tool.mypy]
+strict = true
+# Every module not listed below is held to full strict mode starting
+# Phase 19 -- any new file, or any of the 30 files that already pass
+# clean, fails CI on a strict violation immediately. The overrides below
+# are pre-existing debt as measured when this phase landed, each scoped
+# to that file's actual error codes (not a blanket ignore_errors, which
+# would also hide a new, unrelated error in that same file later).
+# Tracked as a docs/plan.md backlog item to work through file by file.
+# See docs/system-design/24-phase-19-ci-quality-gates-design.md §24.2.3.
+
+[[tool.mypy.overrides]]
+# Optional, lazily-imported native deps (Phase 11 design) -- never
+# installed in CI's default `dev` extra, so these have no type stubs
+# available there by design, not by omission.
+module = ["faster_whisper", "piper", "sounddevice"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "viva.analyzer"
+disable_error_code = ["type-arg"]
+
+[[tool.mypy.overrides]]
+module = "viva.analyzer.extract"
+disable_error_code = ["arg-type", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "viva.cleanup"
+disable_error_code = ["operator"]
+
+[[tool.mypy.overrides]]
+module = "viva.cli"
+disable_error_code = ["type-arg"]
+
+[[tool.mypy.overrides]]
+module = "viva.evaluator"
+disable_error_code = ["type-arg", "union-attr", "arg-type"]
+
+[[tool.mypy.overrides]]
+module = "viva.indexer.store"
+disable_error_code = ["index", "arg-type", "type-arg"]
+
+[[tool.mypy.overrides]]
+module = "viva.ingest.clone"
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = "viva.llm_client"
+disable_error_code = ["no-any-return", "type-arg"]
+
+[[tool.mypy.overrides]]
+module = "viva.orchestrator"
+disable_error_code = ["misc", "arg-type"]
+
+[[tool.mypy.overrides]]
+module = "viva.phase0_demo"
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = "viva.profile"
+disable_error_code = ["type-arg"]
+
+[[tool.mypy.overrides]]
+module = "viva.questiongen.retrieval"
+disable_error_code = ["type-arg"]
+
+[[tool.mypy.overrides]]
+module = "viva.session_ui"
+disable_error_code = ["union-attr", "no-untyped-def", "type-arg"]
+
+[[tool.mypy.overrides]]
+module = "viva.storage.session_store"
+disable_error_code = ["no-untyped-def", "type-arg"]
+
+[[tool.mypy.overrides]]
+module = "viva.voice_io"
+disable_error_code = ["type-arg", "no-untyped-call", "no-untyped-def"]
+
+[[tool.mypy.overrides]]
+module = "viva.web.app"
+disable_error_code = ["no-untyped-def", "type-arg"]
+
+[[tool.mypy.overrides]]
+module = "viva.web.web_session_ui"
+disable_error_code = ["type-arg", "arg-type"]

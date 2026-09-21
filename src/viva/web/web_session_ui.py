@@ -56,7 +56,7 @@ class WebSessionState:
 
 class WebSessionUI(SessionUI):
     def __init__(self) -> None:
-        self._answer_queue: "queue.Queue[str]" = queue.Queue(maxsize=1)
+        self._answer_queue: queue.Queue[str] = queue.Queue(maxsize=1)
         self._lock = threading.Lock()
         self._state = WebSessionState()
         self._id_ready = threading.Event()

@@ -87,7 +87,7 @@ class Evaluator(ClassificationProvider):
         self._llm_client = llm_client
         self._session_id: str | None = None
         self._collection_name: str | None = None
-        self._queue: "queue.Queue[object]" = queue.Queue()
+        self._queue: queue.Queue[object] = queue.Queue()
         self._worker: threading.Thread | None = None
         # Set by flush() if the worker doesn't finish within its timeout
         # (§12.6). Checked by _run_feedback before every persist so a job

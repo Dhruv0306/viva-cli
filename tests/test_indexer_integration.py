@@ -9,7 +9,6 @@ from pathlib import Path
 
 import viva.ingest as ingest_pkg
 from viva.analyzer import analyze_repo
-from viva.analyzer.models import AnalysisResult, AnalysisStats
 from viva.config import Config
 from viva.embedding_client import EmbeddingClient
 from viva.indexer import index_repo

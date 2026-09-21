@@ -165,7 +165,7 @@ def demo(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     llm_client = OllamaClient(
         model=config.llm_model,
@@ -181,7 +181,7 @@ def demo(
             "[dim]Is Ollama running, and has the configured LLM_MODEL been "
             "pulled? See README.md 'Installation'.[/dim]"
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
 
 @app.command()
@@ -201,14 +201,14 @@ def ingest(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     console.print(f"Cloning [bold]{repo_url}[/bold]...")
     try:
         result = ingest_repo(repo_url, config, branch=branch)
     except CloneError as exc:
         console.print(f"[red]Clone failed:[/red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     console.print(f"[green]Cloned[/green] {result.repo_slug} @ {result.commit_sha} (branch: {result.branch})")
     console.print(f"Local path: {result.local_path}")
@@ -244,14 +244,14 @@ def analyze(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     console.print(f"Cloning [bold]{repo_url}[/bold]...")
     try:
         ingest_result = ingest_repo(repo_url, config, branch=branch)
     except CloneError as exc:
         console.print(f"[red]Clone failed:[/red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     console.print(
         f"[green]Ingested[/green] {ingest_result.files_analyzed}/{ingest_result.files_total} files "
@@ -268,7 +268,7 @@ def analyze(
             "[dim]Is Ollama running, and has the configured LLM_MODEL been "
             "pulled? See README.md 'Installation'.[/dim]"
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     profile = ProjectProfile.build(ingest_result, analysis_result)
 
@@ -317,14 +317,14 @@ def index(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     console.print(f"Cloning [bold]{repo_url}[/bold]...")
     try:
         ingest_result = ingest_repo(repo_url, config, branch=branch)
     except CloneError as exc:
         console.print(f"[red]Clone failed:[/red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     console.print(
         f"[green]Ingested[/green] {ingest_result.files_analyzed}/{ingest_result.files_total} files "
@@ -341,7 +341,7 @@ def index(
             "[dim]Is Ollama running, and has the configured LLM_MODEL been "
             "pulled? See README.md 'Installation'.[/dim]"
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     profile = ProjectProfile.build(ingest_result, analysis_result)
 
@@ -355,7 +355,7 @@ def index(
             "[dim]Is Ollama running, and has the configured EMBEDDING_MODEL "
             "been pulled? See README.md 'Installation'.[/dim]"
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     console.print(f"\n[bold]Collection:[/bold] {index_result.collection_name}")
     if index_result.stats.reused_existing_collection:
@@ -407,14 +407,14 @@ def questiongen(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     console.print(f"Cloning [bold]{repo_url}[/bold]...")
     try:
         ingest_result = ingest_repo(repo_url, config, branch=branch)
     except CloneError as exc:
         console.print(f"[red]Clone failed:[/red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     console.print(
         f"[green]Ingested[/green] {ingest_result.files_analyzed}/{ingest_result.files_total} files "
@@ -431,7 +431,7 @@ def questiongen(
             "[dim]Is Ollama running, and has the configured LLM_MODEL been "
             "pulled? See README.md 'Installation'.[/dim]"
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     profile = ProjectProfile.build(ingest_result, analysis_result)
 
@@ -445,7 +445,7 @@ def questiongen(
             "[dim]Is Ollama running, and has the configured EMBEDDING_MODEL "
             "been pulled? See README.md 'Installation'.[/dim]"
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     console.print("Generating questions (one embedding + one LLM call per question)...")
     store = VectorStore(config.vector_db_path)
@@ -455,7 +455,7 @@ def questiongen(
         )
     except Exception as exc:  # noqa: BLE001 - Phase 5 smoke-test command, not prod error handling
         console.print(f"[red]Question generation failed:[/red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     console.print(
         f"\n[bold]Plan:[/bold] {stats.plan_items_built} planned, "
@@ -530,20 +530,20 @@ def start(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     orchestrator, store = _build_orchestrator(config)
     try:
         orchestrator.start(repo_url, branch=branch, duration_minutes=duration, session_name=session_name)
     except (CloneError, InvalidParametersError) as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
     except OrchestratorError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except Exception as exc:  # noqa: BLE001 - top-level command boundary
         console.print(f"[red]Session failed:[/red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     finally:
         store.close()
 
@@ -559,20 +559,20 @@ def resume(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     orchestrator, store = _build_orchestrator(config)
     try:
         orchestrator.resume(session_id)
     except (SessionNotFoundError, SessionAlreadyCompleteError, SessionNotResumableError) as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=3) from None
     except OrchestratorError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except Exception as exc:  # noqa: BLE001 - top-level command boundary
         console.print(f"[red]Session failed:[/red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     finally:
         store.close()
 
@@ -588,7 +588,7 @@ def list_sessions(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     store = SessionStore(config.session_db_path)
     try:
@@ -642,7 +642,7 @@ def report(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     store = SessionStore(config.session_db_path)
     try:
@@ -707,7 +707,7 @@ def cleanup(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     retention_days = older_than if older_than is not None else config.session_retention_days
 
@@ -721,7 +721,7 @@ def cleanup(
         )
     except Exception as exc:  # noqa: BLE001 - top-level command boundary
         console.print(f"[red]Cleanup failed:[/red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     finally:
         store.close()
 
@@ -756,7 +756,7 @@ def voice_setup(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     resolved_stt_model = stt_model or config.stt_model_size
     resolved_tts_voice = tts_voice or config.tts_voice
@@ -769,10 +769,10 @@ def voice_setup(
         setup_models(resolved_stt_model, resolved_tts_voice, config.voice_cache_dir)
     except VoiceDependencyError as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
     except Exception as exc:  # noqa: BLE001 - top-level command boundary
         console.print(f"[red]Voice setup failed:[/red] {escape(str(exc))}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     console.print("[green]Voice models ready. Set VOICE_ENABLED=true to use them.[/green]")
 
@@ -801,7 +801,7 @@ def serve(
         config = Config.load()
     except ConfigError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from None
 
     # Imported lazily, not at module load time: every other command in
     # this file pays zero import cost for fastapi/uvicorn -- only running

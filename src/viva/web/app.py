@@ -33,7 +33,6 @@ from viva.indexer.store import VectorStore
 from viva.ingest.clone import CloneError
 from viva.orchestrator import (
     InvalidParametersError,
-    OrchestratorError,
     SessionAlreadyCompleteError,
     SessionNotFoundError,
     SessionNotResumableError,

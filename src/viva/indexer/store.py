@@ -92,7 +92,7 @@ class VectorStore:
         distances = result["distances"][0]
         return [
             {"id": cid, "text": doc, "metadata": meta, "distance": dist}
-            for cid, doc, meta, dist in zip(ids, documents, metadatas, distances)
+            for cid, doc, meta, dist in zip(ids, documents, metadatas, distances, strict=True)
         ]
 
     def get_by_ids(self, name: str, ids: list[str]) -> list[dict]:
@@ -119,7 +119,7 @@ class VectorStore:
         result = collection.get(ids=ids)
         return [
             {"id": cid, "text": doc, "metadata": meta}
-            for cid, doc, meta in zip(result["ids"], result["documents"], result["metadatas"])
+            for cid, doc, meta in zip(result["ids"], result["documents"], result["metadatas"], strict=True)
         ]
 
 

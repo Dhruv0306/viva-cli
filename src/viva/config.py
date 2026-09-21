@@ -211,7 +211,7 @@ class Config:
     voice_silence_timeout_seconds: float
 
     @classmethod
-    def load(cls, env_file: str | None = ".env") -> "Config":
+    def load(cls, env_file: str | None = ".env") -> Config:
         """Load configuration from environment variables.
 
         Reads a `.env` file (if present) via python-dotenv, then reads from

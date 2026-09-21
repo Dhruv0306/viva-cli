@@ -930,7 +930,6 @@ def test_live_session_replenishes_instead_of_ending_early(tmp_path, monkeypatch)
     orch, store = _make_orchestrator(tmp_path, config, ui)
 
     call_count = {"n": 0}
-    original_build = orchestrator_module.build_coverage_plan
 
     def growing_plan(*a, **kw):
         call_count["n"] += 1

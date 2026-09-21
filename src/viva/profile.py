@@ -48,7 +48,7 @@ class ProjectProfile:
     analysis_stats: AnalysisStats
 
     @classmethod
-    def build(cls, ingest_result: IngestResult, analysis_result: AnalysisResult) -> "ProjectProfile":
+    def build(cls, ingest_result: IngestResult, analysis_result: AnalysisResult) -> ProjectProfile:
         return cls(
             repo_url=ingest_result.repo_url,
             repo_slug=ingest_result.repo_slug,
@@ -80,7 +80,7 @@ class ProjectProfile:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ProjectProfile":
+    def from_dict(cls, data: dict) -> ProjectProfile:
         return cls(
             repo_url=data["repo_url"],
             repo_slug=data["repo_slug"],
@@ -105,5 +105,5 @@ class ProjectProfile:
         Path(path).write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
 
     @classmethod
-    def load(cls, path: str | Path) -> "ProjectProfile":
+    def load(cls, path: str | Path) -> ProjectProfile:
         return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))

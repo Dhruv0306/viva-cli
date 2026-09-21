@@ -39,3 +39,6 @@ data/
 
 # Cache for local development (NFR7 — never accumulate on disk unbounded; this is a local
 cache/
+# pytest-cov (Phase 19)
+.coverage
+htmlcov/

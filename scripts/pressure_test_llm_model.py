@@ -48,7 +48,7 @@ import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 SRC_DIR = Path(__file__).resolve().parent.parent / "src"
@@ -267,7 +267,7 @@ def render_markdown_report(all_model_stats: list[ModelStats], repetitions: int) 
     lines = [
         "# LLM_MODEL Pressure-Test Results",
         "",
-        f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d')} by "
+        f"Generated {datetime.now(UTC).strftime('%Y-%m-%d')} by "
         "`scripts/pressure_test_llm_model.py`. Closes "
         "`docs/system-design/04-open-questions.md` item 5.",
         "",

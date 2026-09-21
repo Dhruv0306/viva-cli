@@ -7,7 +7,7 @@ sweeping what's actually persisted, so there's nothing worth mocking.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from typer.testing import CliRunner
 
@@ -37,7 +37,7 @@ def _seed_session(db_path: str, session_id: str, days_old: int = 0,
             collection_name=collection_name, profile_path=profile_path,
         )
     if days_old:
-        backdated = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+        backdated = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
         with store._lock:  # noqa: SLF001 - test-only, no public "set updated_at"
             store._conn.execute(
                 "UPDATE sessions SET updated_at = ? WHERE session_id = ?",

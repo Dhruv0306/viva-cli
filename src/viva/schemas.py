@@ -15,7 +15,7 @@ that verdict -- rather than one large schema for both.
 """
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,7 +38,7 @@ class ClassificationResult(BaseModel):
     summary: str = Field(
         ..., min_length=1, max_length=500, description="One or two sentence verdict."
     )
-    cited_file: Optional[str] = Field(
+    cited_file: str | None = Field(
         default=None,
         description=(
             "Specific file/function the verdict is grounded in, e.g. "
@@ -61,7 +61,7 @@ class MissedPoint(BaseModel):
     `viva.evaluator`, not here."""
 
     point: str = Field(..., min_length=1, max_length=300)
-    cited_file: Optional[str] = None
+    cited_file: str | None = None
 
 
 class EvaluationFeedback(BaseModel):
@@ -95,7 +95,7 @@ class EvaluationRecord(BaseModel):
 
     classification: Classification
     summary: str
-    cited_file: Optional[str] = None
+    cited_file: str | None = None
     did_well: list[str] = Field(default_factory=list)
     missed: list[MissedPoint] = Field(default_factory=list)
     did_wrong: list[MissedPoint] = Field(default_factory=list)
@@ -105,7 +105,7 @@ class EvaluationRecord(BaseModel):
     @classmethod
     def from_calls(
         cls, classification: ClassificationResult, feedback: EvaluationFeedback
-    ) -> "EvaluationRecord":
+    ) -> EvaluationRecord:
         return cls(
             classification=classification.classification,
             summary=classification.summary,
