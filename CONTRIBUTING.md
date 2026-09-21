@@ -51,6 +51,37 @@ Any change touching the timer, LLM client, or schemas should have a test
 that exercises it directly — these are the components Phase 0 exists to
 de-risk, and regressions there are expensive to catch late.
 
+## Linting & type checking
+
+CI runs both on every PR (Phase 19,
+`docs/system-design/24-phase-19-ci-quality-gates-design.md`); run them
+locally before pushing:
+
+```bash
+ruff check .
+mypy src/viva
+```
+
+A few things worth knowing before either one surprises you:
+
+- `ruff` doesn't enforce line length (`E501`) — deliberately, see the
+  design doc §24.1.2. Don't add line-length `# noqa`s; there's nothing to
+  silence.
+- `mypy` runs in `--strict` mode, but 14 files with pre-existing errors
+  (as of Phase 19) have a `[[tool.mypy.overrides]]` entry in
+  `pyproject.toml` scoped to their specific error codes. If you touch one
+  of those files and introduce a *new* kind of error not already listed
+  in its override, `mypy` will still catch it — the override doesn't
+  blanket-exempt the file. If your change happens to fix one of the
+  listed pre-existing errors, remove that code from the file's
+  `disable_error_code` list in the same PR rather than leaving a stale
+  exemption behind.
+- If `ruff` flags a false positive (the kind of thing that happens with
+  Typer's/FastAPI's function-call-as-default-argument pattern, `B008`),
+  prefer a per-file entry in `[tool.ruff.lint.per-file-ignores]` with a
+  comment over a bare inline `# noqa` — easier to spot and reason about
+  later than a `# noqa` buried in a long function.
+
 ## Commit messages
 
 See `.gitmessage` for the commit message template. To use it locally:
@@ -82,6 +113,8 @@ self-evident from the diff.
   shouldn't reach into each other's internals).
 - No network calls in tests except through an explicitly mocked client —
   the test suite must run without Ollama installed or running.
+- `ruff` and `mypy --strict` both run in CI — see "Linting & type
+  checking" above.
 
 ## Reporting bugs / requesting features
 

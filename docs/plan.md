@@ -494,6 +494,19 @@ Each phase is independently testable and produces a working, demoable slice.
   that's fine; the note's actual point (these gates should exist before
   more hand-written fixes land) still holds looking forward to Phase
   18's remaining patches 2-3.
+- **Verified**, 2026-09-21: `ruff check .` and `mypy src/viva` both
+  clean against real runs, not assumed; full test suite (641 tests)
+  passes; `pytest --cov-fail-under=90` passes at 95.19% measured
+  coverage. All 63 real (non-`E501`) `ruff` findings from §24.1
+  resolved by hand or `--fix`, each individually judged rather than
+  bulk-applied — see `CHANGELOG.md`'s `[Unreleased]` entry for the
+  substantive ones (`from None`, `strict=True`, the two unused-variable
+  removals). One thing caught only while actually running `ruff check .`
+  against the whole repo, not anticipated in the design doc:
+  `tests/fixtures/golden_repos/` (synthetic ingest test data, not this
+  project's own code) needed excluding, same reasoning as
+  `[tool.pytest.ini_options].norecursedirs` already applies to pytest —
+  added to `[tool.ruff]`'s `exclude` before any fix touched it.
 
 ## Phase 20 — Serve Hardening & Onboarding
 - Root cause, two items both touching the `viva serve` / first-run path:

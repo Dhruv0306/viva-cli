@@ -9,6 +9,30 @@ for general use."
 
 ## [Unreleased]
 
+### Added
+
+- `ruff` and `mypy --strict` now run in CI (a new `lint` job,
+  independent of the pytest matrix) alongside `pytest-cov`, which adds a
+  90% coverage floor to the existing `pytest` run (measured baseline:
+  95%). `E501` (line length) is deliberately not enforced yet -- see
+  [`docs/system-design/24-phase-19-ci-quality-gates-design.md`](docs/system-design/24-phase-19-ci-quality-gates-design.md).
+
+### Fixed
+
+- 32 `except` blocks in `cli.py` now explicitly suppress exception
+  chaining (`raise typer.Exit(...) from None`) rather than relying on
+  implicit behavior -- same clean-CLI-error intent as before, now
+  explicit rather than merely working by convention (§24.1.3).
+- Three `zip()` calls over parallel sequences that must match in length
+  (Chroma query/get results in `indexer/store.py`, the two vectors in
+  `orchestrator.py`'s cosine-similarity helper) now pass `strict=True`,
+  so a length mismatch raises loudly instead of silently truncating
+  (§24.1.3).
+- Two unused local variables removed (`orchestrator.py`,
+  `test_orchestrator.py`) -- one was vestigial (`monkeypatch` already
+  handles restoration), the other a leftover assignment whose call is
+  kept for its side effect.
+
 ## [0.3.0] - 2026-09-19
 
 Everything closing out a September 2026 external panel review

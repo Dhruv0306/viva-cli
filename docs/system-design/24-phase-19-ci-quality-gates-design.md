@@ -254,3 +254,19 @@ five legs (`py311`/windows, `py312`/`py313` × both OSes) are unchanged.
   done here. Worth its own decision (which tool, whether it replaces or
   supplements the two existing manifests) rather than folding in as an
   afterthought to the `ruff`/`mypy` adoption above.
+
+## 24.8 Implementation finding: `tests/fixtures/golden_repos/` needed excluding
+
+Found while actually applying the fixes above, not anticipated by §24.1's
+measurements (which were scoped to `src/` and `tests/`, not the repo
+root). `ruff check .` — the command this phase's CI job and
+`CONTRIBUTING.md` both document — also scans
+`tests/fixtures/golden_repos/`, small synthetic repos used as ingest test
+data. These are deliberately not "clean" code (an unused import, for
+instance, may be there on purpose to exercise the analyzer against it),
+not this project's own source, mirroring exactly why
+`[tool.pytest.ini_options].norecursedirs` already excludes them from test
+collection. `ruff check . --fix --diff` (a dry-run preview, confirmed:
+`--diff` combined with `--fix` doesn't write to disk) surfaced this
+before anything was actually touched — one line added to `[tool.ruff]`'s
+new `exclude` list closed it before running the real `--fix`.
