@@ -443,6 +443,7 @@ Each phase is independently testable and produces a working, demoable slice.
   analysis: design doc §23.9.
 
 ## Phase 19 — CI Quality Gates
+- Design doc: `docs/system-design/24-phase-19-ci-quality-gates-design.md`.
 - Root cause: no static analysis runs in CI today (checked
   `pyproject.toml`, `CONTRIBUTING.md`, `.github/workflows/tests.yml` —
   none reference `ruff`, `mypy`, `black`, or `pytest-cov`). The
@@ -472,6 +473,27 @@ Each phase is independently testable and produces a working, demoable slice.
   actually catches this class of error, not just a hypothetical); a real
   PR that trips one `ruff` rule and one `mypy` error confirmed to block
   CI the same way a `pytest` failure already does.
+- **Corrected, 2026-09-20:** two things above turned out wrong once
+  actually measured (design doc §24.1-§24.2, run directly against this
+  codebase rather than estimated). First, the dependency bullet: the
+  three new tools land in `requirements.txt` too, not just
+  `pyproject.toml`'s `dev` extra — Phase 18's own correction (§23.9) is
+  exactly the lesson this needed, and this doc almost repeated the
+  mistake by only mentioning `pyproject.toml`. Second, the exit
+  criteria's `httpx2`-typo claim: `ruff`/`mypy` check Python source, not
+  `pyproject.toml`'s dependency list, so neither tool would ever have
+  caught that specific mistake — confirmed by checking rather than
+  assumed, since asserting a gate "would have caught" something it was
+  never designed to check is its own version of the same error Phase 18
+  made. Corrected exit criteria: see design doc §24.6, including the
+  actually-relevant checks (`--cov-fail-under=90` regression test,
+  §24.1.3/§24.2.3's own fixes and per-module overrides landing clean).
+- **Sequencing note, sequel:** by the time this design doc was written,
+  Phase 18's patch 1 (dependency manifests) had already landed —
+  "before Phase 18" from the original note above didn't happen, and
+  that's fine; the note's actual point (these gates should exist before
+  more hand-written fixes land) still holds looking forward to Phase
+  18's remaining patches 2-3.
 
 ## Phase 20 — Serve Hardening & Onboarding
 - Root cause, two items both touching the `viva serve` / first-run path:

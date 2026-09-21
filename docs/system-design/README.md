@@ -194,5 +194,17 @@ history of what was tried and rejected along the way.
   `httpx` — it's actually Pydantic's maintained fork and was already
   correct as written.
 
+- **[24-phase-19-ci-quality-gates-design.md](24-phase-19-ci-quality-gates-design.md)**
+  — the Phase 19 implementation design: real `ruff`/`mypy`/`pytest-cov`
+  runs against the codebase (not estimated), grounding every decision in
+  measured numbers — 760 `ruff` findings (696 of them `E501`, deliberately
+  excluded rather than forcing a mass reformat; the remaining 64 fixed as
+  part of this phase), 85 `mypy --strict` errors (3 are a missing-stub
+  config gap for optional voice deps, 82 real but tracked via named
+  per-module overrides rather than bulk-fixed here), and a 95% coverage
+  baseline. Corrects two mistaken assumptions in `plan.md`'s original
+  Phase 19 entry along the way (§24.6, §23.9's `httpx2` lesson almost
+  repeated).
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
