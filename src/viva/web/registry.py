@@ -56,6 +56,15 @@ class LiveSession:
     store: SessionStore
 
 
+class TooManyActiveSessionsError(Exception):
+    """Raised by `start_session()`/`resume_session()` when
+    `Config.max_concurrent_sessions` is already at capacity (design doc
+    docs/system-design/25-phase-20-serve-hardening-onboarding-design.md
+    §25.2). Process-wide, not per-caller -- there's exactly one shared
+    access token per `viva serve` process, so there's no per-caller
+    identity to key a finer-grained limit on."""
+
+
 class SessionRegistry:
     """One instance per `viva serve` process, owned by `app.py`."""
 
@@ -141,6 +150,7 @@ class SessionRegistry:
         afterward via `GET /api/sessions/{id}/state`, exactly like a
         failed `viva start` remains inspectable via `viva list`.
         """
+        self._check_capacity()
         store = SessionStore(self._config.session_db_path)
         ui = WebSessionUI()
         orchestrator = Orchestrator(config=self._config, session_store=store, ui=ui)
@@ -181,6 +191,7 @@ class SessionRegistry:
         this method only waits to observe its outcome rather than
         re-deriving the same checks.
         """
+        self._check_capacity()
         store = SessionStore(self._config.session_db_path)
         ui = WebSessionUI()
         orchestrator = Orchestrator(config=self._config, session_store=store, ui=ui)
@@ -211,6 +222,32 @@ class SessionRegistry:
         with self._lock:
             live = self._sessions.get(session_id)
         return live.ui if live else None
+
+    def active_session_count(self) -> int:
+        """Sessions whose background thread is still actually running --
+        NOT `len(self._sessions)`, which never shrinks (this registry
+        never removes a completed session's entry; see the module
+        docstring). `Orchestrator.start()`/`.resume()` blocks its one
+        thread for the entire session -- setup, the live Q&A loop,
+        finalization -- so `thread.is_alive()` is what genuinely tracks
+        "still consuming resources right now." Design doc §25.1."""
+        with self._lock:
+            return sum(1 for live in self._sessions.values() if live.thread.is_alive())
+
+    def _check_capacity(self) -> None:
+        """Raises TooManyActiveSessionsError if
+        Config.max_concurrent_sessions is already reached. Called at the
+        top of start_session()/resume_session(), before any
+        SessionStore/Orchestrator/thread is created -- no point paying
+        that setup cost only to reject the request. Design doc §25.2."""
+        cap = self._config.max_concurrent_sessions
+        active = self.active_session_count()
+        if active >= cap:
+            raise TooManyActiveSessionsError(
+                f"{cap} session(s) already active on this server. Wait for "
+                "one to finish, or restart viva serve with a higher "
+                "MAX_CONCURRENT_SESSIONS."
+            )
 
     def shutdown(self) -> None:
         """Called once, on server shutdown -- unsticks any thread still

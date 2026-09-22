@@ -42,7 +42,7 @@ from viva.orchestrator import (
 from viva.report import ReportBuilder, render_html, render_json, render_markdown
 from viva.storage import SessionStore
 from viva.voice_io import VoiceDependencyError
-from viva.web.registry import SessionRegistry
+from viva.web.registry import SessionRegistry, TooManyActiveSessionsError
 from viva.web.web_session_ui import STAGE_AWAITING_ANSWER
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -112,6 +112,11 @@ def create_app(config: Config, host: str = "127.0.0.1") -> FastAPI:
             # findings-2026-09.md §19.3.1/§19.5.2 and docs/system-design/
             # 20-phase-14-security-hardening-design.md §20.3.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except TooManyActiveSessionsError as exc:
+            # Config.max_concurrent_sessions already reached -- design doc
+            # docs/system-design/25-phase-20-serve-hardening-onboarding-
+            # design.md §25.2.
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - any other failure before a session_id exists (SessionStore/config problem) is unexpected, the same class of thing cli.py's `start` command maps to exit code 1
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return {"session_id": session_id}
@@ -124,6 +129,8 @@ def create_app(config: Config, host: str = "127.0.0.1") -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except (SessionAlreadyCompleteError, SessionNotResumableError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except TooManyActiveSessionsError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - anything else is unexpected, same as cli.py resume's uncaught-exception -> exit 1 path
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return {"session_id": session_id}

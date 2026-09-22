@@ -28,6 +28,7 @@ from viva.questiongen.models import QuestionPlanItem
 from viva.schemas import EvaluationRecord
 from viva.storage import SessionStore
 from viva.web.app import create_app, _requires_auth
+from viva.web.registry import TooManyActiveSessionsError
 
 
 def _config(tmp_path):
@@ -44,6 +45,7 @@ def _config(tmp_path):
         voice_enabled=False, stt_model_size="base", tts_voice="en_US-lessac-medium",
         voice_cache_dir="./data/voice_models", voice_max_answer_seconds=120,
         voice_silence_timeout_seconds=2.5,
+        max_concurrent_sessions=5,
     )
 
 
@@ -173,6 +175,23 @@ def test_start_session_invalid_parameters_error_returns_400(mocker, tmp_path):
     assert response.status_code == 400
 
 
+def test_start_session_too_many_active_returns_429(mocker, tmp_path):
+    # design doc docs/system-design/
+    # 25-phase-20-serve-hardening-onboarding-design.md §25.2 -- the
+    # SessionRegistry-level check is covered by test_web_registry.py;
+    # this covers app.py's own mapping of that exception to the HTTP
+    # layer, same as every other exception -> status-code mapping in
+    # this file.
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.start_exc = TooManyActiveSessionsError(
+        "5 session(s) already active on this server."
+    )
+
+    response = client.post("/api/sessions", json={"repo_url": "https://github.com/owner/repo"})
+
+    assert response.status_code == 429
+
+
 # -- POST /api/sessions/{id}/resume ------------------------------------------
 
 def test_resume_not_found_returns_404(mocker, tmp_path):
@@ -200,6 +219,17 @@ def test_resume_not_resumable_returns_409(mocker, tmp_path):
     response = client.post("/api/sessions/x/resume")
 
     assert response.status_code == 409
+
+
+def test_resume_too_many_active_returns_429(mocker, tmp_path):
+    client, fake = _client_with_fake_registry(mocker, tmp_path)
+    fake.resume_exc = TooManyActiveSessionsError(
+        "5 session(s) already active on this server."
+    )
+
+    response = client.post("/api/sessions/x/resume")
+
+    assert response.status_code == 429
 
 
 def test_resume_success_returns_session_id(mocker, tmp_path):

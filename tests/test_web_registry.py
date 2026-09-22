@@ -10,6 +10,7 @@ anywhere in the loop.
 """
 from __future__ import annotations
 
+import itertools
 import threading
 import time
 
@@ -18,7 +19,7 @@ import pytest
 from viva.orchestrator import SessionNotFoundError
 from viva.timer import AnswerTimer
 from viva.voice_io import VoiceDependencyError
-from viva.web.registry import SessionRegistry
+from viva.web.registry import SessionRegistry, TooManyActiveSessionsError
 from viva.web.web_session_ui import STAGE_ERROR
 
 
@@ -59,6 +60,52 @@ class _NotFoundOrchestrator:
         raise SessionNotFoundError(f"No session found with id {session_id!r}.")
 
 
+def _make_blocking_orchestrator(release_event):
+    """Unlike `_FakeOrchestrator` (returns instantly, so its background
+    thread is already dead by the time a test could check it), this one
+    calls session_started() -- so start_session()/resume_session() still
+    return promptly -- then blocks the *background thread itself* on
+    release_event, simulating a session genuinely still mid-live-loop.
+    Needed to test active_session_count()/the concurrency cap at all:
+    both rely on thread.is_alive(), which an instantly-returning fake
+    can't exercise. Design doc docs/system-design/
+    25-phase-20-serve-hardening-onboarding-design.md §25.1/§25.5.
+    """
+    counter = itertools.count()
+
+    class _BlockingOrchestrator:
+        def __init__(self, config, session_store, ui, **_kw):
+            self.ui = ui
+
+        def start(self, repo_url, branch=None, duration_minutes=None, session_name=None):
+            session_id = f"sess-blocking-{next(counter)}"
+            self.ui.session_started(session_id)
+            release_event.wait(timeout=5)
+            return session_id
+
+        def resume(self, session_id):
+            self.ui.session_started(session_id)
+            release_event.wait(timeout=5)
+
+    return _BlockingOrchestrator
+
+
+def _wait_until_active_count(registry, expected, timeout=5.0):
+    """Polls active_session_count() rather than a fixed sleep -- thread
+    teardown after release_event.set() isn't instantaneous, and a fixed
+    sleep would either flake under load or waste time when it isn't
+    needed."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if registry.active_session_count() == expected:
+            return
+        time.sleep(0.02)
+    raise AssertionError(
+        f"active_session_count() never reached {expected} "
+        f"(still {registry.active_session_count()} after {timeout}s)"
+    )
+
+
 def _config(tmp_path, **overrides):
     from viva.config import Config
 
@@ -75,6 +122,7 @@ def _config(tmp_path, **overrides):
         voice_enabled=False, stt_model_size="small", tts_voice="en_US-lessac-medium",
         voice_cache_dir="./data/voice_models", voice_max_answer_seconds=120,
         voice_silence_timeout_seconds=2.5,
+        max_concurrent_sessions=5,
     )
     values.update(overrides)
     return Config(**values)
@@ -133,6 +181,93 @@ def test_resume_session_success_registers_the_session(mocker, tmp_path):
 
     assert ui.session_id == "sess-fixed-id"
     assert registry.get("sess-fixed-id") is ui
+
+
+def test_active_session_count_reflects_thread_liveness_not_dict_size(mocker, tmp_path):
+    """The exact bug design doc §25.1 exists to avoid: a completed
+    session stays in self._sessions forever (this registry never removes
+    an entry), so len(self._sessions) alone would over-count. One fast
+    (_FakeOrchestrator, thread already dead) session plus one blocking
+    session should report 2 total entries but only 1 active."""
+    release_event = threading.Event()
+
+    mocker.patch("viva.web.registry.Orchestrator", _FakeOrchestrator)
+    registry = SessionRegistry(_config(tmp_path))
+    registry.start_session(
+        "https://github.com/owner/repo", branch=None, duration_minutes=None, session_name=None,
+    )
+    # _FakeOrchestrator.start() returns immediately, but the thread still
+    # needs a moment to actually finish and go non-alive.
+    _wait_until_active_count(registry, 0)
+
+    mocker.patch(
+        "viva.web.registry.Orchestrator", _make_blocking_orchestrator(release_event)
+    )
+    registry.start_session(
+        "https://github.com/owner/repo", branch=None, duration_minutes=None, session_name=None,
+    )
+
+    # Asserting the exact internal state the bug this test guards
+    # against would get wrong.
+    assert len(registry._sessions) == 2
+    assert registry.active_session_count() == 1
+
+    release_event.set()
+    _wait_until_active_count(registry, 0)
+
+
+def test_start_session_rejects_once_concurrent_cap_reached(mocker, tmp_path):
+    """Distinguishes "concurrent" from "ever started" -- a fake that
+    returns instantly (_FakeOrchestrator) can't exercise this, since its
+    thread would already be non-alive by the time active_session_count()
+    checks it."""
+    release_event = threading.Event()
+    mocker.patch(
+        "viva.web.registry.Orchestrator", _make_blocking_orchestrator(release_event)
+    )
+    registry = SessionRegistry(_config(tmp_path, max_concurrent_sessions=2))
+
+    registry.start_session(
+        "https://github.com/owner/repo", branch=None, duration_minutes=None, session_name=None,
+    )
+    registry.start_session(
+        "https://github.com/owner/repo", branch=None, duration_minutes=None, session_name=None,
+    )
+    assert registry.active_session_count() == 2
+
+    with pytest.raises(TooManyActiveSessionsError):
+        registry.start_session(
+            "https://github.com/owner/repo", branch=None, duration_minutes=None,
+            session_name=None,
+        )
+
+    # Freeing capacity (a session finishing) lets a new one through --
+    # proves the cap tracks liveness, not a permanent high-water mark.
+    release_event.set()
+    _wait_until_active_count(registry, 0)
+    session_id = registry.start_session(
+        "https://github.com/owner/repo", branch=None, duration_minutes=None, session_name=None,
+    )
+    assert session_id is not None
+
+
+def test_resume_session_also_subject_to_concurrent_cap(mocker, tmp_path):
+    """The cap covers resume_session() too, not just start_session() --
+    both spawn a live thread and are the same resource concern (design
+    doc §25.2)."""
+    release_event = threading.Event()
+    mocker.patch(
+        "viva.web.registry.Orchestrator", _make_blocking_orchestrator(release_event)
+    )
+    registry = SessionRegistry(_config(tmp_path, max_concurrent_sessions=1))
+
+    registry.resume_session("sess-a")
+
+    with pytest.raises(TooManyActiveSessionsError):
+        registry.resume_session("sess-b")
+
+    release_event.set()
+    _wait_until_active_count(registry, 0)
 
 
 def test_get_returns_none_for_unknown_session(tmp_path):

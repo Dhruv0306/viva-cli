@@ -210,6 +210,17 @@ class Config:
     # before record() stops on its own (§16.3's energy-based cutoff).
     voice_silence_timeout_seconds: float
 
+    # --- Web serve (Phase 15/20, docs/system-design/
+    # 25-phase-20-serve-hardening-onboarding-design.md §25.2) ---
+    # Process-wide, not per-caller -- create_app() generates exactly one
+    # shared token per `viva serve` process, so there's no per-caller
+    # identity to key a per-token limit on. Applies to both
+    # start_session() and resume_session() (both spawn a live thread),
+    # unconditionally, loopback included -- one code path, and a default
+    # high enough that a solo user with a couple of browser tabs open
+    # never hits it in practice.
+    max_concurrent_sessions: int
+
     @classmethod
     def load(cls, env_file: str | None = ".env") -> Config:
         """Load configuration from environment variables.
@@ -357,6 +368,8 @@ class Config:
             "VOICE_SILENCE_TIMEOUT_SECONDS", "2.5"
         )
 
+        max_concurrent_sessions = _get_positive_int("MAX_CONCURRENT_SESSIONS", "5")
+
         return cls(
             llm_model=llm_model,
             embedding_model=embedding_model,
@@ -388,4 +401,5 @@ class Config:
             voice_cache_dir=voice_cache_dir,
             voice_max_answer_seconds=voice_max_answer_seconds,
             voice_silence_timeout_seconds=voice_silence_timeout_seconds,
+            max_concurrent_sessions=max_concurrent_sessions,
         )

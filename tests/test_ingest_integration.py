@@ -57,6 +57,7 @@ def _make_config(max_files: int = 500, test_file_quota_pct: int = 10) -> Config:
         voice_cache_dir="./data/voice_models",
         voice_max_answer_seconds=120,
         voice_silence_timeout_seconds=2.5,
+        max_concurrent_sessions=5,
     )
 
 

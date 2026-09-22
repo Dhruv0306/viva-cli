@@ -34,6 +34,7 @@ def _config(map_reduce_batch_size: int = 8, max_reduce_context_tokens: int | Non
         voice_enabled=False, stt_model_size="base", tts_voice="en_US-lessac-medium",
         voice_cache_dir="./data/voice_models", voice_max_answer_seconds=120,
         voice_silence_timeout_seconds=2.5,
+        max_concurrent_sessions=5,
     )
 
 
