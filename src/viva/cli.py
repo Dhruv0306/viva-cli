@@ -18,6 +18,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import typer
+import ollama
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
@@ -738,6 +739,77 @@ def cleanup(
         f"{len(result.profiles_removed)} profile file(s).[/green]"
     )
     console.print(f"[green]{result.sessions_retained} session(s) retained.[/green]")
+
+
+@app.command()
+def doctor() -> None:
+    """Read-only environment check: is Ollama reachable, and are
+    LLM_MODEL/EMBEDDING_MODEL actually pulled (docs/plan.md Phase 20,
+    docs/system-design/25-phase-20-serve-hardening-onboarding-design.md
+    §25.3). Makes no changes to the environment or to any session --
+    `viva start`/`serve` are unaffected by this command either way.
+    """
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
+    console.print(
+        f"[green]\u2713[/green] Configuration loaded "
+        f"(LLM_MODEL={config.llm_model}, EMBEDDING_MODEL={config.embedding_model})"
+    )
+
+    all_ok = True
+
+    # 5s, not OllamaClient's 120s generation timeout (llm_client.py) --
+    # this is a read-only reachability probe that should either succeed
+    # almost instantly or fail fast, not a real generation call.
+    #
+    # Catches bare Exception around this one call specifically, not the
+    # whole command: ollama.Client.list() raises two different,
+    # differently-wrapped exception types depending on the failure mode,
+    # confirmed by actually testing both, not assumed. "Connection
+    # refused" (Ollama not running -- the common case) is wrapped by
+    # ollama's own code into a friendly plain ConnectionError. A
+    # network-level timeout (host set but unreachable) raises
+    # httpx.ConnectTimeout *unwrapped*. Catching only ConnectionError
+    # would miss the second case with an ugly traceback instead of a
+    # clean report -- str(exc) already gives a reasonable reason either
+    # way, so there's no need to enumerate every possible httpx
+    # exception subclass to ollama's own internal choice of client.
+    try:
+        response = ollama.Client(host=config.ollama_host, timeout=5.0).list()
+    except Exception as exc:  # noqa: BLE001 - see comment above
+        all_ok = False
+        console.print(f"[red]\u2717[/red] Ollama not reachable at {config.ollama_host}: {exc}")
+        console.print(
+            f"[red]\u2717[/red] LLM_MODEL {config.llm_model!r}: could not check "
+            "(Ollama unreachable)"
+        )
+        console.print(
+            f"[red]\u2717[/red] EMBEDDING_MODEL {config.embedding_model!r}: could not "
+            "check (Ollama unreachable)"
+        )
+    else:
+        console.print(f"[green]\u2713[/green] Ollama reachable at {config.ollama_host}")
+        pulled = {m.model for m in response.models if m.model is not None}
+        for label, model in (
+            ("LLM_MODEL", config.llm_model),
+            ("EMBEDDING_MODEL", config.embedding_model),
+        ):
+            if model in pulled:
+                console.print(f"[green]\u2713[/green] {label} {model!r} is pulled")
+            else:
+                all_ok = False
+                # Two prints, not one long f-string -- Rich wraps at the
+                # console width, and a single line here can split
+                # mid-command (`ollama pull` from its own model name),
+                # same reasoning as cleanup's own two-print split above.
+                console.print(f"[red]\u2717[/red] {label} {model!r} is not pulled.")
+                console.print(f"  Run: ollama pull {model}")
+
+    if not all_ok:
+        raise typer.Exit(code=1)
 
 
 @voice_app.command("setup")
