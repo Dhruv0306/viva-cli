@@ -601,6 +601,20 @@ Each phase is independently testable and produces a working, demoable slice.
   shorter prints, same fix `cleanup`'s own code already uses for the
   same reason. Full test suite (651 tests), `ruff`, and `mypy` all
   clean at every commit.
+- **Real-world bug found during testing, 2026-09-22:** real Windows run
+  (a dev checkout with a real `.env`, exactly the setup this phase helps
+  with) failed `test_doctor_reports_config_error_and_exits_2` --
+  `load_dotenv()` refilled `LLM_MODEL` from disk after
+  `monkeypatch.delenv` unset it, so the test exercised the wrong code
+  path entirely (exit 1, Ollama-unreachable, instead of exit 2,
+  config-error). Known, previously-fixed gotcha in this exact suite
+  (`test_cli_cleanup.py`/`test_cli_session.py` both already guard
+  against it), missed when writing this phase's own test. Fixed with the
+  same `mocker.patch("viva.config.load_dotenv")` pattern already
+  established elsewhere; reproduced and confirmed for real, not just
+  assumed, by creating an actual `.env` file locally and confirming the
+  pre-fix test failed identically before confirming the fix passes.
+  Full root-cause analysis: design doc §25.9.
 
 ## Phase 21 — Containerized Setup
 - Root cause: no `Dockerfile` or `docker-compose.yml` exists. Given the

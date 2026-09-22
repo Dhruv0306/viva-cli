@@ -27,11 +27,22 @@ def _fake_list_response(*model_tags: str) -> SimpleNamespace:
     return SimpleNamespace(models=[SimpleNamespace(model=tag) for tag in model_tags])
 
 
-def test_doctor_reports_config_error_and_exits_2(monkeypatch):
+def test_doctor_reports_config_error_and_exits_2(mocker, monkeypatch):
     # LLM_MODEL deliberately not set -- mirrors every other command's
     # existing ConfigError handling (cleanup, start, ...), not a new
     # message of doctor's own.
     monkeypatch.delenv("LLM_MODEL", raising=False)
+    # A real .env file on the machine running this test (e.g. a dev
+    # checkout with .env.example copied to .env, per the README) would
+    # otherwise refill LLM_MODEL right back in -- load_dotenv() doesn't
+    # override an explicitly-set env var, but monkeypatch.delenv leaves
+    # it *unset*, which is exactly what load_dotenv fills in from disk.
+    # Caught by a real run on real dev hardware, not by this sandbox
+    # (no .env file here to expose it) -- same fix
+    # test_cli_cleanup.py::test_cleanup_missing_llm_model_exits_2 and
+    # test_cli_session.py::test_start_missing_config_exits_2 already
+    # apply for this exact reason.
+    mocker.patch("viva.config.load_dotenv")
 
     result = runner.invoke(app, ["doctor"])
 

@@ -232,3 +232,45 @@ a bad flag," so a flat 0/1 split is the right level of granularity, not
   threat model here (one shared token, no per-caller identity) doesn't
   support finer-grained limiting than process-wide without a bigger auth
   redesign, which this phase isn't undertaking.
+
+## 25.9 Real-world bug found during Phase 20 testing
+
+`test_doctor_reports_config_error_and_exits_2` passed in this sandbox
+(no `.env` file exists here) but failed on real Windows hardware, a real
+dev checkout with `.env` copied from `.env.example` per the README --
+exactly the setup this whole phase is meant to help with. Real failure:
+`assert result.exit_code == 2` got `SystemExit(1)` instead.
+
+**Root cause:** `monkeypatch.delenv("LLM_MODEL", raising=False)` removes
+`LLM_MODEL` from `os.environ` for the test, but `Config.load()` calls
+`load_dotenv()`, which reads a real `.env` file on disk and refills any
+variable not already set in the environment -- `load_dotenv()` doesn't
+override an explicitly-set env var, but it does fill in one that's
+merely absent, which is exactly the state `monkeypatch.delenv` leaves it
+in. So on a machine with a real `.env`, `LLM_MODEL` came right back,
+`Config.load()` succeeded, and the test actually exercised the Ollama
+-unreachable path (exit 1) instead of the config-error path (exit 2) it
+meant to test.
+
+This is not a new failure mode -- it's a known, previously-fixed gotcha
+in this exact test suite (`test_cli_cleanup.py::
+test_cleanup_missing_llm_model_exits_2`,
+`test_cli_session.py::test_start_missing_config_exits_2`, both already
+guard against it), just missed when writing this phase's own test. The
+fix used elsewhere applies unchanged: `mocker.patch("viva.config.
+load_dotenv")` alongside the `monkeypatch.delenv` call, so nothing on
+disk can refill what the test explicitly unset.
+
+**Verified the fix for real, not just assumed:** reproduced by actually
+creating a real `.env` file with `LLM_MODEL` set in this sandbox and
+confirming the pre-fix test failed with the identical
+`assert 1 == 2` / `SystemExit(1)` the Windows run reported, then
+confirming the fix (matching the established pattern) passes with that
+same `.env` file still present.
+
+**Process note:** this class of bug -- a test that only passes because
+the sandbox it was written in happens to lack a file a real dev
+environment has -- is structurally invisible to any amount of care taken
+*inside* this sandbox alone. It's exactly what the project's own
+"real-world testing is the ground truth" principle
+(`ways-of-working.md`) exists to catch, and did.
