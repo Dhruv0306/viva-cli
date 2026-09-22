@@ -218,5 +218,19 @@ history of what was tried and rejected along the way.
   two different, differently-wrapped exception types from the same
   `ollama.Client.list()` call.
 
+- **[26-phase-21-containerized-setup-design.md](26-phase-21-containerized-setup-design.md)**
+  — the Phase 21 implementation design, decided: `viva serve` only,
+  external Ollama (no GPU passthrough to own). States its own limit up
+  front — no Docker in the authoring environment, so the Dockerfile/
+  compose content is a best-effort design, not a verified one, unlike
+  Phases 18-20. What *is* verified directly: `OLLAMA_HOST`'s
+  `localhost` default doesn't resolve inside a container,
+  `viva serve`'s `127.0.0.1` default isn't reachable via Docker's port
+  mapping (and interacts cleanly with Phase 15's existing auth — binding
+  `0.0.0.0` already requires a token, no new code needed), `git` isn't
+  in `python:3.11-slim` by default, and `tree-sitter-language-pack`
+  downloads grammars on first use into a cache that needs its own
+  volume mount.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

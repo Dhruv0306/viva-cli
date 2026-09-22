@@ -617,6 +617,8 @@ Each phase is independently testable and produces a working, demoable slice.
   Full root-cause analysis: design doc §25.9.
 
 ## Phase 21 — Containerized Setup
+- Design doc: `docs/system-design/26-phase-21-containerized-setup-
+  design.md`.
 - Root cause: no `Dockerfile` or `docker-compose.yml` exists. Given the
   whole pitch is "local-first, works against your own Ollama instance,"
   a one-command containerized path removes the biggest onboarding
@@ -642,6 +644,26 @@ Each phase is independently testable and produces a working, demoable slice.
   started, answered, and reported on entirely through the containerized
   path; restarting the container preserves prior sessions via the
   mounted volume.
+- **Decided, 2026-09-22:** external Ollama, not bundled — the open
+  question above is resolved, not just leaned on. No GPU passthrough for
+  this project's own container to own; the container only ever makes
+  HTTP calls to whatever `OLLAMA_HOST` points at. Two things the
+  original design bullets above didn't anticipate, found by checking the
+  actual codebase rather than reasoning abstractly about "a Dockerfile":
+  `Config.ollama_host`'s `http://localhost:11434` default doesn't
+  resolve inside a container at all (needs per-platform handling, design
+  doc §26.2), and `viva serve`'s own `--host 127.0.0.1` default isn't
+  reachable via Docker's port mapping either (§26.3) — though that one
+  turns out to interact cleanly with Phase 15's existing auth logic
+  rather than needing new code: binding `0.0.0.0` already and
+  automatically requires a token. Also not in the original bullets:
+  `git` isn't in a slim Python base image by default (§26.4), and
+  `tree-sitter-language-pack`'s grammar cache needs its own volume mount,
+  separate from `data/` (§26.4). Full design: doc §26.1-§26.7. **This
+  design doc could not verify the Dockerfile/compose files themselves
+  end-to-end — no Docker in the authoring environment — so real-world
+  validation (§26.9) carries more weight than usual before this phase's
+  own `**Verified**` line gets written.**
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
