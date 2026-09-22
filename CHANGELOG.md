@@ -9,6 +9,20 @@ for general use."
 
 ## [Unreleased]
 
+### Added
+
+- `viva doctor`: a new, read-only command that checks Ollama is
+  reachable and `LLM_MODEL`/`EMBEDDING_MODEL` are actually pulled, with
+  a clear `ollama pull ...` fix instruction per missing model. Makes no
+  changes to the environment or to `viva start`/`serve`. See
+  [`docs/system-design/25-phase-20-serve-hardening-onboarding-design.md`](docs/system-design/25-phase-20-serve-hardening-onboarding-design.md)
+  §25.3.
+- `viva serve` now caps concurrent live sessions
+  (`MAX_CONCURRENT_SESSIONS`, default `5`) -- a request past the cap gets
+  HTTP 429. Process-wide, not per-token: there's only one shared access
+  token per server process, so "per-token" and "per-process" are the
+  same thing here (§25.1). Covers both starting and resuming a session.
+
 ### Security
 
 - `viva serve`'s access-token comparison now uses `hmac.compare_digest`

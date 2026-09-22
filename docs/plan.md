@@ -582,6 +582,25 @@ Each phase is independently testable and produces a working, demoable slice.
   Corrected exit criteria: see design doc §25.5, including a test that
   actually keeps a session's thread alive to distinguish "concurrent"
   from "ever started" — the bug this correction exists to avoid.
+- **Verified**, 2026-09-21: both halves implemented and confirmed. Rate
+  limiting — `test_web_registry.py` gained a test proving
+  `active_session_count()` differs from `len(self._sessions)` (2 dict
+  entries, 1 actually active — the exact bug §25.1 avoids), plus tests
+  for both `start_session()` and `resume_session()` rejecting past the
+  cap and recovering once a session frees up; `test_web_app.py` covers
+  the HTTP-layer 429 mapping for both endpoints. `viva doctor` — real
+  end-to-end runs, not just mocked: a live subprocess call against a
+  genuinely unreachable host confirmed the exact output and exit code;
+  `viva --help` confirmed the command registers correctly. Tests cover
+  all three checks plus, specifically, the §25.3 finding — a mocked
+  `ConnectionError` case and a *separate* mocked non-`ConnectionError`
+  exception case, proving the bare-`Exception` catch (not a narrower
+  one) is what actually closes that gap. One real thing caught only by
+  running the command for real: a long single-line "not pulled" message
+  word-wrapped mid-command in Rich's console output, split into two
+  shorter prints, same fix `cleanup`'s own code already uses for the
+  same reason. Full test suite (651 tests), `ruff`, and `mypy` all
+  clean at every commit.
 
 ## Phase 21 — Containerized Setup
 - Root cause: no `Dockerfile` or `docker-compose.yml` exists. Given the

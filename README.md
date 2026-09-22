@@ -90,6 +90,7 @@ TTS_VOICE=en_US-lessac-medium
 VOICE_CACHE_DIR=./data/voice_models
 VOICE_MAX_ANSWER_SECONDS=120
 VOICE_SILENCE_TIMEOUT_SECONDS=2.5
+MAX_CONCURRENT_SESSIONS=5
 ```
 
 `MAX_QUESTIONS` is unset by default: when it's not set, the question
@@ -110,6 +111,12 @@ design.md` §22.2.2 for the underlying data. A `Retrieval for
 category=... (distances: min=... max=...)` line prints at INFO
 alongside every question generated; if your own sessions' numbers
 suggest a different value fits your repos better, override it.
+
+`MAX_CONCURRENT_SESSIONS` (default `5`) caps how many sessions `viva
+serve` runs at once -- process-wide, not per-caller, since there's only
+one shared access token per server process. A request past the cap gets
+HTTP 429. See `docs/system-design/25-phase-20-serve-hardening-
+onboarding-design.md` §25.2.
 
 ## Usage
 
@@ -140,6 +147,14 @@ collections past retention (NFR7), or everything with `--all`:
 
 ```bash
 viva cleanup [--older-than <days>] [--all]
+```
+
+Check that Ollama is reachable and `LLM_MODEL`/`EMBEDDING_MODEL` are
+actually pulled -- read-only, makes no changes, useful right after
+first setting up `.env`:
+
+```bash
+viva doctor
 ```
 
 Or run viva room instead of the CLI -- the local browser interface, over
@@ -229,7 +244,7 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-Phases 0-19 are implemented, currently at **v0.3.0** (see [`CHANGELOG.md`](CHANGELOG.md)):
+Phases 0-20 are implemented, currently at **v0.3.0** (see [`CHANGELOG.md`](CHANGELOG.md)):
 
 - **Phase 0 — walking skeleton.** `viva demo` (still runnable, see below) proved out the two riskiest assumptions before anything else got built: local-model structured-output reliability, and a timer that excludes LLM latency.
 - **Phase 3 — analyze.** Tree-sitter AST extraction and map-reduce Project Profile generation, with a hierarchical-reduce fallback for repos with many modules. [`08-phase-3-analyzer-design.md`](docs/system-design/08-phase-3-analyzer-design.md)
@@ -248,6 +263,7 @@ Phases 0-19 are implemented, currently at **v0.3.0** (see [`CHANGELOG.md`](CHANG
 - **Phase 17 — CLI logging hygiene.** `httpx`/`httpcore` and the retrieval-quality log line no longer print to the live session terminal; both redirect to a per-day log file (`logs/log_<date>.log`) with 3-day retention instead.
 - **Phase 18 — dependency & auth hygiene.** `requirements.txt` now actually provides what it always claimed to (`fastapi`, `uvicorn`, `prompt_toolkit`, `httpx2`) — previously missing entirely, breaking the plain `pip install -r requirements.txt` path. `viva serve`'s access-token check now uses `hmac.compare_digest`. `LICENSE` (MIT), previously "TBD." [`23-phase-18-dependency-auth-hygiene-design.md`](docs/system-design/23-phase-18-dependency-auth-hygiene-design.md)
 - **Phase 19 — CI quality gates.** `ruff` and `mypy --strict` now run in CI alongside `pytest-cov` (90% floor, measured baseline 95%) — grounded in real runs against this codebase, not estimated; see the design doc for exactly what that found and how the pre-existing `mypy` debt is tracked rather than silently exempted. [`24-phase-19-ci-quality-gates-design.md`](docs/system-design/24-phase-19-ci-quality-gates-design.md)
+- **Phase 20 — serve hardening & onboarding.** `viva serve` now caps concurrent live sessions (`MAX_CONCURRENT_SESSIONS`, default 5, HTTP 429 once reached) — process-wide, not per-token, since there's only one shared access token per server process. New `viva doctor` command: a read-only check that Ollama is reachable and `LLM_MODEL`/`EMBEDDING_MODEL` are actually pulled. [`25-phase-20-serve-hardening-onboarding-design.md`](docs/system-design/25-phase-20-serve-hardening-onboarding-design.md)
 
 This throwaway `viva demo` harness (from the original walking skeleton,
 docs/plan.md Phase 0) still exercises the two riskiest assumptions
