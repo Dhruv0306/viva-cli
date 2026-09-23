@@ -31,7 +31,18 @@ RUN pip install --no-cache-dir .
 # optional-by-design reasoning as Phase 11 itself, doubly true here.
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Strip any stray \r regardless of how this file was checked out on the
+# host -- .gitattributes (eol=lf) is the real fix and prevents this from
+# happening on a fresh clone, but this makes the build itself robust
+# even against a host git config that ignores it (an existing checkout
+# from before .gitattributes existed, a manual re-save in a CRLF editor,
+# etc.). A CRLF shebang (`#!/bin/sh\r`) makes the kernel look for a
+# literal `/bin/sh\r` interpreter that doesn't exist --
+# `exec /entrypoint.sh: no such file or directory`, despite the file
+# being right there. Found via a real `docker compose up --build` on
+# real Windows hardware. See docs/system-design/
+# 26-phase-21-containerized-setup-design.md §26.12.
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Deliberately no `USER viva` here -- entrypoint.sh needs to start as
 # root to fix ownership of the runtime-writable, bind-mounted ./data and

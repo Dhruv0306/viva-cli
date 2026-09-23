@@ -1,0 +1,10 @@
+# Force LF line endings for files that get exec'd inside a Linux
+# container, regardless of the checking-out machine's core.autocrlf.
+# A CRLF shebang (`#!/bin/sh\r`) makes the kernel look for a literal
+# `/bin/sh\r` interpreter that doesn't exist -- `exec /entrypoint.sh:
+# no such file or directory`, despite the file being right there.
+# Found via a real `docker compose up --build` on real Windows
+# hardware, not anticipated in planning. See docs/system-design/
+# 26-phase-21-containerized-setup-design.md §26.12.
+*.sh text eol=lf
+Dockerfile text eol=lf

@@ -307,3 +307,57 @@ array through safely. Verified directly under `dash` (confirmed this
 sandbox's own `/bin/sh` -> `dash`, matching Debian's default) with an
 argument containing spaces, to confirm the idiom doesn't word-split --
 not just that the happy-path single-word case works.
+
+## 26.12 Real-world bug found during Phase 21 testing
+
+Real `docker compose up --build` on real Windows hardware (`§26.9`'s
+own exit criteria, exactly why this doc kept saying real validation
+mattered more than usual here) failed at container start:
+`exec /entrypoint.sh: no such file or directory` -- despite the build
+completing successfully and the file demonstrably being in the image
+(`COPY entrypoint.sh /entrypoint.sh` had already succeeded one step
+earlier).
+
+**Root cause:** classic Windows Git CRLF conversion. Git for Windows'
+common default (`core.autocrlf=true`, the "Checkout Windows-style,
+commit Unix-style" installer option) rewrites LF to CRLF for any file
+it treats as text on checkout, and nothing in this repo told it not to
+for `entrypoint.sh` -- confirmed directly, this repo had no
+`.gitattributes` file at all before this fix. A CRLF shebang
+(`#!/bin/sh\r`) makes the kernel's `exec` look for a literal `/bin/sh\r`
+interpreter, which doesn't exist -- `"no such file or directory"` is
+the kernel reporting that missing interpreter, not a missing
+`entrypoint.sh` itself, which is why the error is easy to misread as a
+`COPY`/path problem when it's actually a line-ending problem. The git
+blob itself was already clean LF (confirmed directly against the
+authoring sandbox's own copy: zero `\r\n` sequences) -- only the
+Windows working-tree checkout was affected.
+
+**Fix, two layers, not one:**
+- `.gitattributes` (`*.sh text eol=lf`, `Dockerfile text eol=lf`) --
+  the real fix, prevents this on any fresh clone regardless of the
+  cloning machine's `core.autocrlf` setting.
+- A defensive `sed -i 's/\r$//' /entrypoint.sh` added to the
+  `Dockerfile` itself, right after the `COPY`, before `chmod +x` --
+  makes the build robust even against a checkout `.gitattributes`
+  can't reach (an existing working tree from before this fix existed,
+  a manual re-save in a CRLF-preserving editor). Verified directly:
+  constructed a real CRLF-terminated script, confirmed `file` reports
+  `with CRLF line terminators`, ran the exact `sed` command, confirmed
+  `file` reports clean afterward with no CRLF remaining.
+
+**For anyone who already has `entrypoint.sh` checked out with CRLF from
+before this fix** (this repo, on Windows, right now): the `Dockerfile`'s
+own `sed` fix handles it going forward with no action needed --
+rebuilding the image is enough, since the fix runs at build time inside
+the Linux build, not at checkout time. `.gitattributes` only affects
+*future* checkouts of this file, not files already sitting on disk with
+the wrong line endings, but nothing further needs fixing here as a
+result, thanks to the second layer.
+
+**Process note:** this is exactly the class of bug that could only
+surface on real Windows hardware -- the authoring environment for this
+whole design doc had no Windows checkout, no `core.autocrlf`, nothing to
+trigger it. Documented plainly as a reason real-world validation on the
+actual target platform matters, not as a gap in the reasoning that led
+here.

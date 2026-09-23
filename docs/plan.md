@@ -678,6 +678,24 @@ Each phase is independently testable and produces a working, demoable slice.
   real access to Debian's package repos. **This phase's own
   `**Verified**` line still isn't written — per §26.9, that needs real
   `docker compose up` on real Docker, which hasn't happened yet.**
+- **Real-world bug found during testing, 2026-09-23:** real
+  `docker compose up --build` on real Windows hardware failed —
+  `exec /entrypoint.sh: no such file or directory` on container start,
+  despite the build itself completing and the file being right there.
+  Classic Windows Git CRLF conversion: no `.gitattributes` existed, so
+  `core.autocrlf=true` (Git for Windows' common default) rewrote
+  `entrypoint.sh`'s line endings to CRLF on checkout, giving it a
+  `#!/bin/sh\r` shebang — the kernel looks for a literal `/bin/sh\r`
+  interpreter that doesn't exist, and reports that as "no such file or
+  directory," easy to misread as a missing-file problem when it's a
+  line-ending one. Fixed two ways, not one: `.gitattributes`
+  (`eol=lf` for `*.sh`/`Dockerfile`) so this can't happen on a fresh
+  clone, plus a defensive `sed -i 's/\r$//' /entrypoint.sh` added to
+  the `Dockerfile` itself so the build is robust even against an
+  existing checkout `.gitattributes` can't retroactively fix — the
+  second layer means nothing further needs doing on the Windows machine
+  that hit this beyond pulling the fix and rebuilding. Full account:
+  design doc §26.12.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
