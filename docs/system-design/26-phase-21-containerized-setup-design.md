@@ -267,3 +267,43 @@ formality:
 - **Bundling Ollama itself** -- decided against in §26.1; revisit only if
   the external-Ollama friction turns out to be worse in practice than
   reasoned here, which real usage, not more reasoning, would need to show.
+
+## 26.11 Implementation findings not anticipated by §26.6/§26.7's drafts
+
+Two real things found while actually writing the `Dockerfile`/
+`entrypoint.sh`, neither visible from the draft code in §26.6/§26.7 alone
+-- left as written there rather than edited in place, corrected here,
+same convention as every other real-world finding in this series.
+
+**The non-root user from §26.5 would have crashed the container on
+startup.** `cli.py`'s app callback calls `logs_dir.mkdir(exist_ok=True)`
+unconditionally on *every* CLI invocation, including `viva serve`, and
+`/app` (from the Dockerfile's `COPY`/`pip install` steps) is owned by
+root. `/app/data`, separately, is a host bind mount -- Docker
+auto-creates a missing host-side bind-mount target as root-owned. A
+plain `USER viva` before `CMD`, as §26.7's draft had it, would have hit a
+`PermissionError` on the very first `mkdir` and never gotten as far as
+binding the web server. Fixed with the standard pattern for exactly this
+(the one official `postgres`/`mysql` images use): the `Dockerfile`
+no longer does `USER viva` at all; a new `entrypoint.sh` runs as root,
+`chown`s `/app/data`, `/app/logs`, and the `tree_sitter_cache` volume's
+mount point, then drops to `viva` before `exec`-ing the real command.
+Verified for real, not just reasoned about: reproduced the exact
+root-owned-directory scenario in a plain shell (not Docker, since none is
+available here, but the same ownership/permission mechanics), confirmed
+`entrypoint.sh`'s `chown` fixes it and the resulting non-root user can
+actually write.
+
+**`gosu` (§26.5/§26.7's original drafts assumed it) couldn't be verified
+available.** The standard privilege-drop tool for this exact pattern, but
+confirming it's installable via `apt-get install` means a real
+`apt-get update` against Debian's package repos, which this design doc's
+authoring environment has no network access to (a fixed host allowlist,
+not `deb.debian.org`) -- asserting it "should be fine" without checking
+is the same class of mistake Phase 18's `httpx2` finding was. Switched to
+plain `su`, part of every Debian base image already, using the standard
+`su viva -s /bin/sh -c 'exec "$0" "$@"' -- "$@"` idiom to pass an argv
+array through safely. Verified directly under `dash` (confirmed this
+sandbox's own `/bin/sh` -> `dash`, matching Debian's default) with an
+argument containing spaces, to confirm the idiom doesn't word-split --
+not just that the happy-path single-word case works.

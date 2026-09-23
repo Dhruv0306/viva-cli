@@ -664,6 +664,20 @@ Each phase is independently testable and produces a working, demoable slice.
   end-to-end — no Docker in the authoring environment — so real-world
   validation (§26.9) carries more weight than usual before this phase's
   own `**Verified**` line gets written.**
+- **Implemented, 2026-09-23, not yet verified on real Docker:**
+  `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `entrypoint.sh`,
+  and the README's Docker section are all written. Two things found only
+  while actually implementing, neither visible in §26.6/§26.7's drafts —
+  design doc §26.11 has the full account: the non-root `viva` user from
+  §26.5 would have crashed the container on startup (`cli.py`'s
+  unconditional `logs_dir.mkdir()` plus a root-owned `data/` bind mount
+  → `PermissionError` before the server ever binds), fixed with the
+  standard root-then-drop-privileges entrypoint pattern; and `gosu`
+  (§26.5/§26.7's original assumption) got swapped for plain `su`, since
+  `gosu`'s `apt-get` availability couldn't actually be checked without
+  real access to Debian's package repos. **This phase's own
+  `**Verified**` line still isn't written — per §26.9, that needs real
+  `docker compose up` on real Docker, which hasn't happened yet.**
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against

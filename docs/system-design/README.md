@@ -222,7 +222,7 @@ history of what was tried and rejected along the way.
   — the Phase 21 implementation design, decided: `viva serve` only,
   external Ollama (no GPU passthrough to own). States its own limit up
   front — no Docker in the authoring environment, so the Dockerfile/
-  compose content is a best-effort design, not a verified one, unlike
+  compose content was a best-effort design, not a verified one, unlike
   Phases 18-20. What *is* verified directly: `OLLAMA_HOST`'s
   `localhost` default doesn't resolve inside a container,
   `viva serve`'s `127.0.0.1` default isn't reachable via Docker's port
@@ -230,7 +230,13 @@ history of what was tried and rejected along the way.
   `0.0.0.0` already requires a token, no new code needed), `git` isn't
   in `python:3.11-slim` by default, and `tree-sitter-language-pack`
   downloads grammars on first use into a cache that needs its own
-  volume mount.
+  volume mount. §26.11 covers two things implementation itself turned
+  up that the draft design missed: a non-root user would have crashed
+  the container on startup over a permissions issue, fixed with a
+  root-then-drop-privileges `entrypoint.sh`; and `gosu` got swapped for
+  plain `su` since its `apt-get` availability couldn't actually be
+  checked. Still needs real Docker validation before `plan.md`'s
+  `Verified` line gets written.
 
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
