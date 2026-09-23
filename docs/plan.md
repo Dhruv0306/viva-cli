@@ -696,6 +696,21 @@ Each phase is independently testable and produces a working, demoable slice.
   second layer means nothing further needs doing on the Windows machine
   that hit this beyond pulling the fix and rebuilding. Full account:
   design doc §26.12.
+- **Real Docker validation, in progress, 2026-09-23:** the fix above
+  confirmed live — `docker compose up --build` on the same Windows
+  machine now builds (correctly using layer cache: only the changed
+  `entrypoint.sh` step re-ran) and the container starts cleanly.
+  `§26.3`'s prediction held in practice, not just in reasoning: binding
+  `0.0.0.0` inside the container automatically required a token and
+  printed one, with zero code written for that in this phase — Phase
+  15's existing logic just worked. Two of `§26.9`'s exit criteria
+  confirmed (`docker compose build` succeeds; the container starts and
+  binds correctly). Still open before this phase's own `**Verified**`
+  line gets written: reaching `http://localhost:8000` with the printed
+  token from a browser, a full session (start/answer/report) through
+  the containerized path against a real repo and real Ollama, data
+  surviving `docker compose down && up`, and the tree-sitter grammar
+  -download/cache-persistence check.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
