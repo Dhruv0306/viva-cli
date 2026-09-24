@@ -1059,7 +1059,7 @@ def test_classification_latency_is_excluded_from_the_answer_timer(tmp_path, monk
     # question's remaining time budget, every single question.
     config = _config(tmp_path)
     _patch_pipeline(monkeypatch)
-    slow_classifier = _SlowClassificationProvider(sleep_seconds=0.3)
+    slow_classifier = _SlowClassificationProvider(sleep_seconds=0.6)
     ui = _TimerSnapshottingUI(["a1", "a2"])
     orch, _store = _make_orchestrator(tmp_path, config, ui, classification_provider=slow_classifier)
 
@@ -1070,9 +1070,15 @@ def test_classification_latency_is_excluded_from_the_answer_timer(tmp_path, monk
     drop = ui.remaining_snapshots[0] - ui.remaining_snapshots[1]
     # Only near-instant fake generate_question/embedding calls and
     # trivial bookkeeping separate the two read_answer() calls --
-    # classify()'s 0.3s sleep must not show up in this drop if it's
-    # correctly excluded.
-    assert drop < 0.15
+    # classify()'s 0.6s sleep must not show up in this drop if it's
+    # correctly excluded. Threshold is half the injected sleep, same
+    # margin as originally, but doubled in absolute terms (0.3 was
+    # observed flaking on a loaded CI runner at 0.156 -- right at the
+    # boundary of the old 0.3s/0.15 pairing, not a real regression).
+    # Widening the injected delay rather than just the threshold keeps
+    # the same relative safety margin while giving CI scheduling jitter
+    # much more room before it can cross the line.
+    assert drop < 0.3
 
 
 class _SlowAskQuestionUI(_TimerSnapshottingUI):
@@ -1102,18 +1108,23 @@ def test_ask_question_latency_is_excluded_from_the_answer_timer(tmp_path, monkey
     # and classify()'s latency already don't.
     config = _config(tmp_path)
     _patch_pipeline(monkeypatch)
-    ui = _SlowAskQuestionUI(["a1", "a2"], sleep_seconds=0.3)
+    ui = _SlowAskQuestionUI(["a1", "a2"], sleep_seconds=0.6)
     orch, _store = _make_orchestrator(tmp_path, config, ui)
 
     orch.start("https://github.com/owner/repo")
 
     assert len(ui.remaining_snapshots) == 2
     drop = ui.remaining_snapshots[0] - ui.remaining_snapshots[1]
-    # Only the second ask_question()'s 0.3s "speaking" sleep, plus
+    # Only the second ask_question()'s 0.6s "speaking" sleep, plus
     # near-instant fake generate_question/embedding calls and trivial
     # bookkeeping, separate the two read_answer() calls -- the sleep
     # must not show up in this drop if it's correctly excluded.
-    assert drop < 0.15
+    # Threshold is half the injected sleep, same margin as originally,
+    # but doubled in absolute terms -- see the matching comment in
+    # test_classification_latency_is_excluded_from_the_answer_timer
+    # for why (0.3s/0.15 was observed flaking on a loaded CI runner,
+    # right at that pairing's boundary, not a real regression).
+    assert drop < 0.3
 
 
 def test_summarizing_forces_stray_evals_to_needs_review(tmp_path):
