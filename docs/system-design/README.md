@@ -219,7 +219,11 @@ history of what was tried and rejected along the way.
   `ollama.Client.list()` call.
 
 - **[26-phase-21-containerized-setup-design.md](26-phase-21-containerized-setup-design.md)**
-  — the Phase 21 implementation design, decided: `viva serve` only,
+  — **Shelved (2026-09-24, not being pursued right now — Dhruv's call,
+  not a technical blocker; the actual `Dockerfile`/`docker-compose.yml`/
+  `entrypoint.sh`/`.gitattributes` have been removed from the repo).
+  Left as the historical record below.** The Phase 21 implementation
+  design, decided: `viva serve` only,
   external Ollama (no GPU passthrough to own). States its own limit up
   front — no Docker in the authoring environment, so the Dockerfile/
   compose content was a best-effort design, not a verified one, unlike

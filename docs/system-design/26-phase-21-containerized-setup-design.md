@@ -361,3 +361,22 @@ whole design doc had no Windows checkout, no `core.autocrlf`, nothing to
 trigger it. Documented plainly as a reason real-world validation on the
 actual target platform matters, not as a gap in the reasoning that led
 here.
+
+## 26.13 Shelved, 2026-09-24
+
+Not being pursued right now -- a scope/priority call, not a technical
+blocker. Validation had gotten as far as: build succeeds, container
+starts and binds correctly, browser reachability and token auth
+confirmed working end to end, session creation confirmed working. Not
+yet reached: a full session completing against real Ollama, data
+persistence across `docker compose down`/`up`, and the tree-sitter
+cache-persistence check (§26.9's remaining exit criteria).
+
+The `Dockerfile`, `docker-compose.yml`, `.dockerignore`,
+`entrypoint.sh`, and `.gitattributes` this phase produced have been
+removed from the repository. This design doc is left in place as the
+historical record -- the decisions in §26.1-§26.7, and the three
+real-world findings in §26.11/§26.12 (the non-root-user permissions fix,
+the `gosu`-to-`su` swap, and the Windows CRLF bug) are exactly the kind
+of thing worth not re-discovering from scratch if this phase is picked
+back up later.

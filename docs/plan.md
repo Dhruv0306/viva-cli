@@ -711,6 +711,19 @@ Each phase is independently testable and produces a working, demoable slice.
   the containerized path against a real repo and real Ollama, data
   surviving `docker compose down && up`, and the tree-sitter grammar
   -download/cache-persistence check.
+- **Shelved, 2026-09-24:** not being pursued right now — Dhruv's call,
+  not a technical blocker. The `Dockerfile`, `docker-compose.yml`,
+  `.dockerignore`, `entrypoint.sh`, and `.gitattributes` this phase
+  produced have been removed from the repo; the README's "Docker"
+  section and "Project status" bullet for this phase are reverted.
+  Design doc `docs/system-design/26-phase-21-containerized-setup-
+  design.md` is left in place as the historical record of what was
+  built, what real Docker testing on real Windows hardware found (a
+  Windows Git CRLF bug, §26.12) and fixed, and where validation had
+  gotten to before shelving — not deleted, per this project's own
+  convention of keeping reasoning as a record rather than silently
+  erasing it. If this phase is picked back up later, that doc is the
+  starting point, not a from-scratch re-design.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
