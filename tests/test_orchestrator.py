@@ -1071,14 +1071,27 @@ def test_classification_latency_is_excluded_from_the_answer_timer(tmp_path, monk
     # Only near-instant fake generate_question/embedding calls and
     # trivial bookkeeping separate the two read_answer() calls --
     # classify()'s 0.6s sleep must not show up in this drop if it's
-    # correctly excluded. Threshold is half the injected sleep, same
-    # margin as originally, but doubled in absolute terms (0.3 was
-    # observed flaking on a loaded CI runner at 0.156 -- right at the
-    # boundary of the old 0.3s/0.15 pairing, not a real regression).
-    # Widening the injected delay rather than just the threshold keeps
-    # the same relative safety margin while giving CI scheduling jitter
-    # much more room before it can cross the line.
-    assert drop < 0.3
+    # correctly excluded.
+    #
+    # This test itself caught a real bug, not just CI jitter: a first
+    # attempt to fix flakiness here (widening 0.3s/0.15 to 0.6s/0.3, a
+    # pure margin bump) still failed on real Windows CI at drop=0.563 --
+    # essentially the *entire* injected sleep leaking through, which a
+    # scheduling-jitter explanation doesn't fit. Root cause:
+    # record_question_asked()/record_answer() in orchestrator.py do a
+    # real SQLite UPDATE + commit() (fsync on commit) and weren't
+    # wrapped in timer.excluding(), unlike every LLM call in the same
+    # loop -- an oversight when FR17/FR24's exclusion policy was applied
+    # to LLM latency but never extended to this bookkeeping I/O. SQLite
+    # commit-fsync latency spikes are well documented on Windows CI,
+    # explaining both the magnitude and why it wasn't caught on faster
+    # local hardware. Fixed at the source (both calls now wrapped);
+    # threshold tightened back down accordingly -- it no longer needs to
+    # accommodate a potentially-unbounded fsync stall, just ordinary
+    # per-iteration overhead (a SELECT query, in-memory ranking, general
+    # Python overhead), while still keeping real margin above that for
+    # residual CI jitter.
+    assert drop < 0.2
 
 
 class _SlowAskQuestionUI(_TimerSnapshottingUI):
@@ -1119,12 +1132,49 @@ def test_ask_question_latency_is_excluded_from_the_answer_timer(tmp_path, monkey
     # near-instant fake generate_question/embedding calls and trivial
     # bookkeeping, separate the two read_answer() calls -- the sleep
     # must not show up in this drop if it's correctly excluded.
-    # Threshold is half the injected sleep, same margin as originally,
-    # but doubled in absolute terms -- see the matching comment in
-    # test_classification_latency_is_excluded_from_the_answer_timer
-    # for why (0.3s/0.15 was observed flaking on a loaded CI runner,
-    # right at that pairing's boundary, not a real regression).
-    assert drop < 0.3
+    # Threshold matches test_classification_latency_is_excluded_from_
+    # the_answer_timer's -- see that test's comment for the real bug
+    # this one caught on Windows CI (an unexcluded SQLite commit/fsync
+    # in record_question_asked()/record_answer(), not scheduling jitter,
+    # observed leaking drop=0.563 through a then-0.3 threshold -- fixed
+    # at the source, both calls now wrapped in timer.excluding()).
+    assert drop < 0.2
+
+
+def test_session_store_write_latency_is_excluded_from_the_answer_timer(tmp_path, monkeypatch):
+    # Deterministic regression test for the real bug found via
+    # test_ask_question_latency_is_excluded_from_the_answer_timer's
+    # Windows CI flakiness (see that test's comment for the full story):
+    # record_question_asked()/record_answer() do a real SQLite
+    # UPDATE + commit() (fsync on commit), and weren't wrapped in
+    # timer.excluding() -- unlike every LLM call in the same loop. A
+    # slow disk (or, concretely, Windows CI's well-documented SQLite
+    # commit-fsync latency spikes) meant this bookkeeping write could
+    # eat directly into the person's answering time. This test doesn't
+    # rely on real, incidental I/O slowness the way the other two do --
+    # it patches record_question_asked() itself to sleep, so it fails
+    # deterministically against pre-fix code rather than only
+    # occasionally, on a slow enough CI runner.
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    ui = _TimerSnapshottingUI(["a1", "a2"])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    real_record_question_asked = store.record_question_asked
+
+    def slow_record_question_asked(*args, **kwargs):
+        time.sleep(0.6)
+        return real_record_question_asked(*args, **kwargs)
+
+    monkeypatch.setattr(store, "record_question_asked", slow_record_question_asked)
+
+    orch.start("https://github.com/owner/repo")
+
+    assert len(ui.remaining_snapshots) == 2
+    drop = ui.remaining_snapshots[0] - ui.remaining_snapshots[1]
+    # Same threshold and reasoning as the two tests above -- the 0.6s
+    # sleep injected directly into record_question_asked() must not show
+    # up here if it's correctly excluded.
+    assert drop < 0.2
 
 
 def test_summarizing_forces_stray_evals_to_needs_review(tmp_path):

@@ -466,9 +466,22 @@ class Orchestrator:
                 self._question_embeddings[selected_item.question_id] = fallback_vec
 
             question_number += 1
-            self.store.record_question_asked(
-                session_id, selected_item.question_id, question_text, grounding_chunk_ids
-            )
+            # FR17/FR24: this UPDATE + commit() is a real disk write
+            # (fsync on commit) -- overlooked when the LLM-call exclusions
+            # around it were added, since it's fast enough to not matter
+            # on typical local dev hardware, but it isn't LLM latency
+            # that's exempt from this policy, it's bookkeeping overhead
+            # that shouldn't consume the person's answering time any more
+            # than an LLM call should. Real Windows CI I/O (SQLite commit
+            # -fsync latency spikes are well documented there) surfaced
+            # this concretely: a single unexcluded commit here was enough
+            # to eat >90% of a 0.6s window in
+            # test_ask_question_latency_is_excluded_from_the_answer_timer
+            # on a loaded runner.
+            with timer.excluding():
+                self.store.record_question_asked(
+                    session_id, selected_item.question_id, question_text, grounding_chunk_ids
+                )
             # FR17/FR24, same reasoning as the timer.excluding() below:
             # ask_question() is a no-op-latency print in text mode, but a
             # voice-enabled SessionUI (docs/system-design/
@@ -480,7 +493,11 @@ class Orchestrator:
             with timer.excluding():
                 self.ui.ask_question(question_text, selected_item.category, question_number)
             answer_text = self.ui.read_answer(timer)
-            self.store.record_answer(session_id, selected_item.question_id, answer_text)
+            # FR17/FR24, same reasoning as record_question_asked() above:
+            # a real disk write (commit() -> fsync), not LLM latency, but
+            # still not the person's answering time.
+            with timer.excluding():
+                self.store.record_answer(session_id, selected_item.question_id, answer_text)
 
             # FR17/FR24: evaluation latency must not consume the
             # person's timed session, the same as generate_question()'s
