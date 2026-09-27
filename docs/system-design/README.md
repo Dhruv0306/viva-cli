@@ -242,5 +242,19 @@ history of what was tried and rejected along the way.
   checked. Still needs real Docker validation before `plan.md`'s
   `Verified` line gets written.
 
+- **[27-phase-22-container-resumption-and-planning-split-design.md](27-phase-22-container-resumption-and-planning-split-design.md)**
+  — the Phase 22 design: two unrelated items bundled the way Phases 14/18
+  were. Part A resumes Phase 21 (§26.13's shelving) with no redesign —
+  restores the removed Docker artifacts and finishes the three exit
+  criteria that were still open at shelving time. Part B is panel-review
+  finding §19.2.2 (`orchestrator.py`'s planning/ranking logic is getting
+  large enough to warrant its own module): splits `_rank_pending_items`/
+  `_replenish_plan`'s pure logic into a new `viva/planning.py`, keeping
+  every existing `Orchestrator` method name as a thin delegate so
+  `test_orchestrator.py`'s direct calls/monkeypatches of `_select_next_item`
+  /`_replenish_plan` keep working unchanged — a maintainability refactor
+  with the full test suite passing unchanged as its regression check,
+  not a behavior change.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

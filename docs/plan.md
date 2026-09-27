@@ -725,6 +725,51 @@ Each phase is independently testable and produces a working, demoable slice.
   erasing it. If this phase is picked back up later, that doc is the
   starting point, not a from-scratch re-design.
 
+## Phase 22 — Container Resumption & Planning-Module Split
+- Design doc: `docs/system-design/27-phase-22-container-resumption-and-
+  planning-split-design.md`.
+- Two unrelated items bundled the way Phase 14 and Phase 18 each bundled
+  multiple independent small items into one phase.
+- **Part A — resume Phase 21.** No redesign: `26-phase-21-containerized-
+  setup-design.md`'s decisions (§26.1-§26.7) and its two real-world
+  fixes (§26.11's non-root-permissions entrypoint, §26.12's Windows CRLF
+  fix) stand as written. Restores the `Dockerfile`, `docker-compose.yml`,
+  `.dockerignore`, `entrypoint.sh`, `.gitattributes`, and README section
+  removed at §26.13's shelving, then finishes the three exit criteria
+  still open at that point: a full session (start/answer/report)
+  completing entirely through the containerized path against a real repo
+  and real external Ollama; `docker compose down && up` confirmed to
+  preserve session data via the `data/` bind mount; a not-yet-cached
+  language's grammar downloading at runtime and *not* re-downloading
+  after a restart.
+- **Part B — §19.2.2, the one item left in the panel-review backlog**
+  (every other finding in `19-panel-review-findings-2026-09.md` was
+  already closed out across Phases 14-16, confirmed by checking
+  `plan.md`/`CHANGELOG.md` directly rather than assumed). `orchestrator
+  .py`'s planning/ranking logic (`_rank_pending_items`, `_select_next_
+  item`, `_replenish_plan`) moves to a new `viva/planning.py` as pure
+  functions (`rank_pending_items()`, `compute_replenished_plan()`) —
+  matching the project's existing thin-stateless-module convention
+  (`questiongen/retrieval.py`, `cleanup.py`) rather than a new stateful
+  `Planner` class. Every existing `Orchestrator` method name/signature is
+  kept as a thin delegate, so `test_orchestrator.py`'s direct calls to
+  `_select_next_item`/`_replenish_plan` (including three monkeypatches of
+  the latter) keep working unchanged. Semantic-duplicate detection
+  (`_cosine_similarity`/`_is_semantic_duplicate`/`_seed_embedding_cache`)
+  stays in `orchestrator.py` — a different concern from ranking, out of
+  scope for this split. Pure maintainability refactor, no behavior
+  change, no new user-facing exit criteria of its own.
+- **Exit criteria:**
+  - Part A's three items above, confirmed on real Docker on real Windows
+    hardware, the same standard every prior phase in this series held to.
+  - Part B: full test suite (651 tests) passes unchanged; `ruff`/
+    `mypy --strict` clean against the new `viva/planning.py`; a plain
+    `viva start` and a plain `viva serve` (no `--host` flag — loopback,
+    no token, kept separate from Part A's container work which correctly
+    needs `--host 0.0.0.0`) both confirmed live to show identical
+    question-ordering/replenishment behavior to a pre-split run against
+    the same repo.
+
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
   the categories/cases no data exists for yet.** The default set in
@@ -753,14 +798,6 @@ Each phase is independently testable and produces a working, demoable slice.
     proven correct (§22.2.4's test, plus the live
     `MAX_RETRIEVAL_DISTANCE=0.01` forced-skip run).
 
-- **§19.2.2 — split `orchestrator.py`'s planning/ranking logic into its
-  own module.** A maintainability refactor, not a behavior change; no
-  user-facing exit criteria to attach it to. Deferred the same way the
-  Phase 9 web-UI stretch goal was deferred into its own phase rather than
-  forced into an unrelated one — revisit once Phase 16 or a future phase
-  needs to touch planning/ranking again, since that's the natural trigger
-  to do the split rather than as a standalone phase with no functional
-  payoff.
 
 ## Cross-Cutting: Testing
 - A small fixture set of real "golden repos" (a few small, varied-language
