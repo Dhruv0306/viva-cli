@@ -724,6 +724,11 @@ Each phase is independently testable and produces a working, demoable slice.
   convention of keeping reasoning as a record rather than silently
   erasing it. If this phase is picked back up later, that doc is the
   starting point, not a from-scratch re-design.
+- **Resumed, Phase 22:** the five removed artifacts and the README
+  section are restored unmodified from the pre-shelving commit (not
+  rebuilt) — see Phase 22's own entry below. The three exit criteria
+  still open above are exactly what Phase 22's Part A needs to confirm
+  on real Docker before this phase's `**Verified**` line can be written.
 
 ## Phase 22 — Container Resumption & Planning-Module Split
 - Design doc: `docs/system-design/27-phase-22-container-resumption-and-

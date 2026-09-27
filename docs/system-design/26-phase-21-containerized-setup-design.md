@@ -380,3 +380,13 @@ real-world findings in §26.11/§26.12 (the non-root-user permissions fix,
 the `gosu`-to-`su` swap, and the Windows CRLF bug) are exactly the kind
 of thing worth not re-discovering from scratch if this phase is picked
 back up later.
+
+## 26.14 Resumed, Phase 22
+
+Picked back up as Phase 22 Part A (`docs/system-design/27-phase-22-
+container-resumption-and-planning-split-design.md` §27.1). No redesign
+-- §26.1-§26.7's decisions and §26.11/§26.12's two fixes stand as
+written. The five removed artifacts and the README section are restored
+verbatim from the pre-shelving commit (`0bfe688`), not rebuilt from this
+doc's code blocks. The three exit criteria still open at §26.13 are
+exactly what's left to confirm on real Docker.

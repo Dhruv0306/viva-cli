@@ -1,0 +1,28 @@
+# Phase 21 (docs/plan.md, docs/system-design/
+# 26-phase-21-containerized-setup-design.md). `docker compose up` builds
+# and runs `viva serve` against an Ollama instance you already have
+# running -- see the README's "Docker" section, especially for
+# OLLAMA_HOST on native Linux (extra_hosts below handles it; Docker
+# Desktop needs no extra config either way).
+services:
+  viva:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - LLM_MODEL=${LLM_MODEL}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - MAX_CONCURRENT_SESSIONS=${MAX_CONCURRENT_SESSIONS:-5}
+    extra_hosts:
+      # No-op on Docker Desktop (host.docker.internal already resolves
+      # there); needed on native Linux, where it doesn't by default.
+      # §26.2.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+      - tree_sitter_cache:/home/viva/.cache/tree-sitter-language-pack
+
+volumes:
+  tree_sitter_cache:

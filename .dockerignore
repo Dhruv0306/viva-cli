@@ -1,0 +1,35 @@
+# Keeps the build context small and makes sure real session data, repo
+# clones, and dev artifacts never end up baked into an image layer.
+# Phase 21, docs/system-design/26-phase-21-containerized-setup-design.md.
+
+.git/
+.github/
+
+data/
+cache/
+logs/
+*.db
+
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+tests/
+docs/
+*.md
+!README.md
+
+.env
+.env.*
+!.env.example

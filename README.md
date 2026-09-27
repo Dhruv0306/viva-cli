@@ -59,6 +59,50 @@ ollama pull gemma4:e4b
 ollama pull nomic-embed-text
 ```
 
+### Docker
+
+An alternative to the native install above -- `viva serve` only, not
+`Ollama` itself. Point it at an Ollama you already have running:
+
+```bash
+git clone https://github.com/<your-username>/viva-cli.git
+cd viva-cli
+cp .env.example .env   # set LLM_MODEL at minimum
+docker compose up --build
+```
+
+Open `http://localhost:8000`. The access token (binding `0.0.0.0` inside
+the container, same as any non-loopback `viva serve`, always requires
+one) prints to the container's own logs, not your terminal directly:
+
+```bash
+docker compose logs viva
+```
+
+**`OLLAMA_HOST`:** defaults to `http://host.docker.internal:11434`,
+which works out of the box on Docker Desktop (Mac/Windows) and on native
+Linux (`docker-compose.yml`'s `extra_hosts` makes that name resolve
+there too, where it otherwise wouldn't). If your Ollama listens
+somewhere else, set `OLLAMA_HOST` in `.env` before running
+`docker compose up`.
+
+**First analysis of a language this container hasn't seen yet** takes a
+moment longer than usual -- `tree-sitter-language-pack` downloads that
+language's grammar on first use (needs the container to have outbound
+network access, same as the native install already needs), then caches
+it in a Docker-managed volume that survives `docker compose down`/`up`,
+so it only happens once per language, not once per container restart.
+
+Session data lives in `./data` on your host (bind-mounted, same
+`SESSION_DB_PATH`/`VECTOR_DB_PATH` convention as the native install), so
+it survives container recreation and stays inspectable outside the
+container.
+
+Voice mode isn't available in this image -- see [`docs/system-design/
+26-phase-21-containerized-setup-design.md`](docs/system-design/26-phase-21-containerized-setup-design.md)
+for why (native audio deps assume a host audio device a headless
+container doesn't have).
+
 ## Configuration
 
 All tunables live in `.env`:
