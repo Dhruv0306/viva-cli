@@ -9,6 +9,20 @@ for general use."
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-26
+
+Phases 18-20 in full. Phase 21 (containerized setup) was scoped, mostly
+built, and validated as far as a working container with real browser
+and session-creation traffic on real Windows hardware, then shelved
+before release -- a scope/priority call, not a technical blocker; see
+`docs/plan.md`'s Phase 21 entry and
+[`docs/system-design/26-phase-21-containerized-setup-design.md`](docs/system-design/26-phase-21-containerized-setup-design.md)
+for the full account, kept as the record of what was found (a Windows
+Git CRLF bug, a non-root-container permissions fix, an Ollama
+bind-address gap) in case this gets picked back up later. Also includes
+a real bug found via actual CI runs on Windows hardware, not caught
+locally, while investigating unrelated test flakiness.
+
 ### Added
 
 - `viva doctor`: a new, read-only command that checks Ollama is
@@ -22,6 +36,13 @@ for general use."
   HTTP 429. Process-wide, not per-token: there's only one shared access
   token per server process, so "per-token" and "per-process" are the
   same thing here (§25.1). Covers both starting and resuming a session.
+- `LICENSE` (MIT). `pyproject.toml`'s `license` field and the README's
+  License section, both previously "TBD," now say so too (§23.3).
+- `ruff` and `mypy --strict` now run in CI (a new `lint` job,
+  independent of the pytest matrix) alongside `pytest-cov`, which adds a
+  90% coverage floor to the existing `pytest` run (measured baseline:
+  95%). `E501` (line length) is deliberately not enforced yet -- see
+  [`docs/system-design/24-phase-19-ci-quality-gates-design.md`](docs/system-design/24-phase-19-ci-quality-gates-design.md).
 
 ### Security
 
@@ -31,13 +52,18 @@ for general use."
   [`docs/system-design/23-phase-18-dependency-auth-hygiene-design.md`](docs/system-design/23-phase-18-dependency-auth-hygiene-design.md)
   §23.2.
 
-### Added
-
-- `LICENSE` (MIT). `pyproject.toml`'s `license` field and the README's
-  License section, both previously "TBD," now say so too (§23.3).
-
 ### Fixed
 
+- A session's answer timer could be charged for the app's own SQLite
+  write latency, not just the person's actual answering time:
+  `record_question_asked()`/`record_answer()` each do a real
+  `UPDATE` + `commit()` (fsync on commit), and neither was excluded from
+  the timer the way every LLM call already was. SQLite commit-fsync
+  latency spikes are well documented on Windows specifically, which is
+  where this surfaced (a real CI run showed a single unexcluded commit
+  eating most of a 0.6s window) rather than on faster local dev
+  hardware. Both calls now excluded, matching the LLM-call exclusions
+  already in place.
 - `requirements.txt` was missing `fastapi`, `uvicorn`, and
   `prompt_toolkit` entirely, even though `pyproject.toml` always listed
   them as base dependencies -- the README's own documented
@@ -47,17 +73,6 @@ for general use."
   similarly missing from this file's dev/test section. See §23.1 and,
   for a real-world correction found while fixing this (`httpx2` was
   initially misdiagnosed as a typo for `httpx` -- it wasn't), §23.9.
-
-### Added
-
-- `ruff` and `mypy --strict` now run in CI (a new `lint` job,
-  independent of the pytest matrix) alongside `pytest-cov`, which adds a
-  90% coverage floor to the existing `pytest` run (measured baseline:
-  95%). `E501` (line length) is deliberately not enforced yet -- see
-  [`docs/system-design/24-phase-19-ci-quality-gates-design.md`](docs/system-design/24-phase-19-ci-quality-gates-design.md).
-
-### Fixed
-
 - 32 `except` blocks in `cli.py` now explicitly suppress exception
   chaining (`raise typer.Exit(...) from None`) rather than relying on
   implicit behavior -- same clean-CLI-error intent as before, now
