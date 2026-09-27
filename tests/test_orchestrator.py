@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import viva.orchestrator as orchestrator_module
+import viva.planning as planning_module
 from viva.analyzer.models import AnalysisResult, AnalysisStats, ModuleSummary
 from viva.classification import ClassificationProvider, NullClassificationProvider
 from viva.config import Config
@@ -128,9 +129,19 @@ def _patch_pipeline(monkeypatch, plan=None, grounded=True, reused_collection=Fal
             ),
         ),
     )
-    monkeypatch.setattr(
-        orchestrator_module, "build_coverage_plan", lambda *a, **kw: plan or _fake_plan()
-    )
+    # Patches both module references: orchestrator.py's own (used by
+    # _run_planning for the initial plan) and planning.py's separate
+    # import (used by compute_replenished_plan, since Phase 22's split --
+    # see docs/system-design/27-phase-22-container-resumption-and-
+    # planning-split-design.md). Without the second, a real
+    # build_coverage_plan() call could fire during replenishment in any
+    # test using this fixture, growing the plan unexpectedly past what
+    # the test's scripted answers account for.
+    def fake_plan(*a, **kw):
+        return plan or _fake_plan()
+
+    monkeypatch.setattr(orchestrator_module, "build_coverage_plan", fake_plan)
+    monkeypatch.setattr(planning_module, "build_coverage_plan", fake_plan)
 
     def fake_generate_question(plan_item, *a, **kw):
         if not grounded:
@@ -857,7 +868,7 @@ def test_replenish_plan_extends_and_returns_true(tmp_path, monkeypatch):
     ])
 
     monkeypatch.setattr(
-        orchestrator_module, "build_coverage_plan",
+        planning_module, "build_coverage_plan",
         lambda *a, **kw: [
             QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview"),
             QuestionPlanItem(id="q2", category="implementation_detail", target_module="core"),
@@ -886,7 +897,7 @@ def test_replenish_plan_returns_false_when_nothing_new(tmp_path, monkeypatch):
     ]
     store.save_plan("sess1", existing_plan)
 
-    monkeypatch.setattr(orchestrator_module, "build_coverage_plan", lambda *a, **kw: existing_plan)
+    monkeypatch.setattr(planning_module, "build_coverage_plan", lambda *a, **kw: existing_plan)
 
     result = orch._replenish_plan("sess1", profile=object())
 
@@ -907,7 +918,7 @@ def test_replenish_plan_does_not_duplicate_already_persisted_items(tmp_path, mon
     store.record_question_asked("sess1", "q1", "Original question text?", ["chunk1"])
 
     monkeypatch.setattr(
-        orchestrator_module, "build_coverage_plan",
+        planning_module, "build_coverage_plan",
         lambda *a, **kw: [q1, QuestionPlanItem(id="q2", category="implementation_detail", target_module="core")],
     )
 
@@ -943,7 +954,13 @@ def test_live_session_replenishes_instead_of_ending_early(tmp_path, monkeypatch)
             for i in range(1, n + 1)
         ]
 
+    # Serves both the initial plan build (_run_planning, orchestrator.py's
+    # own build_coverage_plan reference) and every replenishment call
+    # (planning.compute_replenished_plan's separate reference to the same
+    # function, post-Phase-22 split) -- both need patching, since each
+    # module holds its own name binding.
     monkeypatch.setattr(orchestrator_module, "build_coverage_plan", growing_plan)
+    monkeypatch.setattr(planning_module, "build_coverage_plan", growing_plan)
 
     session_id = orch.start("https://github.com/owner/repo", branch="main", duration_minutes=30)
 
@@ -979,7 +996,10 @@ def test_live_session_ends_exhausted_when_replenishment_finds_nothing(tmp_path, 
 
     # build_coverage_plan always returns the same single item -- nothing
     # new is ever available, so replenishment must give up after one try.
+    # Both module references need patching -- see the comment in
+    # test_live_session_replenishes_instead_of_ending_early above.
     monkeypatch.setattr(orchestrator_module, "build_coverage_plan", lambda *a, **kw: fixed_plan)
+    monkeypatch.setattr(planning_module, "build_coverage_plan", lambda *a, **kw: fixed_plan)
 
     orch.start("https://github.com/owner/repo", branch="main", duration_minutes=30)
 

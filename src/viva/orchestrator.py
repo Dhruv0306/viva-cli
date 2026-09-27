@@ -29,6 +29,7 @@ from viva.indexer.store import VectorStore
 from viva.ingest import ingest_repo
 from viva.ingest.clone import CloneError, validate_repo_url
 from viva.llm_client import LLMClient, OllamaClient
+from viva.planning import compute_replenished_plan, rank_pending_items
 from viva.profile import ProjectProfile
 from viva.questiongen import build_coverage_plan, generate_question
 from viva.questiongen.models import QuestionPlanItem
@@ -77,15 +78,6 @@ def is_resumable(status: str) -> bool:
 # extra LLM/embedding cost (all excluded from the user's clock) small
 # rather than unbounded on a repo where duplication is pervasive.
 _MAX_DEDUP_CANDIDATES = 3
-
-# Phase 13 (docs/system-design/18-phase-13-architecture-tier-questions-
-# design.md §18.5): how much higher to raise the max_questions ceiling
-# on each replenishment attempt when the live loop's pending queue runs
-# dry before the timer expires. Arbitrary but bounded and re-tried as
-# many times as the loop keeps draining -- not meant to be tuned
-# precisely, just large enough that a fast answerer doesn't trigger a
-# replenishment call on almost every single question.
-_REPLENISH_INCREMENT = 6
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -529,39 +521,19 @@ class Orchestrator:
         self.ui.session_complete(self._build_summary(session_id))
 
     def _replenish_plan(self, session_id: str, profile: ProjectProfile) -> bool:
-        """Phase 13 (docs/system-design/18-phase-13-architecture-tier-
-        questions-design.md §18.5): called when `_run_live_session`'s
-        pending queue is empty but the timer hasn't expired -- FR29.
-
-        `build_coverage_plan()` is deterministic given `(profile,
-        max_questions)`, so raising the ceiling and calling it again
-        reproduces every already-persisted item identically, plus a
-        genuinely new tail. `save_plan()` already uses `INSERT OR
-        IGNORE` keyed on `(session_id, question_id)` (see
-        `storage/session_store.py`), so the whole rebuilt plan can just
-        be re-saved -- anything whose `question_id` already exists is
-        silently skipped, no manual diffing needed. (The design doc's
-        original write-up assumed a manual ID diff would be necessary;
-        `INSERT OR IGNORE` already covered it before this patch existed.)
-
-        Returns `True` if new coverage was actually added (the caller
-        loops back and re-fetches pending). Returns `False` if the
-        profile has genuinely run out of groundable modules/files/topics
-        -- `build_coverage_plan()` returned no more items than what's
-        already persisted even with a higher ceiling -- so the caller
-        can treat that as a true terminal `QUESTIONS_EXHAUSTED` rather
-        than retrying the same or a higher ceiling again in this
-        session (which would otherwise busy-loop on every empty-pending
-        check for the rest of the timer).
-        """
+        """Called when `_run_live_session`'s pending queue is empty but
+        the timer hasn't expired -- FR29. Owns the store read (current
+        top-level count) and the store write (persisting the replenished
+        plan); the sizing/growth decision itself is
+        `planning.compute_replenished_plan()` -- see docs/system-design/
+        27-phase-22-container-resumption-and-planning-split-design.md
+        §27.3/§27.4 and that function's own docstring for the full
+        rationale (Phase 13, §18.5)."""
         current_top_level = sum(
             1 for r in self.store.get_qa_records(session_id) if r.is_followup_of is None
         )
-        replenished_config = dataclasses.replace(
-            self.config, max_questions=current_top_level + _REPLENISH_INCREMENT
-        )
-        new_plan = build_coverage_plan(profile, replenished_config)
-        if len(new_plan) <= current_top_level:
+        new_plan = compute_replenished_plan(profile, self.config, current_top_level)
+        if new_plan is None:
             return False
         self.store.save_plan(session_id, new_plan)
         return True
@@ -600,72 +572,15 @@ class Orchestrator:
     def _rank_pending_items(
         self, session_id: str, pending: list[QARecordRow]
     ) -> list[QARecordRow]:
-        """FR15 ("track asked topics/files to avoid duplicate questioning
-        and to enforce category coverage across the session") + design.md
-        §7's category-breadth preference, both as pure *ordering*, never
-        a permanent exclusion.
-
-        Two earlier versions of this method each made a one-time,
-        pessimistic decision and permanently dropped whatever didn't fit
-        it (first duplicate-target items outright, then non-first-per-
-        category items when a time-budget estimate looked too tight
-        compared to the *starting* time remaining -- which for any short
-        session fired on the very first selection, before anything was
-        even asked, locking in a fixed question count regardless of how
-        fast the person actually answered or how much real time was left
-        afterward). Both were found the same way: a real session against
-        github.com/Dhruv0306/throttle4j stopped identically at a fixed
-        question count no matter how much time was given -- see
-        docs/system-design/11-phase-6-session-loop-design.md §11.9.
-
-        The fix, both times: prefer, never exclude. Pending items are
-        ranked -- follow-ups first, then items whose target hasn't been
-        asked about yet, then items whose category hasn't been asked
-        about yet -- and the loop's own natural exit conditions (timer
-        actually expired, or truly no pending items left) are what end
-        the session, not a pre-computed worst-case guess made once at
-        the start. Returns the *full* ranked list (not just the top
-        pick) so `_run_live_session` can try several candidates for the
-        semantic-duplicate check without a second query.
-
-        Phase 13 (docs/system-design/18-phase-13-architecture-tier-
-        questions-design.md §18.4) adds `phase` as the *primary* sort
-        key: `architecture` items are phase 0, everything else is phase
-        1, so every pending architecture question clears before any
-        other category is asked. An earlier version of this design tried
-        to get the same effect purely from `build_coverage_plan()`'s
-        insertion order, emitting every architecture item first --
-        that doesn't survive this function's own duplicate-target/
-        repeat-category tie-break: the moment the first architecture
-        question is asked, `architecture` becomes an "already asked"
-        category, and every *other* never-touched category (still
-        reading (False, False)) jumps ahead of the second architecture
-        item. `phase` has to live in the ranking function itself, not the
-        plan's build order.
-
-        `phase` is re-derived from `item.category` on every call, not
-        cached or decided once -- so a plan replenishment (§18.5) that
-        adds fresh architecture items reopens phase 0 automatically, with
-        no special-casing needed here. This is intentional: phase
-        ordering is a live property of what's currently pending, not a
-        one-time decision baked in at session start.
-        """
-        followups = [p for p in pending if p.is_followup_of is not None]
-        non_followups = [p for p in pending if p.is_followup_of is None]
-
+        """Computes the two already-asked sets from real `qa_records`
+        (the store I/O `planning.rank_pending_items()` deliberately has
+        none of) and delegates the actual ordering decision to it -- see
+        docs/system-design/27-phase-22-container-resumption-and-planning-
+        split-design.md §27.3/§27.4 and that function's own docstring for
+        the full rationale (FR15, design.md §7, Phase 13 §18.4)."""
         already_asked_targets = self._already_asked_targets(session_id)
         already_asked_categories = self._already_asked_categories(session_id)
-
-        def _phase(category: str) -> int:
-            return 0 if category == "architecture" else 1
-
-        def _priority(item: QARecordRow) -> tuple[int, bool, bool]:
-            target = item.target_file or item.target_module
-            is_duplicate_target = bool(target) and target in already_asked_targets
-            is_repeat_category = item.category in already_asked_categories
-            return (_phase(item.category), is_duplicate_target, is_repeat_category)
-
-        return followups + sorted(non_followups, key=_priority)
+        return rank_pending_items(pending, already_asked_targets, already_asked_categories)
 
     def _embed_text(self, text: str) -> list[float]:
         return self.embedding_client.embed([text])[0]

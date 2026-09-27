@@ -762,13 +762,21 @@ Each phase is independently testable and produces a working, demoable slice.
 - **Exit criteria:**
   - Part A's three items above, confirmed on real Docker on real Windows
     hardware, the same standard every prior phase in this series held to.
-  - Part B: full test suite (651 tests) passes unchanged; `ruff`/
-    `mypy --strict` clean against the new `viva/planning.py`; a plain
-    `viva start` and a plain `viva serve` (no `--host` flag — loopback,
-    no token, kept separate from Part A's container work which correctly
-    needs `--host 0.0.0.0`) both confirmed live to show identical
-    question-ordering/replenishment behavior to a pre-split run against
-    the same repo.
+    **Still open** — this authoring environment has no Docker, same
+    limitation Phase 21 itself already noted.
+  - Part B: full test suite (665 tests, up from 651 — 9 new direct
+    `tests/test_planning.py` cases plus a small handful of existing
+    `test_orchestrator.py` tests' `build_coverage_plan` monkeypatches
+    needing to also target `viva.planning`'s separate import of it)
+    confirmed passing unchanged; `ruff`/`mypy --strict` clean against the
+    new `viva/planning.py`. A plain `viva serve` (no `--host` flag —
+    loopback, no token) confirmed live against a minimal `.env`, booting
+    and serving `GET /` successfully — confirms the split didn't break
+    the web import chain. **Still open:** a real `viva start` end-to-end
+    run against a real repo and real Ollama — this authoring environment
+    has neither, so this needs the same real-hardware validation as
+    every other phase (docs/ways-of-working equivalent: "Dhruv runs
+    patches on real Windows hardware").
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
