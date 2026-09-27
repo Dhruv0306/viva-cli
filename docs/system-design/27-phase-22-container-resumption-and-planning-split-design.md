@@ -196,3 +196,51 @@ functions' bodies plus their docstrings) to a new ~60-line
   replenishment behavior to a pre-split run against the same repo —
   behavior-preserving confirmed in practice, not just by the diff being
   small.
+
+## 27.7 Real-world finding: token still required after Part A validation
+
+Confirmed working on real Docker (§27.1's exit criteria), but Dhruv's
+first real run surfaced a follow-up question this doc hadn't spelled
+out: why does `docker compose up` still print an access token, when
+loopback-only `viva serve` normally doesn't?
+
+**Root cause, confirmed directly against `web/app.py`/`cli.py`, not
+assumed:** the token requirement (§21.3/`_requires_auth()`) is an
+explicit allowlist keyed on the literal `--host` string `viva serve`
+was started with (`{"127.0.0.1", "localhost", "::1"}` = no token,
+anything else = token) -- deliberately "fail-open-to-requiring-auth"
+per its own comment, not a live reachability check. The Dockerfile's
+`CMD` passes `--host 0.0.0.0`, and that's not optional: a process bound
+only to `127.0.0.1` *inside* a container listens on that container's
+own network namespace's loopback, which Docker's port-mapping/NAT
+reaches via the container's external interface, not its loopback -- so
+binding `127.0.0.1` inside the container would make `viva serve`
+completely unreachable from the host, not just tokenless. This is a
+hard constraint of how Docker networking works, not a viva-cli
+decision, and isn't something a code change here can route around
+without breaking the container's actual reachability.
+
+**What Part A ships instead:** `docker-compose.yml`'s `ports` mapping
+changed from `"8000:8000"` to `"127.0.0.1:8000:8000"` -- this is a
+host-side restriction (only your own machine can reach the published
+port at all, not other machines on your network), which is the real
+security property `_requires_auth()`'s non-loopback check was written
+to protect (§19.4.1: "that's no longer just this machine talking to
+itself"). It does not remove the token, because `_requires_auth()` has
+no way to see that host-side restriction -- it only ever sees the
+`--host` string passed inside the container, which is still `0.0.0.0`
+either way.
+
+**Not done, and not done silently:** actually removing the token for
+this case would mean either (a) trusting the container's `0.0.0.0`
+bind as "safe" whenever some other signal suggests loopback-only
+publishing -- but nothing inside the container's network namespace can
+see how `docker-compose.yml` published its own port, so this isn't
+implementable without inventing a new signal (e.g. an env var the
+person sets themselves, which is really just moving the trust decision
+onto the person, not eliminating it) -- or (b) weakening
+`_requires_auth()`'s check itself. Both are real changes to a
+deliberately-designed security boundary (§19.4.1, §21.3), not a bug
+fix, and this doc's own "agree before code" convention means that's a
+decision for Dhruv to make explicitly, not something to default into
+while restoring already-decided Phase 21 work.

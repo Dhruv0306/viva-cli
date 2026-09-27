@@ -71,9 +71,19 @@ cp .env.example .env   # set LLM_MODEL at minimum
 docker compose up --build
 ```
 
-Open `http://localhost:8000`. The access token (binding `0.0.0.0` inside
-the container, same as any non-loopback `viva serve`, always requires
-one) prints to the container's own logs, not your terminal directly:
+Open `http://localhost:8000`. `docker-compose.yml` publishes port 8000
+bound to your host's own loopback interface only
+(`127.0.0.1:8000:8000`) -- unreachable from other machines on your
+network, same as `viva serve`'s own default posture. The access token
+still appears, though: the process *inside* the container binds
+`0.0.0.0` (required for Docker's port mapping to reach it at all -- a
+process bound to `127.0.0.1` inside a container is unreachable from
+outside it, docker-compose's host-side loopback restriction notwithstanding),
+and the token requirement is keyed off that literal `--host` value, not
+actual network reachability (docs/system-design/21-phase-15-serve-
+authentication-design.md, docs/system-design/27-phase-22-container-
+resumption-and-planning-split-design.md §27.7). It prints to the
+container's own logs, not your terminal directly:
 
 ```bash
 docker compose logs viva
