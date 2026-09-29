@@ -244,3 +244,72 @@ deliberately-designed security boundary (§19.4.1, §21.3), not a bug
 fix, and this doc's own "agree before code" convention means that's a
 decision for Dhruv to make explicitly, not something to default into
 while restoring already-decided Phase 21 work.
+
+## 27.8 Real-world finding: tree-sitter query files silently dropped from the installed wheel
+
+Surfaced by the same real Docker run as §27.7, but a different and more
+serious bug: `viva.analyzer.extract`'s AST extraction failed for
+`calculator.java` with `FileNotFoundError: .../viva/analyzer/queries/
+java.scm`, falling back to the line-window path (`extract.py`'s own
+try/except catches this and degrades gracefully -- no crash, no
+visible error to the person, just a silently worse question for that
+file).
+
+**Root cause:** the exact same bug §26.9's `viva.web` static-file fix
+already exists as documented history for (`pyproject.toml`'s
+`[tool.setuptools.package-data]`, its own comment explaining the same
+mechanism) -- setuptools drops any non-`.py` file from a built wheel
+unless explicitly listed in `package-data`, and `src/viva/analyzer/
+queries/*.scm` was never added when that section was first written.
+Every dev/CI install so far has used `pip install -e .` (editable),
+which reads straight from the source tree and never exercises this
+path -- so this was invisible until the Dockerfile's `pip install
+--no-cache-dir .` (a real, non-editable install) actually ran, same as
+how the static-file bug was originally found. Confirmed by building a
+clean venv and installing non-editably: only `viva.web`'s `static/*`
+existed as a package-data rule; a fresh install's `queries/` directory
+was checked and found to contain all nine `.scm` files as loose
+uninstalled source, not present in `site-packages` at all -- not just
+`java.scm`, every language.
+
+**Fix:** added `"viva.analyzer" = ["queries/*.scm"]` alongside the
+existing `viva.web` rule. Verified the same way the original bug was
+verified -- a clean venv, `pip install --no-cache-dir .` (non-editable,
+matching the Dockerfile exactly), then confirming all 11 `.scm` files
+present in the installed `site-packages` tree. Full test suite (665)
+still passes unchanged -- this is a packaging manifest fix, no source
+code touched.
+
+## 27.9 Not a viva-cli bug: "Failed to connect to Ollama" mid-session
+
+The screenshot from the same run shows a session stuck at "Analyzing
+codebase..." with `Failed to connect to Ollama. Please check that
+Ollama is downloaded, running and accessible.` -- this exact string is
+the `ollama` Python client's own hardcoded `CONNECTION_ERROR_MESSAGE`
+(confirmed by reading the installed package directly, not guessed),
+raised whenever it can't open a connection to the configured
+`OLLAMA_HOST` at all. It is not a viva-cli code path -- nothing in this
+project constructs that string.
+
+**Most likely cause, not yet confirmed:** Ollama on Windows/most
+platforms binds to `127.0.0.1:11434` on the *host* by default. Docker
+Desktop's `host.docker.internal` correctly resolves to the host's IP
+from inside the container (that part of `docker-compose.yml`'s
+`extra_hosts`/default `OLLAMA_HOST` is working -- the container
+reached the host machine), but if Ollama itself is only listening on
+the host's loopback interface, the host's own network stack refuses a
+connection arriving from the container's bridge network (a different
+source address than `127.0.0.1`) even though the hostname resolved
+fine. This is a common Docker+Ollama interaction, not something
+`docker-compose.yml`'s networking config can fix from the container
+side -- it needs Ollama itself, on the host, told to listen more
+broadly (Windows: `setx OLLAMA_HOST "0.0.0.0"` then restart the Ollama
+service/app; confirm with `netstat -ano | findstr 11434` showing
+`0.0.0.0:11434` rather than `127.0.0.1:11434`).
+
+**Not fixed here** -- there's nothing in this repository to fix if
+that's the cause; worth confirming before treating it as anything
+else. If Ollama was, in fact, listening on `0.0.0.0` and this still
+failed, that would point at something in `docker-compose.yml` instead
+and is worth a fresh report with `docker compose logs` alongside
+`netstat` output from the host at the time it failed.

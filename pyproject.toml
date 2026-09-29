@@ -65,6 +65,18 @@ where = ["src"]
 # package for real, e.g. from a GitHub release or PyPI. Verified fixed by
 # building a wheel and confirming static/ is present after a clean install.
 "viva.web" = ["static/*"]
+# Same bug, same root cause, found later via Docker (docs/system-design/
+# 27-phase-22-container-resumption-and-planning-split-design.md §27.8):
+# the Dockerfile's `pip install --no-cache-dir .` is the first *real*
+# (non-editable) install this package had ever gone through outside a
+# release build, and it surfaced that every language's tree-sitter query
+# file under src/viva/analyzer/queries/*.scm was silently dropped too --
+# not just the one exercised in that session (java.scm), all nine.
+# AST extraction fails closed to the line-window fallback (analyzer/
+# extract.py's own try/except), so this degrades question quality
+# silently rather than crashing -- exactly the kind of bug that's easy
+# to miss without a real installed-wheel test.
+"viva.analyzer" = ["queries/*.scm"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
