@@ -89,12 +89,18 @@ container's own logs, not your terminal directly:
 docker compose logs viva
 ```
 
-**`OLLAMA_HOST`:** defaults to `http://host.docker.internal:11434`,
-which works out of the box on Docker Desktop (Mac/Windows) and on native
-Linux (`docker-compose.yml`'s `extra_hosts` makes that name resolve
-there too, where it otherwise wouldn't). If your Ollama listens
-somewhere else, set `OLLAMA_HOST` in `.env` before running
-`docker compose up`.
+**Ollama address:** the container reaches your Ollama at
+`http://host.docker.internal:11434` by default, which works out of the
+box on Docker Desktop (Mac/Windows) and on native Linux
+(`docker-compose.yml`'s `extra_hosts` makes that name resolve there too,
+where it otherwise wouldn't). The `OLLAMA_HOST` in your `.env` is
+ignored by Docker on purpose -- that value (`http://localhost:11434` in
+`.env.example`) is for the native install, and inside a container
+`localhost` is the container itself. If your Ollama listens somewhere
+else, set `DOCKER_OLLAMA_HOST` in `.env` before running
+`docker compose up`. Your host's Ollama must accept connections from the
+Docker network, not only from `127.0.0.1` (Ollama's own `OLLAMA_HOST`
+setting on the host, e.g. `0.0.0.0`).
 
 **First analysis of a language this container hasn't seen yet** takes a
 moment longer than usual -- `tree-sitter-language-pack` downloads that

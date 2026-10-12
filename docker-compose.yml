@@ -12,7 +12,13 @@ services:
     environment:
       - LLM_MODEL=${LLM_MODEL}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      # Deliberately NOT ${OLLAMA_HOST:-...}: docker compose reads this
+      # project's .env (and your shell) for ${...} substitution, and the
+      # .env you copied from .env.example for native use sets OLLAMA_HOST
+      # to http://localhost:11434 -- which, inside the container, is the
+      # container itself, not your Ollama. A Docker-specific name keeps
+      # the native setting from leaking in. §27.10.
+      - OLLAMA_HOST=${DOCKER_OLLAMA_HOST:-http://host.docker.internal:11434}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - MAX_CONCURRENT_SESSIONS=${MAX_CONCURRENT_SESSIONS:-5}
     extra_hosts:

@@ -313,3 +313,40 @@ else. If Ollama was, in fact, listening on `0.0.0.0` and this still
 failed, that would point at something in `docker-compose.yml` instead
 and is worth a fresh report with `docker compose logs` alongside
 `netstat` output from the host at the time it failed.
+
+## 27.10 Correction to §27.9: the real cause was `.env` interpolation
+
+Dhruv's next run disproved §27.9's "most likely cause". `netstat` showed
+Ollama already listening on `0.0.0.0:11434` and `[::]:11434` before any
+change, and the session still failed with the same client error, so the
+host-side bind address was a red herring. (A first `netstat` in that
+transcript printed nothing at all, meaning Ollama was not running at that
+moment, so some failures in that sequence may also just be Ollama being
+down; the cause below is independent of that and reproduces whenever
+Ollama is up.)
+
+**Root cause, found by reading the restored `docker-compose.yml` and
+`.env.example` together:** the compose file passed
+`OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}`. The
+`:-` default only applies when `OLLAMA_HOST` is *unset*, but `docker
+compose` reads the project's `.env` for `${...}` substitution, and
+`.env.example` ships `OLLAMA_HOST=http://localhost:11434` for the native
+install. Anyone who copied it to `.env` (required anyway, since
+`LLM_MODEL=${LLM_MODEL}` has no default) handed the container
+`localhost`, which inside a container is the container itself. The
+supporting evidence: the container started without a "LLM_MODEL is not
+set" error, so compose demonstrably was reading `.env`. The README's own
+advice ("set `OLLAMA_HOST` in `.env`") pointed the same wrong way.
+
+**Why this was missed:** §26.9's earlier validation ran without a copied
+`.env` carrying `OLLAMA_HOST`, so the default always won. It only bites
+the exact setup the README tells people to use.
+
+**Fix:** compose now reads a Docker-specific name,
+`${DOCKER_OLLAMA_HOST:-http://host.docker.internal:11434}`, so the
+native `OLLAMA_HOST` can never leak into the container. This also
+protects against a shell-level `OLLAMA_HOST=0.0.0.0` (the value Ollama's
+own docs recommend setting on the host), which would otherwise have been
+substituted as the client URL. `.env.example` and the README now say so.
+Not verified in this authoring environment (no Docker); confirm with
+`docker compose config`, which prints the resolved value.
