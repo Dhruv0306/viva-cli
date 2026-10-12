@@ -727,8 +727,16 @@ Each phase is independently testable and produces a working, demoable slice.
 - **Resumed, Phase 22:** the five removed artifacts and the README
   section are restored unmodified from the pre-shelving commit (not
   rebuilt) — see Phase 22's own entry below. The three exit criteria
-  still open above are exactly what Phase 22's Part A needs to confirm
-  on real Docker before this phase's `**Verified**` line can be written.
+  still open above are exactly what Phase 22's Part A needed to confirm
+  on real Docker.
+- **Verified, 2026-10-12 (through Phase 22 Part A):** all three
+  criteria confirmed on real Docker on Windows against real Ollama: full
+  sessions through the containerized path, session data surviving
+  container recreation, and the grammar cache persisting across a
+  restart. Along the way this surfaced and fixed three real bugs
+  (published port scope, tree-sitter query files missing from the wheel,
+  the native `.env` `OLLAMA_HOST` leaking into the container); see
+  `docs/system-design/27-...-design.md` §27.7, §27.8, §27.10, §27.11.
 
 ## Phase 22 — Container Resumption & Planning-Module Split
 - Design doc: `docs/system-design/27-phase-22-container-resumption-and-
@@ -770,10 +778,12 @@ Each phase is independently testable and produces a working, demoable slice.
     Confirmed on real Docker on Windows (§27.11): two full sessions
     through the containerized path against real Ollama (start, answers,
     HTML and Markdown report); session data surviving container
-    recreation via the `data/` bind mount. **Still open:** the grammar
-    cache persisting across a restart, which logs cannot show (the
-    download is silent and is one ~22 MB bundle, not per language), so it
-    is checked by listing the named volume; command in §27.11.
+    recreation via the `data/` bind mount; the grammar cache persisting
+    across a restart, checked by listing the named volume because the
+    download is silent and is one ~22 MB bundle, not per language: the
+    bundle and `libtree_sitter_java.so` kept their pre-restart
+    timestamps, and `libtree_sitter_c.so` was added afterwards from the
+    cached bundle with no second download. **Part A is complete.**
   - Part B: full test suite (665 tests, up from 651 — 9 new direct
     `tests/test_planning.py` cases plus a small handful of existing
     `test_orchestrator.py` tests' `build_coverage_plan` monkeypatches

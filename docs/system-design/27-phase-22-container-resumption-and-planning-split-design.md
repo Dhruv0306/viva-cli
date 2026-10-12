@@ -393,15 +393,20 @@ download or its absence; and running Java, restarting, then running C
 (what the first validation did) does not isolate persistence. The README
 now says this.
 
-**Still open, checked by listing the volume instead of reading logs:**
+**Grammar cache persistence, confirmed by listing the volume instead of
+reading logs:**
 
     docker run --rm --entrypoint ls -v viva-cli_tree_sitter_cache:/cache viva-cli-viva:latest -laR /cache
 
-Persistence is confirmed if `v1.21.3/bundles/` holds one `.tar.zst`
-and `libs/` holds `libtree_sitter_java.so` with timestamps earlier than
-the restart, alongside `libtree_sitter_c.so` with a later one. An empty
-listing would mean the volume mount path does not match where the
-package caches, and would be a real bug.
+The listing showed one bundle (`bundles/linux-x86_64-...tar.zst`,
+22729499 bytes) and `libs/libtree_sitter_java.so` both stamped 06:35
+UTC, the minute the Java session started; and
+`libs/libtree_sitter_c.so` stamped 07:02 UTC, when the C session ran
+after the container was recreated at about 06:54 UTC. So the bundle and
+the Java library survived the restart, and C was extracted from the
+cached bundle with no second download (still a single bundle file, still
+06:35). The mount path matches where the package caches. This closes
+Part A's third exit criterion.
 
 **Unrelated observations, not Phase 22 work:** the Calculator repo
 vendors a `JRE/` directory, so ingest took about 7 minutes before
