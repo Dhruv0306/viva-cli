@@ -102,12 +102,14 @@ else, set `DOCKER_OLLAMA_HOST` in `.env` before running
 Docker network, not only from `127.0.0.1` (Ollama's own `OLLAMA_HOST`
 setting on the host, e.g. `0.0.0.0`).
 
-**First analysis of a language this container hasn't seen yet** takes a
-moment longer than usual -- `tree-sitter-language-pack` downloads that
-language's grammar on first use (needs the container to have outbound
-network access, same as the native install already needs), then caches
-it in a Docker-managed volume that survives `docker compose down`/`up`,
-so it only happens once per language, not once per container restart.
+**The first analysis in a fresh container** takes a moment longer than
+usual -- `tree-sitter-language-pack` downloads its grammar bundle (about
+22 MB, once, for all languages; nothing is logged) the first time any
+language is analyzed, needing outbound network access from the container,
+same as the native install. It is cached in a Docker-managed volume that
+survives `docker compose down`/`up`, so it happens once per volume, not
+once per container restart. `docker compose down -v` deletes that volume
+and the next analysis downloads the bundle again.
 
 Session data lives in `./data` on your host (bind-mounted, same
 `SESSION_DB_PATH`/`VECTOR_DB_PATH` convention as the native install), so

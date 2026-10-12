@@ -350,3 +350,64 @@ own docs recommend setting on the host), which would otherwise have been
 substituted as the client URL. `.env.example` and the README now say so.
 Not verified in this authoring environment (no Docker); confirm with
 `docker compose config`, which prints the resolved value.
+
+## 27.11 Validation on real Docker (Windows), 2026-10-12
+
+**Confirmed, with the evidence:**
+
+- §27.8 fix: a full Java session logged no `java.scm` warning (the
+  earlier run's log had the traceback).
+- §27.10 fix: with a freshly copied `.env.example` (which sets
+  `OLLAMA_HOST=http://localhost:11434`, the exact condition that caused
+  the bug), `docker compose config` resolved the container's
+  `OLLAMA_HOST` to `http://host.docker.internal:11434`, and sessions
+  reached Ollama and completed.
+- Exit criterion 1: two full sessions through the containerized path on
+  real Ollama, each with HTML report view and token-authenticated
+  Markdown download: `Calculator_Java` (4 of 4 answered) and
+  `viva-cli-test-c` (2 answered, status COMPLETE; 5 planned questions
+  not reached because the 2-minute session ended, which the report
+  states).
+- Exit criterion 2: after the container was recreated, the Calculator
+  session was still listed and its report still served (200), so the
+  `data/` bind mount persists. The restart's output also listed no
+  "Volume ... Created" line for `tree_sitter_cache`, so that named
+  volume survived too.
+- Part B in a real run: both sessions finished with more questions
+  planned than the initial ceiling (2 to 4, and 1 to 7; 7 is
+  1 + `_REPLENISH_INCREMENT` of 6), consistent with
+  `compute_replenished_plan()` having run. Follow-ups could also add
+  questions, so this is consistent with, not proof of, replenishment.
+  No pre-split comparison run exists. The CLI `viva start` path was not
+  exercised.
+
+**Correction to §26.1 and the old README wording:** I checked
+`tree-sitter-language-pack` 1.21.3 (the version the image installed) in
+the authoring environment with an empty `HOME`. It does not download per
+language. The first use of any language silently downloads one ~22 MB
+bundle into `~/.cache/tree-sitter-language-pack/v1.21.3/bundles/`, then
+extracts that language's library into `.../libs/` on demand; other
+languages later extract from the cached bundle with no download. Two
+consequences: nothing is logged, so container logs can never show a
+download or its absence; and running Java, restarting, then running C
+(what the first validation did) does not isolate persistence. The README
+now says this.
+
+**Still open, checked by listing the volume instead of reading logs:**
+
+    docker run --rm --entrypoint ls -v viva-cli_tree_sitter_cache:/cache viva-cli-viva:latest -laR /cache
+
+Persistence is confirmed if `v1.21.3/bundles/` holds one `.tar.zst`
+and `libs/` holds `libtree_sitter_java.so` with timestamps earlier than
+the restart, alongside `libtree_sitter_c.so` with a later one. An empty
+listing would mean the volume mount path does not match where the
+package caches, and would be a real bug.
+
+**Unrelated observations, not Phase 22 work:** the Calculator repo
+vendors a `JRE/` directory, so ingest took about 7 minutes before
+planning and all four questions were about `JRE/lib/security/
+default.policy` rather than the calculator code; and several entries in
+that report's Weaknesses list read as plain facts ("The grant includes
+...") rather than critiques. Both are candidates for the backlog
+(vendored-directory filtering, evaluator output quality).
+

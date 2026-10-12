@@ -767,8 +767,13 @@ Each phase is independently testable and produces a working, demoable slice.
 - **Exit criteria:**
   - Part A's three items above, confirmed on real Docker on real Windows
     hardware, the same standard every prior phase in this series held to.
-    **Still open** — this authoring environment has no Docker, same
-    limitation Phase 21 itself already noted.
+    Confirmed on real Docker on Windows (§27.11): two full sessions
+    through the containerized path against real Ollama (start, answers,
+    HTML and Markdown report); session data surviving container
+    recreation via the `data/` bind mount. **Still open:** the grammar
+    cache persisting across a restart, which logs cannot show (the
+    download is silent and is one ~22 MB bundle, not per language), so it
+    is checked by listing the named volume; command in §27.11.
   - Part B: full test suite (665 tests, up from 651 — 9 new direct
     `tests/test_planning.py` cases plus a small handful of existing
     `test_orchestrator.py` tests' `build_coverage_plan` monkeypatches
@@ -777,11 +782,13 @@ Each phase is independently testable and produces a working, demoable slice.
     new `viva/planning.py`. A plain `viva serve` (no `--host` flag —
     loopback, no token) confirmed live against a minimal `.env`, booting
     and serving `GET /` successfully — confirms the split didn't break
-    the web import chain. **Still open:** a real `viva start` end-to-end
-    run against a real repo and real Ollama — this authoring environment
-    has neither, so this needs the same real-hardware validation as
-    every other phase (docs/ways-of-working equivalent: "Dhruv runs
-    patches on real Windows hardware").
+    the web import chain. Two real sessions through the Docker web path
+    on real Ollama then ran to completion on the same `Orchestrator`,
+    with more questions planned than the initial ceiling (§27.11),
+    consistent with the replenishment path having run. No pre-split
+    comparison run was done, so "identical behavior" is not claimed.
+    **Still open:** the CLI `viva start` entry point itself against a
+    real repo.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
