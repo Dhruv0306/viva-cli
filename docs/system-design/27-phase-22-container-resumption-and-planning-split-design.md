@@ -497,3 +497,7 @@ the old code. Full suite: 683 passed, 1 skipped; `ruff` and `mypy
 --strict` clean. The old all-pass test is kept as is; it still passes
 because both sides are now normalized.
 
+**Confirmed on real hardware (2026-10-13):** after the fix, `viva doctor`
+printed all four checks green, including `EMBEDDING_MODEL
+'nomic-embed-text' is pulled`.
+

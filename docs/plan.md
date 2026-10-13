@@ -810,6 +810,12 @@ Each phase is independently testable and produces a working, demoable slice.
   criterion as first written asked for the latter and no pre-split run
   was made. Replenishment is inferred from the Docker sessions' question
   counts, not observed directly, and the CLI run did not exercise it.
+  Validation also surfaced and fixed five real bugs, each logged in the
+  Phase 22 design doc: published port scope (§27.7), query files missing
+  from the wheel (§27.8), native `.env` `OLLAMA_HOST` leaking into the
+  container (§27.10), `OLLAMA_HOST=0.0.0.0` breaking the native CLI on
+  Windows (§27.12) and `viva doctor` rejecting bare model names (§27.13);
+  the last two were confirmed fixed on real hardware.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against

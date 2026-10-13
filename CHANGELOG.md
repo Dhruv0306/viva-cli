@@ -9,6 +9,38 @@ for general use."
 
 ## [Unreleased]
 
+Phase 22: the shelved Phase 21 container setup is resumed and validated on
+real Docker, `orchestrator.py`'s planning logic is split out, and several
+bugs found during that validation are fixed. See
+[`docs/system-design/27-phase-22-container-resumption-and-planning-split-design.md`](docs/system-design/27-phase-22-container-resumption-and-planning-split-design.md).
+
+### Added
+
+- Docker support (`Dockerfile`, `docker-compose.yml`): `viva serve` in a
+  container, published only on the host's loopback (`127.0.0.1:8000`),
+  reaching a host Ollama at `host.docker.internal` by default. Set
+  `DOCKER_OLLAMA_HOST` in `.env` to point elsewhere; the native
+  `OLLAMA_HOST` is deliberately not passed to the container.
+
+### Changed
+
+- The question ordering and plan-replenishment logic moved from
+  `Orchestrator` into a new `viva/planning.py` as pure functions. No
+  behavior change.
+
+### Fixed
+
+- Tree-sitter query files (`viva/analyzer/queries/*.scm`) were missing from
+  built wheels, so any non-editable install silently fell back to
+  line-window extraction for every language. Editable installs were
+  unaffected, which is why it went unnoticed.
+- `OLLAMA_HOST=0.0.0.0` (what Ollama's docs say to set for the server) made
+  viva fail to connect on Windows. A bind-all host is now treated as
+  `localhost` when used as the client address.
+- `viva doctor` reported a bare model name such as the default
+  `EMBEDDING_MODEL=nomic-embed-text` as not pulled, because Ollama lists it
+  as `nomic-embed-text:latest`. Bare names now match `:latest`.
+
 ## [0.4.0] - 2026-09-26
 
 Phases 18-20 in full. Phase 21 (containerized setup) was scoped, mostly
