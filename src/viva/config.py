@@ -21,6 +21,7 @@ Two fields are deliberately *not* strictly validated here:
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -28,6 +29,32 @@ from dotenv import load_dotenv
 
 class ConfigError(RuntimeError):
     """Raised when required configuration is missing or invalid."""
+
+
+# Ollama's own docs say to set OLLAMA_HOST=0.0.0.0 on the machine running
+# the *server*, where it means "listen on every interface". viva reads the
+# same variable name as the *client* URL, and connecting to 0.0.0.0 works on
+# Linux/macOS (treated as localhost) but fails on Windows. A bind-all host
+# is therefore rewritten to localhost; anything else is left exactly as
+# given. See docs/system-design/27-phase-22-container-resumption-and-
+# planning-split-design.md §27.12.
+_BIND_ALL_HOST = re.compile(
+    r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)?"
+    r"(?P<host>0\.0\.0\.0|\[::\])"
+    r"(?P<rest>(?::\d+)?(?:/.*)?)$"
+)
+
+
+def _normalize_ollama_host(value: str) -> str:
+    """Return `value` with a bind-all host (0.0.0.0, [::], or a bare ::)
+    replaced by localhost, keeping any scheme, port and path."""
+    value = value.strip()
+    if value == "::":
+        return "localhost"
+    match = _BIND_ALL_HOST.match(value)
+    if match is None:
+        return value
+    return f"{match.group('scheme') or ''}localhost{match.group('rest')}"
 
 
 def _get_positive_int(name: str, default: str) -> int:
@@ -241,7 +268,9 @@ class Config:
             )
 
         embedding_model = os.getenv("EMBEDDING_MODEL", "nomic-embed-text").strip()
-        ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434").strip()
+        ollama_host = _normalize_ollama_host(
+            os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        )
 
         temperature_raw = os.getenv("TEMPERATURE", "0.3")
         try:

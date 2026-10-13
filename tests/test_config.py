@@ -405,3 +405,46 @@ def test_voice_silence_timeout_accepts_a_custom_value(monkeypatch):
     monkeypatch.setenv("VOICE_SILENCE_TIMEOUT_SECONDS", "4")
     config = Config.load(env_file=None)
     assert config.voice_silence_timeout_seconds == 4
+
+
+# docs/system-design/27-phase-22-container-resumption-and-planning-split-
+# design.md §27.12: OLLAMA_HOST is Ollama's *server bind* setting (docs say
+# to set it to 0.0.0.0) but viva reads the same name as the *client* URL,
+# and Windows cannot connect to 0.0.0.0. A bind-all host is rewritten to
+# localhost; every other value must pass through untouched.
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("0.0.0.0", "localhost"),
+        ("0.0.0.0:11434", "localhost:11434"),
+        ("http://0.0.0.0:11434", "http://localhost:11434"),
+        ("https://0.0.0.0:8443/api", "https://localhost:8443/api"),
+        ("[::]:11434", "localhost:11434"),
+        ("http://[::]:11434", "http://localhost:11434"),
+        ("::", "localhost"),
+        ("  0.0.0.0  ", "localhost"),
+    ],
+)
+def test_bind_all_ollama_host_becomes_localhost(monkeypatch, raw, expected):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("OLLAMA_HOST", raw)
+    assert Config.load(env_file=None).ollama_host == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "localhost",
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+        "http://192.168.1.5:11434",
+        "http://host.docker.internal:11434",
+        "http://0.0.0.0.example.com:11434",
+        "myhost:11434",
+    ],
+)
+def test_other_ollama_hosts_pass_through_unchanged(monkeypatch, raw):
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("OLLAMA_HOST", raw)
+    assert Config.load(env_file=None).ollama_host == raw

@@ -433,16 +433,24 @@ treats as localhost (so the container never hit this) but Windows cannot
 connect to. Setting `$env:OLLAMA_HOST = "localhost"` in that terminal
 made the same command run to COMPLETE.
 
-**Not changed in code yet.** Ollama's own documentation tells people to
-set `OLLAMA_HOST=0.0.0.0` on the host to accept network connections, so
-any native Windows user who follows it will hit this. The candidate fix
-is to treat `0.0.0.0` and `::` as `localhost` when `Config` reads
-`OLLAMA_HOST` as a client URL, with a regression test confirmed failing
-first. It touches how a setting is read, so it waits for an explicit
-decision rather than being slipped into a verification patch.
+**Fix:** `config.py` now passes `OLLAMA_HOST` through
+`_normalize_ollama_host()`, which rewrites a bind-all host (`0.0.0.0`,
+`[::]`, or a bare `::`) to `localhost`, keeping any scheme, port and path
+(`http://0.0.0.0:11434` becomes `http://localhost:11434`). Everything
+else is left exactly as given, including `localhost`, `127.0.0.1`, LAN
+addresses and `host.docker.internal`, so the Docker path is unaffected.
+The rewrite lives where the value is read, so every consumer (CLI
+commands, orchestrator, `viva doctor`, web server) is covered, and it
+adds no `Config` field, so no test fixture elsewhere needed changing.
+Ollama's own server setting is untouched.
 
-**Workaround today:** in the affected terminal, set
-`$env:OLLAMA_HOST = "http://localhost:11434"`, or remove a stray
-`OLLAMA_HOST=0.0.0.0` from the user environment if the Ollama server
-does not depend on it.
+**Tests:** 15 new parameterized cases in `tests/test_config.py`: 8
+bind-all forms that must become `localhost`, and 7 values that must pass
+through unchanged, including `http://0.0.0.0.example.com:11434` (a
+hostname that merely starts with `0.0.0.0`). The 8 rewrite cases were
+confirmed failing against the old code before the fix. Full suite: 680
+passed, 1 skipped; `ruff` and `mypy --strict` clean.
 
+**Still to confirm on real hardware:** with `OLLAMA_HOST=0.0.0.0` left in
+the terminal (no workaround), `viva doctor` should report Ollama
+reachable and `viva start` should run.
