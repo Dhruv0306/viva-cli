@@ -416,3 +416,33 @@ that report's Weaknesses list read as plain facts ("The grant includes
 ...") rather than critiques. Both are candidates for the backlog
 (vendored-directory filtering, evaluator output quality).
 
+## 27.12 Real-world finding: `OLLAMA_HOST=0.0.0.0` breaks the native CLI on Windows
+
+The Part B `viva start` run failed twice at "Analyzing codebase..." with
+the `ollama` client's `Failed to connect to Ollama` message, even though
+`ollama list` worked and Docker sessions had been working.
+
+**Root cause, confirmed by the workaround:** an earlier `setx
+OLLAMA_HOST "0.0.0.0"` (made while chasing §27.9) left that value in new
+terminals (`echo $env:OLLAMA_HOST` printed `0.0.0.0`). `OLLAMA_HOST` is
+overloaded: for the Ollama server it is a bind address, but
+`config.py` also reads it as the client URL, and a real environment
+variable beats `.env` (`load_dotenv` does not override). The `ollama`
+Python client turns `0.0.0.0` into `http://0.0.0.0:11434`, which Linux
+treats as localhost (so the container never hit this) but Windows cannot
+connect to. Setting `$env:OLLAMA_HOST = "localhost"` in that terminal
+made the same command run to COMPLETE.
+
+**Not changed in code yet.** Ollama's own documentation tells people to
+set `OLLAMA_HOST=0.0.0.0` on the host to accept network connections, so
+any native Windows user who follows it will hit this. The candidate fix
+is to treat `0.0.0.0` and `::` as `localhost` when `Config` reads
+`OLLAMA_HOST` as a client URL, with a regression test confirmed failing
+first. It touches how a setting is read, so it waits for an explicit
+decision rather than being slipped into a verification patch.
+
+**Workaround today:** in the affected terminal, set
+`$env:OLLAMA_HOST = "http://localhost:11434"`, or remove a stray
+`OLLAMA_HOST=0.0.0.0` from the user environment if the Ollama server
+does not depend on it.
+

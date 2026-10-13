@@ -797,8 +797,19 @@ Each phase is independently testable and produces a working, demoable slice.
     with more questions planned than the initial ceiling (§27.11),
     consistent with the replenishment path having run. No pre-split
     comparison run was done, so "identical behavior" is not claimed.
-    **Still open:** the CLI `viva start` entry point itself against a
-    real repo.
+    The CLI `viva start` entry point then ran end to end on real Ollama
+    against `viva-cli-test-c` (session `af5b4051803d`, 2026-10-13):
+    ingest, analysis, indexing, planning (2 questions), both questions
+    asked and answered, status COMPLETE. That run needed an
+    `OLLAMA_HOST` workaround for an unrelated native-Windows issue
+    (§27.12).
+- **Verified, 2026-10-13:** Part A (all three Phase 21 criteria) and
+  Part B (suite unchanged, lint and types clean, real sessions through
+  both the Docker web path and the native CLI). Verified as "runs
+  correctly end to end", not as "identical to a pre-split run": the
+  criterion as first written asked for the latter and no pre-split run
+  was made. Replenishment is inferred from the Docker sessions' question
+  counts, not observed directly, and the CLI run did not exercise it.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
