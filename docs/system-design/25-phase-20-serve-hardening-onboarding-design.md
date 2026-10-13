@@ -274,3 +274,11 @@ environment has -- is structurally invisible to any amount of care taken
 *inside* this sandbox alone. It's exactly what the project's own
 "real-world testing is the ground truth" principle
 (`ways-of-working.md`) exists to catch, and did.
+
+## 25.10 Later finding: bare model names
+
+Found during Phase 22 validation: `viva doctor` reported the default
+`EMBEDDING_MODEL` (a bare name) as not pulled because Ollama lists tagged
+names. Root cause, fix and tests are in `27-phase-22-container-
+resumption-and-planning-split-design.md` §27.13.
+

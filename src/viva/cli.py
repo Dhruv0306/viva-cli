@@ -741,6 +741,19 @@ def cleanup(
     console.print(f"[green]{result.sessions_retained} session(s) retained.[/green]")
 
 
+def _with_default_tag(name: str) -> str:
+    """Ollama reports every pulled model as `name:tag` and treats a bare
+    name as `name:latest`; return `name` in that tagged form so a bare
+    config value can be compared against the list. Only the last path
+    segment is checked for a tag, so namespaced names such as
+    `someone/embedder` get `:latest` and `host:5000/repo` is not mistaken
+    for already tagged. docs/system-design/27-phase-22-container-
+    resumption-and-planning-split-design.md §27.13.
+    """
+    last_segment = name.rsplit("/", 1)[-1]
+    return name if ":" in last_segment else f"{name}:latest"
+
+
 @app.command()
 def doctor() -> None:
     """Read-only environment check: is Ollama reachable, and are
@@ -792,12 +805,14 @@ def doctor() -> None:
         )
     else:
         console.print(f"[green]\u2713[/green] Ollama reachable at {config.ollama_host}")
-        pulled = {m.model for m in response.models if m.model is not None}
+        pulled = {
+            _with_default_tag(m.model) for m in response.models if m.model is not None
+        }
         for label, model in (
             ("LLM_MODEL", config.llm_model),
             ("EMBEDDING_MODEL", config.embedding_model),
         ):
-            if model in pulled:
+            if _with_default_tag(model) in pulled:
                 console.print(f"[green]\u2713[/green] {label} {model!r} is pulled")
             else:
                 all_ok = False

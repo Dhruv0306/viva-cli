@@ -451,6 +451,49 @@ hostname that merely starts with `0.0.0.0`). The 8 rewrite cases were
 confirmed failing against the old code before the fix. Full suite: 680
 passed, 1 skipped; `ruff` and `mypy --strict` clean.
 
-**Still to confirm on real hardware:** with `OLLAMA_HOST=0.0.0.0` left in
-the terminal (no workaround), `viva doctor` should report Ollama
-reachable and `viva start` should run.
+**Confirmed on real hardware (2026-10-13):** with `$env:OLLAMA_HOST =
+"0.0.0.0"` set and no other workaround, `viva doctor` printed `Ollama
+reachable at localhost` and found `LLM_MODEL`. `viva start` was not
+re-run with `0.0.0.0`; it reads the same `Config` value, which `doctor`
+shows is now `localhost`.
+
+## 27.13 Real-world finding: `viva doctor` falsely reports a bare model name as not pulled
+
+The same `viva doctor` run printed `EMBEDDING_MODEL 'nomic-embed-text' is
+not pulled` and told the user to run `ollama pull nomic-embed-text`. The
+user pulled it (it was already there, `ollama list` showed
+`nomic-embed-text:latest` all along) and the report did not change, so
+re-pulling can never clear it. The model was fine: earlier Docker and CLI
+sessions had embedded with exactly that name.
+
+**Root cause:** `doctor()` (Phase 20, §25.3) built the set of pulled
+names from `ollama.Client.list()` and tested `model in pulled` as an
+exact string match. Ollama always lists tagged names
+(`nomic-embed-text:latest`) and treats a bare name as `:latest`, but the
+shipped default `EMBEDDING_MODEL` is the bare `nomic-embed-text`. So the
+default configuration failed `doctor` on any machine. `LLM_MODEL`
+passed only because the example value carries an explicit tag
+(`gemma4:e4b`).
+
+**Why it was missed:** `test_doctor_all_checks_pass_exits_0` faked the
+list response with the bare name `"nomic-embed-text"`, which real Ollama
+never returns, so the test encoded the same wrong assumption as the code
+and passed. This is the "fixture that matches the bug" pattern, and only a
+real run on real Ollama could expose it.
+
+**Fix:** a small `_with_default_tag()` helper in `cli.py` appends
+`:latest` to any name with no tag, applied to both the pulled names and
+the configured name before comparing. Only the last path segment is
+checked for a tag, so `someone/embedder` is normalized and a registry
+host with a port is not mistaken for tagged. A bare name still does not
+match a different tag (`nomic-embed-text:v1.5` does not satisfy
+`nomic-embed-text`). The message still echoes the name as configured.
+Embedding and LLM calls were never affected; only the `doctor` report.
+
+**Tests:** three new cases in `tests/test_cli_doctor.py` (bare name
+matches `:latest`, bare namespaced name matches `:latest`, bare name does
+not match a different tag). The first two were confirmed failing against
+the old code. Full suite: 683 passed, 1 skipped; `ruff` and `mypy
+--strict` clean. The old all-pass test is kept as is; it still passes
+because both sides are now normalized.
+

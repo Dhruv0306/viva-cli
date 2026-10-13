@@ -125,3 +125,48 @@ def test_doctor_connection_timeout_exits_1(monkeypatch, mocker):
 
     assert result.exit_code == 1
     assert "Ollama not reachable" in result.stdout
+
+
+# docs/system-design/27-phase-22-container-resumption-and-planning-split-
+# design.md §27.13: Ollama's list endpoint always reports tagged names
+# ("nomic-embed-text:latest"), and Ollama itself treats a bare name as
+# ":latest". The shipped default EMBEDDING_MODEL is the bare name, and the
+# fixture in test_doctor_all_checks_pass_exits_0 above listed it bare too,
+# which real Ollama never does, so doctor's exact-match check looked fine
+# in tests and reported a false "not pulled" on real hardware.
+
+def test_doctor_bare_model_name_matches_latest_tag(monkeypatch, mocker):
+    _env(monkeypatch)  # EMBEDDING_MODEL is the bare "nomic-embed-text"
+    fake_client = mocker.MagicMock()
+    fake_client.list.return_value = _fake_list_response("gemma4:e4b", "nomic-embed-text:latest")
+    mocker.patch("viva.cli.ollama.Client", return_value=fake_client)
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "EMBEDDING_MODEL 'nomic-embed-text' is pulled" in result.stdout
+
+
+def test_doctor_bare_namespaced_model_name_matches_latest_tag(monkeypatch, mocker):
+    _env(monkeypatch, embedding_model="someone/embedder")
+    fake_client = mocker.MagicMock()
+    fake_client.list.return_value = _fake_list_response("gemma4:e4b", "someone/embedder:latest")
+    mocker.patch("viva.cli.ollama.Client", return_value=fake_client)
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+
+
+def test_doctor_bare_name_does_not_match_a_different_tag(monkeypatch, mocker):
+    # Only :v1.5 is pulled; a bare name means :latest, so this must still
+    # report "not pulled" rather than matching on the name alone.
+    _env(monkeypatch)
+    fake_client = mocker.MagicMock()
+    fake_client.list.return_value = _fake_list_response("gemma4:e4b", "nomic-embed-text:v1.5")
+    mocker.patch("viva.cli.ollama.Client", return_value=fake_client)
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 1
+    assert "EMBEDDING_MODEL 'nomic-embed-text' is not pulled" in result.stdout
