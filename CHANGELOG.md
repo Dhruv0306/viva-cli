@@ -9,6 +9,25 @@ for general use."
 
 ## [Unreleased]
 
+Phase 23: three small fixes from Phase 22's real runs. See
+[`docs/system-design/28-phase-23-validation-followups-design.md`](docs/system-design/28-phase-23-validation-followups-design.md).
+
+### Added
+
+- Plan replenishment is now logged at INFO (`Replenished plan for session
+  <id>: <old> -> <new> questions`, or `Plan replenishment found no new
+  coverage ...`), so it can be observed instead of inferred from question
+  counts.
+
+### Fixed
+
+- Ingest now skips vendored Java runtime directories (`JRE`, `jre`, `JDK`,
+  `jdk`). A repo bundling a JRE spent minutes ingesting it and got
+  questions about the runtime's `default.policy` instead of its own code.
+- The report no longer lists a model's "None." (or `N/A`, `None noted`,
+  `No weaknesses identified`, and similar) as a strength or weakness. A real
+  finding that starts with "None of ..." is kept.
+
 ## [0.5.0] - 2026-10-14
 
 Phase 22: the shelved Phase 21 container setup is resumed and validated on

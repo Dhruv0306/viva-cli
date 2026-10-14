@@ -840,6 +840,9 @@ Each phase is independently testable and produces a working, demoable slice.
   then real hardware: a fresh `Calculator_Java` session skips `JRE/`,
   its report has no "None" weakness, and a long enough session logs a
   replenishment line.
+- **Status:** implemented and unit-tested (29 new tests, 712 passing,
+  `ruff` and `mypy` clean, coverage 95.43%). The real-hardware check
+  above is still to do, so there is no Verified line yet.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
