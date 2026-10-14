@@ -57,7 +57,7 @@ jobs:
           pip install build
           python -m build
 
-      - name: Verify static web assets made it into the wheel
+      - name: Verify static web assets and tree-sitter queries made it into the wheel
         # Regression guard for a real bug found setting up this workflow:
         # without an explicit [tool.setuptools.package-data] entry,
         # setuptools silently drops src/viva/web/static/* from the built
@@ -74,6 +74,20 @@ jobs:
           for f in index.html style.css app.js voice-worklet.js favicon.svg; do
             if ! echo "$LISTING" | grep -q "viva/web/static/$f"; then
               echo "Missing viva/web/static/$f from $WHEEL -- viva serve would be broken." >&2
+              exit 1
+            fi
+          done
+          # Same bug class, found later (docs/system-design/27-phase-22-
+          # container-resumption-and-planning-split-design.md §27.8): the
+          # tree-sitter query files under src/viva/analyzer/queries/ were
+          # also dropped from the wheel, so any non-editable install fell
+          # back silently to line-window extraction for every language.
+          # Checked against the source tree's own list, not a hardcoded
+          # one, so a newly added language's query file is covered too.
+          for q in src/viva/analyzer/queries/*.scm; do
+            name=$(basename "$q")
+            if ! echo "$LISTING" | grep -q "viva/analyzer/queries/$name"; then
+              echo "Missing viva/analyzer/queries/$name from $WHEEL -- AST extraction would silently fall back." >&2
               exit 1
             fi
           done
