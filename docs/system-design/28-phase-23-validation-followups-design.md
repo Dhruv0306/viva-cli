@@ -89,7 +89,7 @@ outcome, with the session id:
 
 - grew: `Replenished plan for session <id>: <old> -> <new> questions`;
 - exhausted: `Plan replenishment found no new coverage for session <id>
-  (<n> questions already planned)`.
+  (<n> question(s) already planned)`.
 
 The logging lives in the orchestrator wrapper, not in
 `planning.compute_replenished_plan()`, which stays pure (Phase 22 §27.3).
@@ -111,3 +111,17 @@ The logging lives in the orchestrator wrapper, not in
   the calculator code), the report's Weaknesses has no "None" entry, and
   the log shows a replenishment line in a session long enough to
   replenish.
+
+## 28.5 Implementation notes
+
+29 new tests, counting each parameterized case: 9 for ingest (4 runtime
+names pruned, 5 near-miss names kept), 18 for the report (13 non-finding
+forms dropped, 4 real weaknesses kept, 1 for strengths), and 2 for the log
+lines; the pruning, drop and log cases were confirmed failing against the
+old code first, while the keep cases passed before and after (they pin
+behavior that must not change). Full suite 712 passed, 1 skipped; `ruff`
+and `mypy` clean; coverage 95.43% against the 90% floor. The non-finding
+patterns are `_NON_FINDING` in `report.py`; the exhausted log line reads
+`(<n> question(s) already planned)` to match the codebase's existing
+`question(s)` wording.
+

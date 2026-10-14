@@ -1726,3 +1726,49 @@ def test_generate_question_receives_prior_question_texts(tmp_path, monkeypatch):
     assert len(avoid_questions_seen) == 2
     assert avoid_questions_seen[0] == []  # nothing asked yet for the first question
     assert avoid_questions_seen[1] == ["Question about architecture?"]  # q1's text, for q2
+
+
+# docs/system-design/28-phase-23-validation-followups-design.md §28.3:
+# replenishment used to be invisible in the log.
+
+def test_replenish_plan_logs_when_the_plan_grows(tmp_path, monkeypatch, caplog):
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview"),
+    ])
+    monkeypatch.setattr(
+        planning_module, "build_coverage_plan",
+        lambda *a, **kw: [
+            QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview"),
+            QuestionPlanItem(id="q2", category="implementation_detail", target_module="core"),
+            QuestionPlanItem(id="q3", category="architecture", target_module=None, architecture_topic="security"),
+        ],
+    )
+
+    with caplog.at_level("INFO", logger="viva.orchestrator"):
+        assert orch._replenish_plan("sess1", profile=object()) is True
+
+    assert "Replenished plan for session sess1: 1 -> 3 questions" in caplog.text
+
+
+def test_replenish_plan_logs_when_nothing_new_is_found(tmp_path, monkeypatch, caplog):
+    config = _config(tmp_path)
+    ui = FakeSessionUI(answers=[])
+    orch, store = _make_orchestrator(tmp_path, config, ui)
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    existing_plan = [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview"),
+    ]
+    store.save_plan("sess1", existing_plan)
+    monkeypatch.setattr(planning_module, "build_coverage_plan", lambda *a, **kw: existing_plan)
+
+    with caplog.at_level("INFO", logger="viva.orchestrator"):
+        assert orch._replenish_plan("sess1", profile=object()) is False
+
+    assert (
+        "Plan replenishment found no new coverage for session sess1 "
+        "(1 question(s) already planned)"
+    ) in caplog.text

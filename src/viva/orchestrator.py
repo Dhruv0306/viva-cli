@@ -534,8 +534,20 @@ class Orchestrator:
         )
         new_plan = compute_replenished_plan(profile, self.config, current_top_level)
         if new_plan is None:
+            logger.info(
+                "Plan replenishment found no new coverage for session %s "
+                "(%d question(s) already planned)",
+                session_id,
+                current_top_level,
+            )
             return False
         self.store.save_plan(session_id, new_plan)
+        logger.info(
+            "Replenished plan for session %s: %d -> %d questions",
+            session_id,
+            current_top_level,
+            len(new_plan),
+        )
         return True
 
     def _finalize_stray_evals(self, session_id: str) -> None:
