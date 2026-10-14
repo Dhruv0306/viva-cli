@@ -817,6 +817,30 @@ Each phase is independently testable and produces a working, demoable slice.
   Windows (§27.12) and `viva doctor` rejecting bare model names (§27.13);
   the last two were confirmed fixed on real hardware.
 
+## Phase 23 — Validation Follow-ups
+- Design doc: `docs/system-design/28-phase-23-validation-followups-
+  design.md`.
+- Three small, independent fixes from Phase 22's real runs, bundled the
+  way Phases 14, 18 and 22 bundled theirs. None adds a `Config` field.
+- **Ingest exclusions.** `ingest/filters.py` has no entry for a vendored
+  Java runtime, so `Calculator_Java`'s `JRE/` was ingested (about 7
+  minutes of setup, questions about `default.policy` instead of the
+  calculator). Adds `JRE`, `jre`, `JDK`, `jdk` as exact directory names;
+  deliberately not case-folding (would drop real `Env`/`Out`/`Build`
+  directories) and not a new setting (`Config` fixture ripple).
+- **Report non-findings.** The report rolled a model's "None. ..." up as
+  a weakness. A precise `_is_non_finding()` predicate drops "nothing to
+  report" entries from strengths and weaknesses while keeping a real
+  finding that starts with "None of ...".
+- **Replenishment log line.** `Orchestrator._replenish_plan()` logs one
+  INFO line when the plan grows and one when nothing new is found, so the
+  path can be observed instead of inferred from question counts.
+- **Exit criteria:** unit tests per item (pruning, report and caplog
+  cases confirmed failing first); full suite, `ruff` and `mypy` clean;
+  then real hardware: a fresh `Calculator_Java` session skips `JRE/`,
+  its report has no "None" weakness, and a long enough session logs a
+  replenishment line.
+
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
   the categories/cases no data exists for yet.** The default set in

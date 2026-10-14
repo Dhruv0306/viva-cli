@@ -256,5 +256,13 @@ history of what was tried and rejected along the way.
   with the full test suite passing unchanged as its regression check,
   not a behavior change.
 
+- **[28-phase-23-validation-followups-design.md](28-phase-23-validation-followups-design.md)**
+  — the Phase 23 design: three small fixes from Phase 22's real runs. Adds
+  vendored Java runtime directories (`JRE`, `JDK`) to ingest's exclusion
+  list, drops "None"-style non-findings from the report's strengths and
+  weaknesses (keeping a real finding that starts "None of ..."), and logs
+  plan replenishment so it can be observed instead of inferred. No new
+  `Config` field.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).
