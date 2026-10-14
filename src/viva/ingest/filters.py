@@ -40,6 +40,13 @@ EXCLUDED_DIR_NAMES = frozenset(
         ".tox",
         "vendor",
         "bower_components",
+        # Vendored Java runtimes (docs/system-design/28-phase-23-
+        # validation-followups-design.md §28.1): a bundled JRE/JDK is
+        # not the project's own code. Exact names, no case-folding.
+        "JRE",
+        "jre",
+        "JDK",
+        "jdk",
     }
 )
 

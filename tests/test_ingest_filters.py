@@ -140,3 +140,31 @@ def test_empty_tree_returns_no_files(tmp_path: Path) -> None:
 
     assert outcome.kept == []
     assert outcome.stats.excluded_dirs == 0
+
+
+# docs/system-design/28-phase-23-validation-followups-design.md §28.1: a
+# vendored Java runtime was ingested (7 minutes of setup, questions about
+# JRE/lib/security/default.policy instead of the project's own code).
+
+@pytest.mark.parametrize("runtime_dir", ["JRE", "jre", "JDK", "jdk"])
+def test_vendored_java_runtime_directory_is_pruned(tmp_path: Path, runtime_dir: str) -> None:
+    _write(tmp_path, "src/Calculator.java", b"class Calculator {}\n")
+    _write(tmp_path, f"{runtime_dir}/lib/security/default.policy", b"grant {};\n")
+    _write(tmp_path, f"{runtime_dir}/lib/deep/nested.txt", b"x\n")
+
+    outcome = walk_and_hard_exclude(tmp_path)
+
+    kept_rel = {p.relative_to(tmp_path).as_posix() for p in outcome.kept}
+    assert kept_rel == {"src/Calculator.java"}
+    assert outcome.stats.excluded_dirs == 1
+
+
+@pytest.mark.parametrize("name", ["jre-tools", "jdkversions", "JREADME", "Jre", "Env"])
+def test_near_miss_directory_names_are_kept(tmp_path: Path, name: str) -> None:
+    # Exact names only: no case-folding, no prefix matching.
+    _write(tmp_path, f"{name}/Thing.java", b"class Thing {}\n")
+
+    outcome = walk_and_hard_exclude(tmp_path)
+
+    kept_rel = {p.relative_to(tmp_path).as_posix() for p in outcome.kept}
+    assert kept_rel == {f"{name}/Thing.java"}
