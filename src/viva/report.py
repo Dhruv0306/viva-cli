@@ -14,6 +14,8 @@ a purpose-built aggregate rather than a pass-through of it.
 """
 from __future__ import annotations
 
+import re
+
 import html
 import json
 from dataclasses import asdict, dataclass, field
@@ -115,6 +117,24 @@ def _dedup_capped(items: list[str], max_items: int) -> list[str]:
     return result[:max_items]
 
 
+# A model sometimes returns "None." (or similar) as a strength or weakness
+# instead of an empty list. docs/system-design/28-phase-23-validation-
+# followups-design.md §28.2. Precise on purpose: a real finding can start
+# with "None of the error paths are tested", which must be kept, so "none"
+# alone only counts when followed by punctuation or the end of the text.
+_NON_FINDING = re.compile(
+    r"^(?:none|n/a|nil|nothing)\s*(?:[.:;!,(]|$)"
+    r"|^(?:none|nothing)\s+(?:noted|identified|found|observed|significant|to\s+report)\b"
+    r"|^no\s+(?:(?:significant|major|notable)\s+)?"
+    r"(?:weaknesses|weakness|issues|gaps|problems)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_non_finding(text: str) -> bool:
+    return _NON_FINDING.match(text.strip()) is not None
+
+
 def _format_point(point: str, cited_file: str | None) -> str:
     return f"{point} ({cited_file})" if cited_file else point
 
@@ -209,14 +229,20 @@ class ReportBuilder:
                 continue
 
             if classification_label in _STRENGTH_CLASSIFICATIONS:
-                strength_candidates.extend(evaluation.did_well)
+                strength_candidates.extend(
+                    t for t in evaluation.did_well if not _is_non_finding(t)
+                )
 
             if classification_label in _WEAKNESS_CLASSIFICATIONS:
                 weakness_candidates.extend(
-                    _format_point(m.point, m.cited_file) for m in evaluation.missed
+                    _format_point(m.point, m.cited_file)
+                    for m in evaluation.missed
+                    if not _is_non_finding(m.point)
                 )
                 weakness_candidates.extend(
-                    _format_point(m.point, m.cited_file) for m in evaluation.did_wrong
+                    _format_point(m.point, m.cited_file)
+                    for m in evaluation.did_wrong
+                    if not _is_non_finding(m.point)
                 )
 
             if classification_label in _WEAKNESS_CLASSIFICATIONS:

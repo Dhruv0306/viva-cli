@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from viva.report import ReportBuilder, render_html, render_json, render_markdown
 from viva.schemas import EvaluationRecord, MissedPoint
 from viva.storage.session_store import QARecordRow, SessionRecord
@@ -446,3 +448,71 @@ def test_render_html_marks_needs_review_rows():
 
     assert 'class="needs-review"' in rendered
     assert "needs review" in rendered
+
+
+# docs/system-design/28-phase-23-validation-followups-design.md §28.2: a
+# model returned "None. ..." as a weakness and the report rolled it up.
+
+
+def _weakness_report(point: str, cited_file: str | None = "src/module.py"):
+    session = _session()
+    record = _record(
+        "incorrect",
+        missed=[MissedPoint(point=point, cited_file=cited_file)],
+    )
+    return ReportBuilder().build(
+        session, [_qa("q1", "architecture", "answered", record)]
+    )
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        "None.",
+        "None",
+        "N/A",
+        "Nil.",
+        "Nothing.",
+        "None. The specific grants listed are correctly identified.",
+        "None noted",
+        "None identified.",
+        "Nothing found",
+        "None to report",
+        "No weaknesses identified.",
+        "No significant issues were found.",
+        "  none.  ",
+    ],
+)
+def test_non_finding_weakness_is_dropped(point):
+    report = _weakness_report(point)
+
+    assert report.weaknesses == []
+    assert "_None noted._" in render_markdown(report)
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        "None of the error paths are tested.",
+        "Nothing in the answer explains the retry limit.",
+        "No mention of the fallback branch.",
+        "The loop bound was misread.",
+    ],
+)
+def test_real_weakness_is_kept(point):
+    report = _weakness_report(point)
+
+    assert report.weaknesses == [f"{point} (src/module.py)"]
+
+
+def test_non_finding_strength_is_dropped_and_real_ones_kept():
+    session = _session()
+    record = _record(
+        "correct", did_well=["None.", "Explained the state machine well."]
+    )
+
+    report = ReportBuilder().build(
+        session, [_qa("q1", "architecture", "answered", record)]
+    )
+
+    assert report.strengths == ["Explained the state machine well."]
