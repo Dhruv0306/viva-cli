@@ -9,7 +9,7 @@ for general use."
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-10-13
+## [0.5.0] - 2026-10-14
 
 Phase 22: the shelved Phase 21 container setup is resumed and validated on
 real Docker, `orchestrator.py`'s planning logic is split out, and several
