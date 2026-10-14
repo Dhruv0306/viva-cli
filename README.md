@@ -306,7 +306,7 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-Phases 0-20 are implemented, currently at **v0.3.0** (see [`CHANGELOG.md`](CHANGELOG.md)):
+Phases 0-22 are implemented, currently at **v0.5.0** (see [`CHANGELOG.md`](CHANGELOG.md)):
 
 - **Phase 0 — walking skeleton.** `viva demo` (still runnable, see below) proved out the two riskiest assumptions before anything else got built: local-model structured-output reliability, and a timer that excludes LLM latency.
 - **Phase 3 — analyze.** Tree-sitter AST extraction and map-reduce Project Profile generation, with a hierarchical-reduce fallback for repos with many modules. [`08-phase-3-analyzer-design.md`](docs/system-design/08-phase-3-analyzer-design.md)
@@ -326,6 +326,8 @@ Phases 0-20 are implemented, currently at **v0.3.0** (see [`CHANGELOG.md`](CHANG
 - **Phase 18 — dependency & auth hygiene.** `requirements.txt` now actually provides what it always claimed to (`fastapi`, `uvicorn`, `prompt_toolkit`, `httpx2`) — previously missing entirely, breaking the plain `pip install -r requirements.txt` path. `viva serve`'s access-token check now uses `hmac.compare_digest`. `LICENSE` (MIT), previously "TBD." [`23-phase-18-dependency-auth-hygiene-design.md`](docs/system-design/23-phase-18-dependency-auth-hygiene-design.md)
 - **Phase 19 — CI quality gates.** `ruff` and `mypy --strict` now run in CI alongside `pytest-cov` (90% floor, measured baseline 95%) — grounded in real runs against this codebase, not estimated; see the design doc for exactly what that found and how the pre-existing `mypy` debt is tracked rather than silently exempted. [`24-phase-19-ci-quality-gates-design.md`](docs/system-design/24-phase-19-ci-quality-gates-design.md)
 - **Phase 20 — serve hardening & onboarding.** `viva serve` now caps concurrent live sessions (`MAX_CONCURRENT_SESSIONS`, default 5, HTTP 429 once reached) — process-wide, not per-token, since there's only one shared access token per server process. New `viva doctor` command: a read-only check that Ollama is reachable and `LLM_MODEL`/`EMBEDDING_MODEL` are actually pulled. [`25-phase-20-serve-hardening-onboarding-design.md`](docs/system-design/25-phase-20-serve-hardening-onboarding-design.md)
+- **Phase 21 — containerized setup.** `docker compose up` runs `viva serve` in a container with data kept in `./data`, the port published only on the host's loopback, and a persistent volume for the tree-sitter grammar cache. Shelved after its first build, resumed and confirmed on real Docker in Phase 22. [`26-...`](docs/system-design/26-phase-21-containerized-setup-design.md)
+- **Phase 22 — container resumption & planning split.** Validated the container end to end on real Docker and Ollama, which surfaced and fixed five real bugs (published port scope, tree-sitter query files missing from the built wheel, the native `OLLAMA_HOST` leaking into the container, a bind-all `OLLAMA_HOST` breaking the Windows CLI, and `viva doctor` rejecting bare model names). Also moved the question-ordering and replenishment logic out of `Orchestrator` into `viva/planning.py`, with no behavior change. [`27-...`](docs/system-design/27-phase-22-container-resumption-and-planning-split-design.md)
 
 This throwaway `viva demo` harness (from the original walking skeleton,
 docs/plan.md Phase 0) still exercises the two riskiest assumptions
