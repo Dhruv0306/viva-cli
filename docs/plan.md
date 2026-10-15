@@ -840,11 +840,35 @@ Each phase is independently testable and produces a working, demoable slice.
   then real hardware: a fresh `Calculator_Java` session skips `JRE/`,
   its report has no "None" weakness, and a long enough session logs a
   replenishment line.
-- **Status:** implemented and unit-tested (29 new tests, 712 passing,
-  `ruff` and `mypy` clean, coverage 95.43%). The real-hardware check
-  above is still to do, so there is no Verified line yet.
+- **Verified, 2026-10-15** on real hardware (Windows, real Ollama).
+  Ingest: the filter keeps 1 of the 54 files it used to keep in
+  `Calculator_Java` (53 were under `JRE/`), and a live session sampled
+  `1/1 files` and asked only about `calculator.java`. Report: the old
+  Calculator session's report, regenerated, no longer contains the
+  `None. ...` weakness. Log: a live session printed `Replenished plan for
+  session ...: 5 -> 11 questions`. The `no new coverage` branch is
+  covered by a unit test only; it was not seen live. `pytest` passes on
+  the Windows machine (711 passed, 2 skipped); `ruff` and `mypy` were not
+  run there (not installed in that venv), only here and in CI. Details in
+  `docs/system-design/28-phase-23-validation-followups-design.md` §28.6.
 
 ## Backlog (not yet scheduled)
+- **Candidates from Phase 22/23's real runs**, none started:
+  - A Docker job in CI (build the image, check `docker compose config`
+    against a `.env` that sets `OLLAMA_HOST=http://localhost:11434`);
+    three Phase 22 bugs only showed up in manual Docker runs.
+  - The §27.7 decision: leave the access token requirement for the
+    container as documented, or add an explicit opt-in that skips it when
+    the port is published on loopback only.
+  - Replenished questions can repeat earlier topics on a very small repo
+    (one function produced several near-identical questions). Decide
+    whether to stop replenishing when it can only produce near-duplicates.
+  - Evaluator output quality: weaknesses that read as plain facts, and
+    citations like `(N/A (Not present in the policy file))`. Model output,
+    not report assembly; pytest cannot judge it.
+  - No progress detail in the web UI during a long analysis step.
+  - Release notes link to docs with relative paths, which do not resolve
+    on a GitHub release page.
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
   the categories/cases no data exists for yet.** The default set in
   Patch B (docs/system-design/22-phase-16-grading-integrity-

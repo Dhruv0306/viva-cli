@@ -125,3 +125,40 @@ patterns are `_NON_FINDING` in `report.py`; the exhausted log line reads
 `(<n> question(s) already planned)` to match the codebase's existing
 `question(s)` wording.
 
+## 28.6 Real-hardware results (2026-10-15)
+
+**Item 1, ingest.** Running the filter on a fresh clone of
+`Calculator_Java`: before the fix 54 files kept, 53 of them under `JRE/`;
+after, 1 file kept, 2 directories excluded. A live session then printed
+`Ingest complete -- 1/1 files sampled`, indexed 6 chunks, and asked three
+questions about `calculator.java` (the result display, the exponentiation
+case, the back button); the report cites `calculator.java` line ranges.
+
+**Item 2, report.** The Calculator session from Phase 22's Docker run
+(`97f5727a3157`), whose original report listed `None. The specific
+SecurityPermission grants listed are correctly identified. (N/A)` as a
+weakness, was regenerated with the new code: the session exists (its
+Weaknesses section renders) and `viva report ... | Select-String "None\."`
+returns nothing. None of the later live reports contained a model-produced
+"None" entry, so this regenerated old report is the only live evidence of
+the filter; the rest is unit tests.
+
+**Item 3, log line.** The first two sessions after the fix printed no
+replenishment line, and the stored timestamps showed why: the 10-minute
+session used 606 seconds of answering time, so the timer expired before the
+loop reached the replenish step, and the 5-minute Calculator session's
+growth from 2 to 4 questions was follow-ups (`q_01_f1`, `q_02_f1`), not
+replenishment. A third session answered in one word each and printed
+`Replenished plan for session 02fdb94af249: 5 -> 11 questions` after the
+ninth question (5 planned plus 4 follow-ups, with most of the time left),
+11 being the 5 planned plus the increment of 6. The `no new coverage` branch
+was not reached live; it is covered by a unit test only.
+
+**Observation, not a defect:** on a one-function repo the replenished
+questions repeat earlier topics (the formula was asked about several
+times). That follows from the "prefer, never exclude" rule; whether to stop
+when only near-duplicates remain is recorded in the plan's backlog.
+
+**Not run locally:** `ruff` and `mypy` were not installed in the Windows
+venv, so they were run only in the authoring environment and in CI.
+
