@@ -9,8 +9,10 @@ for general use."
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-15
+
 Phase 23: three small fixes from Phase 22's real runs. See
-[`docs/system-design/28-phase-23-validation-followups-design.md`](docs/system-design/28-phase-23-validation-followups-design.md).
+[`docs/system-design/28-phase-23-validation-followups-design.md`](https://github.com/Dhruv0306/viva-cli/blob/v0.5.1/docs/system-design/28-phase-23-validation-followups-design.md).
 
 ### Added
 
