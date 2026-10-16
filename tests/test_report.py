@@ -516,3 +516,26 @@ def test_non_finding_strength_is_dropped_and_real_ones_kept():
     )
 
     assert report.strengths == ["Explained the state machine well."]
+
+
+def test_weakness_with_an_na_style_citation_is_shown_without_a_citation():
+    """Phase 26 (docs/system-design/31-phase-26-followups-design.md §31.5):
+    a point stored with `cited_file="N/A (Not present in the policy file)"`
+    must not render as a citation."""
+    session = _session()
+    qa_records = [
+        _qa(
+            "q1", "rag", "answered",
+            _record(
+                "partial",
+                missed=[MissedPoint(point="Did not mention retries.", cited_file="N/A (Not present in the policy file)")],
+                did_wrong=[MissedPoint(point="Said it was synchronous.", cited_file="src/viva/evaluator.py:42")],
+            ),
+        ),
+    ]
+
+    report = ReportBuilder().build(session, qa_records)
+
+    assert "Did not mention retries." in report.weaknesses
+    assert all("N/A" not in w for w in report.weaknesses)
+    assert "Said it was synchronous. (src/viva/evaluator.py:42)" in report.weaknesses

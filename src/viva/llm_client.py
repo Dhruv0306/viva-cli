@@ -27,6 +27,7 @@ from dataclasses import dataclass
 import ollama
 from pydantic import BaseModel, ValidationError
 
+from viva.citations import normalize_citation
 from viva.schemas import ClassificationResult, EvaluationFeedback
 
 logger = logging.getLogger(__name__)
@@ -148,7 +149,9 @@ If you classify as "partial" or "incorrect", you MUST cite the specific \
 file/function from the code context that grounds your verdict in \
 `cited_file` (e.g. "src/payments/handler.py:42"). If you cannot point to a \
 specific citation, classify as "correct" or "not_attempted" instead -- \
-never produce an ungrounded criticism.
+never produce an ungrounded criticism. `cited_file` must name a file shown \
+in the headers of [GROUND_TRUTH_CODE_CONTEXT]; if there is nothing to cite, \
+leave it null -- never write "N/A", "none" or a sentence in it.
 
 Respond with a `summary` of one or two sentences explaining the verdict.
 
@@ -173,6 +176,16 @@ Tailor the balance of fields to the verdict already given: a "correct" \
 answer should have a full `did_well` and little or nothing in `missed`/\
 `did_wrong`; an "incorrect" answer should have little or nothing in \
 `did_well`. Do not pad a list just to fill it.
+
+Write every `missed` and `did_wrong` entry as a statement about the \
+candidate's ANSWER, not a bare fact about the code. For `missed`, say what \
+the answer left out (e.g. "Did not mention that the retry loop stops after \
+three attempts."). For `did_wrong`, say what the answer claimed against what \
+the code does (e.g. "Said results are cached, but fetch() re-reads the file \
+on every call."). A sentence that would be just as true had the candidate \
+said nothing at all is a description of the code, not feedback -- do not \
+write it. `cited_file` must name a file shown in the headers of \
+[GROUND_TRUTH_CODE_CONTEXT]; never write "N/A", "none" or a sentence in it.
 
 `improvement` is one or two sentences of forward-looking, actionable \
 advice -- not a repeat of `missed`/`did_wrong`, but what to go read or \
@@ -392,7 +405,15 @@ class OllamaClient(LLMClient):
             # nothing, given _model_facing_schema, but a model can ignore
             # the schema) -- this field is client-set only, see
             # _model_facing_schema's docstring.
-            parsed = parsed.model_copy(update={"needs_review": False})
+            parsed = parsed.model_copy(
+                update={
+                    "needs_review": False,
+                    # Phase 26 (docs/system-design/31-phase-26-followups-
+                    # design.md §31.5): "N/A", or a citation naming nothing
+                    # in the retrieved context, is no citation at all.
+                    "cited_file": normalize_citation(parsed.cited_file, ground_truth_context),
+                }
+            )
 
             # Enforce FR22 at the application layer too, not just via the
             # system prompt: a partial/incorrect verdict with no citation is
@@ -468,8 +489,18 @@ class OllamaClient(LLMClient):
 
             # FR22 at the application layer: drop any missed/did_wrong
             # entry with no citation rather than surface it ungrounded.
-            grounded_missed = [p for p in parsed.missed if p.cited_file]
-            grounded_did_wrong = [p for p in parsed.did_wrong if p.cited_file]
+            # Phase 26 (§31.5): normalize first, so "N/A" or a citation
+            # that names nothing in the retrieved context counts as uncited.
+            grounded_missed = [
+                p.model_copy(update={"cited_file": normalize_citation(p.cited_file, ground_truth_context)})
+                for p in parsed.missed
+            ]
+            grounded_did_wrong = [
+                p.model_copy(update={"cited_file": normalize_citation(p.cited_file, ground_truth_context)})
+                for p in parsed.did_wrong
+            ]
+            grounded_missed = [p for p in grounded_missed if p.cited_file]
+            grounded_did_wrong = [p for p in grounded_did_wrong if p.cited_file]
             dropped_any = (
                 len(grounded_missed) < len(parsed.missed)
                 or len(grounded_did_wrong) < len(parsed.did_wrong)

@@ -13,6 +13,13 @@ from viva.llm_client import (
 from viva.schemas import ClassificationResult
 
 
+# Retrieved context shaped like evaluator._build_ground_truth_context()'s
+# output: every chunk starts with a [path:start-end] header. Citations in
+# these tests refer to files named here (docs/system-design/31-phase-26-
+# followups-design.md §31.5 validates citations against the context).
+_CTX = "[a.py:1-10]\ndef a(): ...\n\n---\n\n[src/x.py:10-30]\ndef x(): ..."
+
+
 def _chat_response(content: str) -> dict:
     return {"message": {"content": content}}
 
@@ -30,7 +37,7 @@ def test_valid_first_attempt(client):
     valid = json.dumps({"classification": "correct", "summary": "Good answer."})
     client._client.chat.return_value = _chat_response(valid)
 
-    call_result = client.classify_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", _CTX, "answer")
 
     assert call_result.result.classification == "correct"
     assert call_result.attempts == 1
@@ -42,7 +49,7 @@ def test_repair_loop_recovers_on_second_attempt(client):
     valid = json.dumps({"classification": "partial", "summary": "Missed X.", "cited_file": "a.py:1"})
     client._client.chat.side_effect = [_chat_response(malformed), _chat_response(valid)]
 
-    call_result = client.classify_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", _CTX, "answer")
 
     assert call_result.result.classification == "partial"
     assert call_result.attempts == 2
@@ -58,7 +65,7 @@ def test_falls_back_to_needs_review_after_two_failures(client):
         _chat_response("still garbage"),
     ]
 
-    call_result = client.classify_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", _CTX, "answer")
 
     assert call_result.result.needs_review is True
     assert call_result.result.classification == "not_attempted"
@@ -72,7 +79,7 @@ def test_ungrounded_incorrect_verdict_is_downgraded(client):
     ungrounded = json.dumps({"classification": "incorrect", "summary": "Wrong."})
     client._client.chat.return_value = _chat_response(ungrounded)
 
-    call_result = client.classify_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", _CTX, "answer")
 
     assert call_result.result.needs_review is True
 
@@ -83,7 +90,7 @@ def test_grounded_incorrect_verdict_passes_through(client):
     )
     client._client.chat.return_value = _chat_response(grounded)
 
-    call_result = client.classify_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", _CTX, "answer")
 
     assert call_result.result.needs_review is False
 
@@ -95,7 +102,7 @@ def test_classify_answer_schema_sent_to_model_excludes_needs_review(client):
     valid = json.dumps({"classification": "correct", "summary": "ok"})
     client._client.chat.return_value = _chat_response(valid)
 
-    client.classify_answer("Q?", "context", "answer")
+    client.classify_answer("Q?", _CTX, "answer")
 
     schema_sent = client._client.chat.call_args.kwargs["format"]
     assert "needs_review" not in schema_sent["properties"]
@@ -117,7 +124,7 @@ def test_classify_answer_discards_model_supplied_needs_review_when_grounded(clie
     )
     client._client.chat.return_value = _chat_response(model_set_it_anyway)
 
-    call_result = client.classify_answer("Q?", "context", "answer")
+    call_result = client.classify_answer("Q?", _CTX, "answer")
 
     assert call_result.result.needs_review is False
 
@@ -154,7 +161,7 @@ def test_generate_feedback_valid_first_attempt(client):
     )
     client._client.chat.return_value = _chat_response(valid)
 
-    call_result = client.generate_feedback("Q?", "context", "answer", _classification())
+    call_result = client.generate_feedback("Q?", _CTX, "answer", _classification())
 
     assert call_result.result.did_well == ["Explained the happy path."]
     assert call_result.result.missed[0].point == "Didn't mention retries."
@@ -165,7 +172,7 @@ def test_generate_feedback_includes_prior_verdict_in_prompt(client):
     valid = json.dumps({"improvement": "n/a"})
     client._client.chat.return_value = _chat_response(valid)
 
-    client.generate_feedback("Q?", "context", "answer", _classification())
+    client.generate_feedback("Q?", _CTX, "answer", _classification())
 
     user_prompt = client._client.chat.call_args.kwargs["messages"][1]["content"]
     assert "[VERDICT_ALREADY_GIVEN]" in user_prompt
@@ -190,7 +197,7 @@ def test_generate_feedback_drops_uncited_missed_entries(client):
     )
     client._client.chat.return_value = _chat_response(valid)
 
-    call_result = client.generate_feedback("Q?", "context", "answer", _classification())
+    call_result = client.generate_feedback("Q?", _CTX, "answer", _classification())
 
     assert len(call_result.result.missed) == 1
     assert call_result.result.missed[0].point == "Cited point."
@@ -212,7 +219,7 @@ def test_generate_feedback_needs_review_when_dropping_empties_critical_verdict(c
     client._client.chat.return_value = _chat_response(valid)
 
     call_result = client.generate_feedback(
-        "Q?", "context", "answer", _classification(classification="incorrect")
+        "Q?", _CTX, "answer", _classification(classification="incorrect")
     )
 
     assert call_result.result.missed == []
@@ -227,7 +234,7 @@ def test_generate_feedback_correct_verdict_not_forced_needs_review_when_empty(cl
     client._client.chat.return_value = _chat_response(valid)
 
     call_result = client.generate_feedback(
-        "Q?", "context", "answer", _classification(classification="correct", cited_file=None)
+        "Q?", _CTX, "answer", _classification(classification="correct", cited_file=None)
     )
 
     assert call_result.result.needs_review is False
@@ -237,7 +244,7 @@ def test_generate_feedback_schema_sent_to_model_excludes_needs_review(client):
     valid = json.dumps({"improvement": "n/a"})
     client._client.chat.return_value = _chat_response(valid)
 
-    client.generate_feedback("Q?", "context", "answer", _classification())
+    client.generate_feedback("Q?", _CTX, "answer", _classification())
 
     schema_sent = client._client.chat.call_args.kwargs["format"]
     assert "needs_review" not in schema_sent["properties"]
@@ -260,7 +267,7 @@ def test_generate_feedback_discards_model_supplied_needs_review_when_grounded(cl
     client._client.chat.return_value = _chat_response(model_set_it_anyway)
 
     call_result = client.generate_feedback(
-        "Q?", "context", "answer", _classification(classification="partial")
+        "Q?", _CTX, "answer", _classification(classification="partial")
     )
 
     assert call_result.result.needs_review is False
@@ -272,7 +279,7 @@ def test_generate_feedback_falls_back_after_two_failures(client):
         _chat_response("still garbage"),
     ]
 
-    call_result = client.generate_feedback("Q?", "context", "answer", _classification())
+    call_result = client.generate_feedback("Q?", _CTX, "answer", _classification())
 
     assert call_result.result.needs_review is True
     assert call_result.result.did_well == []
@@ -523,3 +530,86 @@ def test_get_context_window_returns_none_on_error(client):
     client._client.show.side_effect = RuntimeError("model not found")
 
     assert client.get_context_window() is None
+
+
+# -- Phase 26: citation validation (docs/system-design/31-phase-26-followups-
+# design.md §31.5) ------------------------------------------------------------
+
+def test_classification_cited_as_na_is_treated_as_uncited_and_downgraded(client):
+    reply = json.dumps(
+        {"classification": "incorrect", "summary": "Wrong.", "cited_file": "N/A (Not present in the policy file)"}
+    )
+    client._client.chat.return_value = _chat_response(reply)
+
+    call_result = client.classify_answer("Q?", _CTX, "answer")
+
+    assert call_result.result.cited_file is None
+    assert call_result.result.needs_review is True  # FR22: incorrect needs a real citation
+
+
+def test_classification_citing_a_file_the_model_was_not_shown_is_downgraded(client):
+    reply = json.dumps(
+        {"classification": "partial", "summary": "Missed it.", "cited_file": "src/billing/invoice.py:9"}
+    )
+    client._client.chat.return_value = _chat_response(reply)
+
+    call_result = client.classify_answer("Q?", _CTX, "answer")
+
+    assert call_result.result.cited_file is None
+    assert call_result.result.needs_review is True
+
+
+def test_correct_classification_without_a_real_citation_is_not_flagged(client):
+    reply = json.dumps({"classification": "correct", "summary": "Good.", "cited_file": "N/A"})
+    client._client.chat.return_value = _chat_response(reply)
+
+    call_result = client.classify_answer("Q?", _CTX, "answer")
+
+    assert call_result.result.cited_file is None
+    assert call_result.result.needs_review is False
+
+
+def test_feedback_entries_cited_as_na_or_ungrounded_are_dropped(client):
+    reply = json.dumps(
+        {
+            "did_well": ["Explained the happy path."],
+            "missed": [
+                {"point": "Did not mention retries.", "cited_file": "a.py:1"},
+                {"point": "Did not mention caching.", "cited_file": "N/A (Not present in the policy file)"},
+            ],
+            "did_wrong": [
+                {"point": "Said it was async.", "cited_file": "src/billing/invoice.py:9"},
+            ],
+            "improvement": "Read a.py.",
+        }
+    )
+    client._client.chat.return_value = _chat_response(reply)
+
+    call_result = client.generate_feedback("Q?", _CTX, "answer", _classification())
+
+    assert [m.point for m in call_result.result.missed] == ["Did not mention retries."]
+    assert call_result.result.did_wrong == []
+    assert call_result.result.needs_review is False  # a grounded entry survived
+
+
+def test_feedback_emptied_by_citation_validation_on_a_critical_verdict_needs_review(client):
+    reply = json.dumps(
+        {
+            "did_well": [],
+            "missed": [{"point": "Did not mention caching.", "cited_file": "N/A"}],
+            "did_wrong": [],
+            "improvement": "Read the code.",
+        }
+    )
+    client._client.chat.return_value = _chat_response(reply)
+
+    call_result = client.generate_feedback("Q?", _CTX, "answer", _classification(classification="incorrect"))
+
+    assert call_result.result.missed == []
+    assert call_result.result.needs_review is True
+
+
+def test_feedback_prompt_asks_for_gaps_phrased_about_the_answer():
+    assert "statement about the candidate's ANSWER" in FEEDBACK_SYSTEM_PROMPT
+    assert 'never write "N/A"' in FEEDBACK_SYSTEM_PROMPT
+    assert 'never write "N/A"' in CLASSIFICATION_SYSTEM_PROMPT

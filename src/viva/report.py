@@ -21,6 +21,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, UTC
 
+from viva.citations import normalize_citation
 from viva.schemas import EvaluationRecord
 from viva.storage.session_store import (
     ANSWERED,
@@ -136,7 +137,12 @@ def _is_non_finding(text: str) -> bool:
 
 
 def _format_point(point: str, cited_file: str | None) -> str:
-    return f"{point} ({cited_file})" if cited_file else point
+    # Phase 26 (docs/system-design/31-phase-26-followups-design.md §31.5):
+    # sessions stored before citation validation existed can hold "N/A"-
+    # style text in cited_file; show those points without a citation
+    # rather than as "(N/A (Not present in the policy file))".
+    citation = normalize_citation(cited_file)
+    return f"{point} ({citation})" if citation else point
 
 
 class ReportBuilder:
