@@ -129,3 +129,51 @@ def test_serve_prints_no_token_for_default_loopback_host(mocker, monkeypatch, tm
 
     assert "Token:" not in result.output
     assert "access token" not in result.output.lower()
+
+
+def test_serve_passes_a_configured_token_to_create_app_and_never_prints_it(mocker, monkeypatch, tmp_path):
+    """Phase 26 (docs/system-design/31-phase-26-followups-design.md §31.3)."""
+    secret = "a-fixed-token-0123456789"
+    monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
+    monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    monkeypatch.setenv("VIVA_ACCESS_TOKEN", secret)
+    monkeypatch.chdir(tmp_path)
+    create_app_mock = mocker.patch("viva.web.app.create_app", return_value=_FakeApp(viva_token=secret))
+    mocker.patch("uvicorn.run")
+
+    result = runner.invoke(app, ["serve", "--host", "0.0.0.0"])
+
+    assert create_app_mock.call_args.kwargs["token"] == secret
+    assert secret not in result.output
+    assert "VIVA_ACCESS_TOKEN" in result.output
+
+
+def test_serve_without_a_configured_token_passes_none_and_prints_the_generated_one(mocker, monkeypatch, tmp_path):
+    monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
+    monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    monkeypatch.delenv("VIVA_ACCESS_TOKEN", raising=False)
+    monkeypatch.chdir(tmp_path)
+    create_app_mock = mocker.patch("viva.web.app.create_app", return_value=_FakeApp(viva_token="generated-xyz"))
+    mocker.patch("uvicorn.run")
+
+    result = runner.invoke(app, ["serve", "--host", "0.0.0.0"])
+
+    assert create_app_mock.call_args.kwargs["token"] is None
+    assert "generated-xyz" in result.output
+
+
+def test_serve_rejects_a_too_short_access_token_before_starting(mocker, monkeypatch, tmp_path):
+    monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
+    monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    monkeypatch.setenv("VIVA_ACCESS_TOKEN", "short-secret")
+    monkeypatch.chdir(tmp_path)
+    create_app_mock = mocker.patch("viva.web.app.create_app")
+    run_mock = mocker.patch("uvicorn.run")
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 2
+    assert "at least 16" in result.output
+    assert "short-secret" not in result.output
+    create_app_mock.assert_not_called()
+    run_mock.assert_not_called()

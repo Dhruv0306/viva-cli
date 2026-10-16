@@ -20,6 +20,10 @@ services:
       # the native setting from leaking in. §27.10.
       - OLLAMA_HOST=${DOCKER_OLLAMA_HOST:-http://host.docker.internal:11434}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      # Optional fixed access token (min 16 chars). Blank means a random one
+      # per start, printed in the container log. docs/system-design/31-
+      # phase-26-followups-design.md section 31.3.
+      - VIVA_ACCESS_TOKEN=${VIVA_ACCESS_TOKEN:-}
       - MAX_CONCURRENT_SESSIONS=${MAX_CONCURRENT_SESSIONS:-5}
     extra_hosts:
       # No-op on Docker Desktop (host.docker.internal already resolves

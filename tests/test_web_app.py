@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from viva.config import Config
@@ -818,3 +820,102 @@ def test_index_embeds_empty_token_for_default_loopback_bind(mocker, tmp_path):
     response = client.get("/")
 
     assert 'window.__VIVA_TOKEN__ = "";' in response.text
+
+
+# -- Phase 26: token hardening (docs/system-design/31-phase-26-followups-
+# design.md §31.3) -----------------------------------------------------------
+
+from viva.web.app import resolve_access_token  # noqa: E402
+
+_FIXED_TOKEN = "a-fixed-token-0123456789"
+
+
+def _client_with_token(mocker, tmp_path, host: str, token: str | None):
+    config = _config(tmp_path)
+    mocker.patch("viva.web.app.SessionRegistry", return_value=_FakeRegistry(config))
+    web_app = create_app(config, host=host, token=token)
+    return TestClient(web_app), web_app
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", "\t\n"])
+def test_blank_access_token_means_generate_one(value):
+    assert resolve_access_token(value) is None
+
+
+def test_access_token_is_stripped_and_returned():
+    assert resolve_access_token(f"  {_FIXED_TOKEN}\n") == _FIXED_TOKEN
+
+
+def test_too_short_access_token_is_rejected_without_echoing_it():
+    with pytest.raises(ValueError) as excinfo:
+        resolve_access_token("short-secret")
+    assert "at least 16" in str(excinfo.value)
+    assert "short-secret" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize("value", ['abcdefghijklmnop"; alert(1)//', "abcdefghijklmnop</script>", "abcdefghijklmnop qrstuvwx", "abcdefghijklmnop\\x"])
+def test_access_token_with_characters_that_could_break_out_of_the_page_is_rejected(value):
+    with pytest.raises(ValueError) as excinfo:
+        resolve_access_token(value)
+    assert value not in str(excinfo.value)
+
+
+def test_a_configured_token_is_used_instead_of_a_random_one(mocker, tmp_path):
+    client, web_app = _client_with_token(mocker, tmp_path, "0.0.0.0", _FIXED_TOKEN)
+
+    assert web_app.state.viva_token == _FIXED_TOKEN
+    assert client.get("/api/sessions").status_code == 401
+    assert client.get("/api/sessions", headers={"X-Viva-Token": _FIXED_TOKEN}).status_code == 200
+
+
+def test_a_configured_token_turns_auth_on_even_for_a_loopback_bind(mocker, tmp_path):
+    client, web_app = _client_with_token(mocker, tmp_path, "127.0.0.1", _FIXED_TOKEN)
+
+    assert web_app.state.viva_token == _FIXED_TOKEN
+    assert client.get("/api/sessions").status_code == 401
+    assert client.get("/api/sessions", headers={"X-Viva-Token": _FIXED_TOKEN}).status_code == 200
+
+
+def test_loopback_without_a_configured_token_still_has_no_auth(mocker, tmp_path):
+    client, web_app = _client_with_token(mocker, tmp_path, "127.0.0.1", None)
+
+    assert web_app.state.viva_token is None
+    assert client.get("/api/sessions").status_code == 200
+
+
+def test_index_embeds_a_configured_token_only_when_the_request_proves_it(mocker, tmp_path):
+    client, _ = _client_with_token(mocker, tmp_path, "0.0.0.0", _FIXED_TOKEN)
+
+    assert _FIXED_TOKEN in client.get(f"/?token={_FIXED_TOKEN}").text
+    assert _FIXED_TOKEN not in client.get("/").text
+    assert _FIXED_TOKEN not in client.get("/?token=wrong-wrong-wrong-1").text
+
+
+@pytest.mark.parametrize("path", ["/", "/api/sessions", "/static/app.js"])
+def test_security_headers_are_on_every_kind_of_response(mocker, tmp_path, path):
+    client, _ = _client_with_token(mocker, tmp_path, "127.0.0.1", None)
+
+    response = client.get(path)
+
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+
+
+@pytest.mark.parametrize("path, expect_no_store", [("/", True), ("/api/sessions", True), ("/static/app.js", False)])
+def test_cache_control_no_store_only_where_the_token_or_session_data_can_be(mocker, tmp_path, path, expect_no_store):
+    client, _ = _client_with_token(mocker, tmp_path, "127.0.0.1", None)
+
+    response = client.get(path)
+
+    assert (response.headers.get("Cache-Control") == "no-store") is expect_no_store
+
+
+def test_unauthorized_response_also_carries_the_security_headers(mocker, tmp_path):
+    client, _ = _client_with_token(mocker, tmp_path, "0.0.0.0", _FIXED_TOKEN)
+
+    response = client.get("/api/sessions")
+
+    assert response.status_code == 401
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Referrer-Policy"] == "no-referrer"

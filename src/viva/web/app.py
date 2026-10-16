@@ -17,6 +17,7 @@ input) -> 400, 3 (not found / wrong state) -> 404/409, 1 (unexpected)
 from __future__ import annotations
 
 import hmac
+import re
 import secrets
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -59,6 +60,33 @@ def _requires_auth(host: str) -> bool:
     return host not in _LOOPBACK_HOSTS
 
 
+# docs/system-design/31-phase-26-followups-design.md §31.3. A configured
+# token is embedded in an inline <script> string and accepted from a URL,
+# so it is limited to URL-safe characters (nothing that could close the
+# string or the script tag) and must be long enough to resist guessing.
+MIN_ACCESS_TOKEN_LENGTH = 16
+_ACCESS_TOKEN_CHARS = re.compile(r"[A-Za-z0-9_\-.~]+")
+
+
+def resolve_access_token(configured: str | None) -> str | None:
+    """Validate `VIVA_ACCESS_TOKEN`. Unset or blank means "generate a
+    random one per start" (returns None). Raises `ValueError` with a
+    message safe to show (it never contains the token) otherwise."""
+    if configured is None or not configured.strip():
+        return None
+    value = configured.strip()
+    if len(value) < MIN_ACCESS_TOKEN_LENGTH:
+        raise ValueError(
+            f"VIVA_ACCESS_TOKEN is too short: use at least {MIN_ACCESS_TOKEN_LENGTH} "
+            'characters (for example: python -c "import secrets; print(secrets.token_urlsafe(24))")'
+        )
+    if _ACCESS_TOKEN_CHARS.fullmatch(value) is None:
+        raise ValueError(
+            "VIVA_ACCESS_TOKEN may contain only letters, digits and the characters _ - . ~"
+        )
+    return value
+
+
 class StartSessionRequest(BaseModel):
     repo_url: str
     branch: str | None = None
@@ -75,7 +103,7 @@ class CleanupRequest(BaseModel):
     all: bool = False
 
 
-def create_app(config: Config, host: str = "127.0.0.1") -> FastAPI:
+def create_app(config: Config, host: str = "127.0.0.1", token: str | None = None) -> FastAPI:
     registry = SessionRegistry(config)
     # §21.3/§21.4 -- every existing create_app(config) call site (9 of
     # them, all in test_web_app.py) omits `host`, so this defaults to the
@@ -83,8 +111,15 @@ def create_app(config: Config, host: str = "127.0.0.1") -> FastAPI:
     # False/None exactly as before this phase existed. Only a real,
     # non-loopback `host` (as passed by cli.py's `serve` command) turns
     # auth on at all.
-    require_token = _requires_auth(host)
-    token = secrets.token_urlsafe(24) if require_token else None
+    #
+    # Phase 26 (§31.3): a `token` passed in (from VIVA_ACCESS_TOKEN, already
+    # validated by resolve_access_token()) is used instead of a random one,
+    # and turns auth on even on a loopback bind -- setting a token is an
+    # explicit request for it, and quietly ignoring it would be the less
+    # safe reading.
+    require_token = _requires_auth(host) or token is not None
+    if require_token and token is None:
+        token = secrets.token_urlsafe(24)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -336,7 +371,13 @@ def create_app(config: Config, host: str = "127.0.0.1") -> FastAPI:
         # token, or the wrong one, gets an empty string embedded, same
         # as the loopback case -- its page's JS calls will correctly
         # 401 against /api/*, matching the actual security boundary.
-        embed_token = token if (not require_token or request.query_params.get("token") == token) else None
+        # Constant-time, like the /api/* middleware below (§31.3): this
+        # compare was the one place that still used `==`.
+        embed_token = (
+            token
+            if (not require_token or hmac.compare_digest(request.query_params.get("token") or "", token or ""))
+            else None
+        )
         html = (_STATIC_DIR / "index.html").read_text()
         html = html.replace("{{VIVA_TOKEN}}", embed_token or "")
         return Response(content=html, media_type="text/html")
@@ -383,6 +424,27 @@ def create_app(config: Config, host: str = "127.0.0.1") -> FastAPI:
         if not hmac.compare_digest(supplied or "", token):
             return JSONResponse(status_code=401, content={"detail": "Missing or invalid access token."})
         return await call_next(request)
+
+    # Registered AFTER _require_token on purpose: Starlette runs the
+    # most recently added middleware outermost, so this one also wraps the
+    # 401 that _require_token returns without calling the app.
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):
+        # §31.3. The page may embed the access token and /api/* returns
+        # session data, so neither may be cached; Referrer-Policy keeps a
+        # ?token= URL out of any Referer header; nosniff and frame denial
+        # are the standard no-cost hardening for a page that holds a
+        # secret. No Content-Security-Policy: the page needs an inline
+        # script for the token, so a policy that allowed it would add
+        # little.
+        response = await call_next(request)
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        path = request.url.path
+        if path == "/" or path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     # index.html references its assets as absolute /static/... paths
     # (static/index.html), so the mount point has to be /static, not /

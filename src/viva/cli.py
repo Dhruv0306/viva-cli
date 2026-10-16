@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import logging
 from dataclasses import asdict
 from pathlib import Path
@@ -897,9 +898,29 @@ def serve(
 
     from viva.web.app import create_app
 
+    from viva.web.app import resolve_access_token
+
+    # Phase 26 (docs/system-design/31-phase-26-followups-design.md §31.3):
+    # an optional fixed token instead of a random one per start. Read here,
+    # after Config.load() has loaded .env, and passed to create_app() the
+    # way `host` is, so there is no new Config field.
+    try:
+        configured_token = resolve_access_token(os.environ.get("VIVA_ACCESS_TOKEN"))
+    except ValueError as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        raise typer.Exit(code=2) from None
+
     console.print(f"[green]Starting viva room on http://{host}:{port}[/green]")
-    web_app = create_app(config, host=host)
-    if web_app.state.viva_token:
+    web_app = create_app(config, host=host, token=configured_token)
+    if configured_token:
+        # Never printed: it is the user's own secret, already in their
+        # environment, and a log is not where it belongs.
+        console.print(
+            "[yellow]An access token is required for every /api/* request "
+            "(from VIVA_ACCESS_TOKEN). Open the page with ?token=<your token>, "
+            "or send it as the X-Viva-Token header.[/yellow]"
+        )
+    elif web_app.state.viva_token:
         console.print(
             "[yellow]Binding to a non-loopback address -- an access token is "
             "required for every /api/* request.[/yellow]\n"
