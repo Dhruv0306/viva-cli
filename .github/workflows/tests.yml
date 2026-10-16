@@ -148,8 +148,8 @@ jobs:
     # Independent of the pytest chain (no `needs:`), like `lint`, so a
     # Docker regression surfaces immediately. Three Phase 22 bugs were
     # only ever found by running Docker by hand; each step below is the
-    # automated version of one of those hand checks. Does NOT start the
-    # container -- a smoke test is a separate, later phase.
+    # automated version of one of those hand checks. The last steps start
+    # the built container and exercise it (Phase 25, no Ollama involved).
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -188,3 +188,20 @@ jobs:
             -v "$PWD/src/viva/analyzer/queries:/check/queries:ro" \
             --entrypoint python "$IMAGE" - /check/queries \
             < scripts/check_image_assets.py
+
+      - name: Container smoke test
+        # Phase 25 (docs/system-design/30-phase-25-container-smoke-test-
+        # design.md). Starts the already-built image with `docker compose
+        # up --no-build`, reads the access token from its log, checks the
+        # web server over HTTP and the process owner and data directory
+        # over `docker compose exec`, and tears the container down itself.
+        # The token is masked in every message the script prints.
+        shell: bash
+        run: python3 scripts/smoke_container.py
+
+      - name: Tear down the container
+        # The script already does this; this covers a runner-level failure
+        # (timeout, cancelled job) that skips the script's own cleanup.
+        if: always()
+        shell: bash
+        run: docker compose down -v
