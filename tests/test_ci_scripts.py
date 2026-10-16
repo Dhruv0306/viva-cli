@@ -12,6 +12,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -24,6 +25,9 @@ def _load(name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # Registered before executing: @dataclass looks its module up in
+    # sys.modules while the class body runs.
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -308,3 +312,79 @@ def test_http_checks_notice_a_server_that_does_not_require_a_token(
     with _running_app(tmp_path, monkeypatch, "127.0.0.1") as (base_url, _):
         problems = smoke.run_http_checks(base_url, "some-token")
     assert any("without a token returned 200, expected 401" in p for p in problems)
+
+
+# -- scripts/summarize_retrieval_log.py (Phase 26) --------------------------
+
+summarize = _load("summarize_retrieval_log")
+
+_SAMPLE_LOG = """\
+2026-10-16 10:00:01 INFO viva.questiongen.retrieval: Retrieval for category=error_handling architecture_topic=None target_module=src target_file=None: 20 candidate(s) fetched, 18 after test-path filter, 5 after relevance filter (distances: min=0.412 max=0.801)
+2026-10-16 10:01:01 INFO viva.questiongen.retrieval: Retrieval for category=error_handling architecture_topic=None target_module=core target_file=a.py: 20 candidate(s) fetched, 17 after test-path filter, 0 after relevance filter (distances: min=n/a max=n/a)
+2026-10-16 10:02:01 INFO viva.questiongen.retrieval: Retrieval for category=testing_strategy architecture_topic=None target_module=tests target_file=None: 3 candidate(s) fetched, 0 after test-path filter, 0 after relevance filter (distances: min=n/a max=n/a)
+2026-10-16 10:03:01 INFO viva.orchestrator: Replenished plan for session s1: 6 -> 12 questions
+2026-10-16 10:04:01 INFO viva.questiongen.retrieval: Retrieval for category=error_handling architecture_topic=None target_module=src target_file=None: 20 candidate(s) fetched, 18 after test-path filter, 4 after relevance filter (distances: min=0.500 max=0.700)
+"""
+
+
+def test_retrieval_log_lines_are_grouped_per_category():
+    stats = summarize.parse(_SAMPLE_LOG.splitlines())
+
+    errors = stats["error_handling"]
+    assert errors.retrievals == 3
+    assert errors.empty == 1
+    assert errors.emptied_by_distance_filter == 1  # candidates existed, none close enough
+    assert errors.best == [0.412, 0.5]
+    assert errors.worst == [0.801, 0.7]
+
+    testing = stats["testing_strategy"]
+    assert testing.retrievals == 1
+    assert testing.empty == 1
+    assert testing.emptied_by_distance_filter == 0  # the test-path filter emptied it, not distance
+
+
+def test_unrelated_lines_are_ignored():
+    assert summarize.parse(["INFO viva.orchestrator: nothing to see", ""]) == {}
+
+
+def test_render_shows_each_category_and_handles_a_category_with_no_kept_chunks():
+    text = summarize.render(summarize.parse(_SAMPLE_LOG.splitlines()))
+
+    assert "error_handling" in text and "testing_strategy" in text
+    assert "0.412" in text  # smallest best distance for error_handling
+    assert "0.801" in text  # largest worst distance
+    assert "n/a" in text    # testing_strategy never kept a chunk
+
+
+def test_render_with_nothing_to_report_says_so():
+    assert "No 'Retrieval for category=...' lines found." in summarize.render({})
+
+
+def test_summarizer_reads_the_real_log_line_format():
+    """Guards against retrieval.py's log message drifting from this regex:
+    the line the real code emits must still parse."""
+    import logging
+
+    from viva.questiongen import retrieval
+
+    records: list[str] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = Capture()
+    retrieval.logger.addHandler(handler)
+    previous = retrieval.logger.level
+    retrieval.logger.setLevel(logging.INFO)
+    try:
+        retrieval.logger.info(
+            "Retrieval for category=%s architecture_topic=%s target_module=%s target_file=%s: "
+            "%d candidate(s) fetched, %d after test-path filter, %d after relevance filter "
+            "(distances: min=%s max=%s)",
+            "error_handling", None, "src", None, 20, 18, 5, "0.412", "0.801",
+        )
+    finally:
+        retrieval.logger.removeHandler(handler)
+        retrieval.logger.setLevel(previous)
+    assert summarize.parse(records)["error_handling"].retrievals == 1
