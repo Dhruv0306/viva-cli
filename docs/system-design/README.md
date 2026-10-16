@@ -277,5 +277,11 @@ history of what was tried and rejected along the way.
   status and token behavior), the process owner and the data directory,
   with no Ollama involved. No new `Config` field.
 
+- **[31-phase-26-followups-design.md](31-phase-26-followups-design.md)**
+  -- the Phase 26 design: keep and harden the container's access token
+  (§27.7 decision), stop plan replenishment at near-duplicates, per-file
+  progress during analysis, and evaluator citation validation with a
+  retrieval-log summarizer. No new `Config` field.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

@@ -887,18 +887,22 @@ Each phase is independently testable and produces a working, demoable slice.
   in-process app), full suite, `ruff` and `mypy` clean; the `docker` job
   green on GitHub with the smoke steps.
 
+## Phase 26 -- Follow-ups: Token Hardening, Replenishment Stop, Analysis Progress, Citation Integrity
+- Design doc: `docs/system-design/31-phase-26-followups-design.md`.
+- Four backlog items, each its own patch: (1) the §27.7 decision, keep the
+  token requirement and harden around it (constant-time compare on `/`,
+  security headers, token out of the address bar, optional fixed
+  `VIVA_ACCESS_TOKEN`); (2) stop replenishing when only near-duplicates of
+  asked questions remain; (3) per-file and per-module progress in the web
+  UI during analysis; (4) validate evaluator citations against the
+  retrieved context, tighten the feedback wording, and add a retrieval-log
+  summarizer for the Phase 16 distance follow-up.
+- No new `Config` field.
+- **Exit criteria:** unit tests that fail before and pass after for each
+  item; full suite, `ruff` and `mypy` clean; then the planned full run,
+  which is the only check of model wording and of the browser behavior.
+
 ## Backlog (not yet scheduled)
-- **Candidates from Phase 22/23's real runs**, none started:
-  - The §27.7 decision: leave the access token requirement for the
-    container as documented, or add an explicit opt-in that skips it when
-    the port is published on loopback only.
-  - Replenished questions can repeat earlier topics on a very small repo
-    (one function produced several near-identical questions). Decide
-    whether to stop replenishing when it can only produce near-duplicates.
-  - Evaluator output quality: weaknesses that read as plain facts, and
-    citations like `(N/A (Not present in the policy file))`. Model output,
-    not report assembly; pytest cannot judge it.
-  - No progress detail in the web UI during a long analysis step.
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
   the categories/cases no data exists for yet.** The default set in
   Patch B (docs/system-design/22-phase-16-grading-integrity-
@@ -907,7 +911,9 @@ Each phase is independently testable and produces a working, demoable slice.
   `testing_strategy` samples were ever collected, and only one
   thin-repo case (`octocat/Hello-World`) exists. Not blocking, the
   value is already better than the previous "disabled" state either
-  way, but worth tracking rather than trusting silently.
+  way, but worth tracking rather than trusting silently. Phase 26 adds
+  `scripts/summarize_retrieval_log.py` so the full run's log answers this;
+  the value itself is unchanged until that data is in.
   - **Concrete signal to watch for**, from the `Retrieval for
     category=...` log line every real session already prints: an
     `error_handling` or `testing_strategy` question getting
