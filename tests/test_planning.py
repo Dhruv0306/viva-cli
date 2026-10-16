@@ -183,3 +183,175 @@ def test_replenish_raises_the_max_questions_ceiling(monkeypatch):
     compute_replenished_plan(profile=object(), config=_config(max_questions=8), current_top_level_count=10)
 
     assert seen_configs[0].max_questions == 10 + planning_module._REPLENISH_INCREMENT
+
+
+# -- compute_replenished_plan: near-duplicate filtering (Phase 26) ------------
+# docs/system-design/31-phase-26-followups-design.md §31.2
+
+import dataclasses  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+
+def _profile(*modules_with_file_counts: tuple[str, int]) -> SimpleNamespace:
+    files = [
+        SimpleNamespace(module=module, is_test=False)
+        for module, count in modules_with_file_counts
+        for _ in range(count)
+    ]
+    return SimpleNamespace(sampled_files=files)
+
+
+def _item(item_id: str, category: str, module: str | None = None, file: str | None = None,
+          topic: str | None = None) -> QuestionPlanItem:
+    return QuestionPlanItem(
+        id=item_id, category=category, target_module=module, target_file=file,
+        architecture_topic=topic,
+    )
+
+
+def _asked(row: QARecordRow) -> QARecordRow:
+    return dataclasses.replace(row, status="answered")
+
+
+def _scripted_planner(monkeypatch, full_plan: list[QuestionPlanItem]) -> None:
+    """build_coverage_plan() stand-in that honors the ceiling the way the
+    real one does: the first `max_questions` items of one fixed plan."""
+    monkeypatch.setattr(
+        planning_module, "build_coverage_plan",
+        lambda profile, config: full_plan[: config.max_questions],
+    )
+
+
+def test_replenish_drops_a_repeated_architecture_topic(monkeypatch):
+    full = [
+        _item("q1", "architecture", topic="overview"),
+        _item("q2", "architecture", topic="overview"),  # Pass 1.5's second slot
+    ]
+    _scripted_planner(monkeypatch, full)
+    persisted = [_asked(_row("q1", "architecture", architecture_topic="overview"))]
+
+    assert compute_replenished_plan(
+        _profile(), _config(), current_top_level_count=1, persisted=persisted
+    ) is None
+
+
+def test_replenish_drops_a_file_level_item_in_a_single_file_module(monkeypatch):
+    full = [
+        _item("q1", "implementation_detail", module="core"),
+        _item("q2", "implementation_detail", module="core", file="core/a.py"),
+    ]
+    _scripted_planner(monkeypatch, full)
+    persisted = [_asked(_row("q1", "implementation_detail", target_module="core"))]
+
+    assert compute_replenished_plan(
+        _profile(("core", 1)), _config(), current_top_level_count=1, persisted=persisted
+    ) is None
+
+
+def test_replenish_keeps_a_file_level_item_in_a_multi_file_module(monkeypatch):
+    full = [
+        _item("q1", "implementation_detail", module="core"),
+        _item("q2", "implementation_detail", module="core", file="core/a.py"),
+    ]
+    _scripted_planner(monkeypatch, full)
+    persisted = [_asked(_row("q1", "implementation_detail", target_module="core"))]
+
+    result = compute_replenished_plan(
+        _profile(("core", 3)), _config(), current_top_level_count=1, persisted=persisted
+    )
+
+    assert [i.id for i in result] == ["q2"]
+
+
+def test_replenish_keeps_the_same_target_under_a_different_category(monkeypatch):
+    full = [
+        _item("q1", "implementation_detail", module="core"),
+        _item("q2", "design_rationale", module="core"),
+    ]
+    _scripted_planner(monkeypatch, full)
+    persisted = [_asked(_row("q1", "implementation_detail", target_module="core"))]
+
+    result = compute_replenished_plan(
+        _profile(("core", 1)), _config(), current_top_level_count=1, persisted=persisted
+    )
+
+    assert [i.id for i in result] == ["q2"]
+
+
+def test_replenish_does_not_treat_a_skipped_question_as_asked(monkeypatch):
+    full = [
+        _item("q1", "implementation_detail", module="core"),
+        _item("q2", "implementation_detail", module="core", file="core/a.py"),
+    ]
+    _scripted_planner(monkeypatch, full)
+    skipped = dataclasses.replace(
+        _row("q1", "implementation_detail", target_module="core"), status="skipped_no_grounding"
+    )
+
+    result = compute_replenished_plan(
+        _profile(("core", 1)), _config(), current_top_level_count=1, persisted=[skipped]
+    )
+
+    assert [i.id for i in result] == ["q2"]
+
+
+def test_replenish_finds_a_fresh_item_behind_a_window_of_duplicates(monkeypatch):
+    full = [_item("q1", "architecture", topic="overview")]
+    full += [_item(f"q{n}", "architecture", topic="overview") for n in range(2, 8)]
+    full += [_item("q8", "implementation_detail", module="other")]
+    _scripted_planner(monkeypatch, full)
+    persisted = [_asked(_row("q1", "architecture", architecture_topic="overview"))]
+
+    result = compute_replenished_plan(
+        _profile(("other", 2)), _config(), current_top_level_count=1, persisted=persisted
+    )
+
+    # The first window (ceiling 1 + increment) is all duplicates; the
+    # ceiling must be raised until q8 shows up, not give up there.
+    assert [i.id for i in result] == ["q8"]
+
+
+def test_replenish_collapses_duplicates_within_one_batch(monkeypatch):
+    full = [
+        _item("q1", "architecture", topic="overview"),
+        _item("q2", "implementation_detail", module="core"),
+        _item("q3", "implementation_detail", module="core", file="core/a.py"),
+    ]
+    _scripted_planner(monkeypatch, full)
+    persisted = [_asked(_row("q1", "architecture", architecture_topic="overview"))]
+
+    result = compute_replenished_plan(
+        _profile(("core", 1)), _config(), current_top_level_count=1, persisted=persisted
+    )
+
+    assert [i.id for i in result] == ["q2"]
+
+
+def test_replenish_never_returns_an_already_persisted_item(monkeypatch):
+    full = [
+        _item("q1", "architecture", topic="overview"),
+        _item("q2", "architecture", topic="security"),
+    ]
+    _scripted_planner(monkeypatch, full)
+    persisted = [_row("q1", "architecture", architecture_topic="overview"),
+                 _row("q2", "architecture", architecture_topic="security")]
+
+    assert compute_replenished_plan(
+        _profile(), _config(), current_top_level_count=2, persisted=persisted
+    ) is None
+
+
+def test_replenish_stops_when_the_planner_runs_out_of_items(monkeypatch):
+    calls = []
+
+    def planner(profile, config):
+        calls.append(config.max_questions)
+        return [_item("q1", "architecture", topic="overview")]
+
+    monkeypatch.setattr(planning_module, "build_coverage_plan", planner)
+    persisted = [_asked(_row("q1", "architecture", architecture_topic="overview"))]
+
+    assert compute_replenished_plan(
+        _profile(), _config(), current_top_level_count=1, persisted=persisted
+    ) is None
+    assert len(calls) == 1  # fewer items than the ceiling allowed: no point raising it

@@ -14,12 +14,15 @@ stays in `orchestrator.py`. See §27.2 for the full scoping rationale.
 from __future__ import annotations
 
 import dataclasses
+from collections import Counter
+from collections.abc import Sequence
 
 from viva.config import Config
 from viva.profile import ProjectProfile
 from viva.questiongen import build_coverage_plan
 from viva.questiongen.models import QuestionPlanItem
 from viva.storage import QARecordRow
+from viva.storage.session_store import ANSWERED, ASKED
 
 # Phase 13 (docs/system-design/18-phase-13-architecture-tier-questions-
 # design.md §18.5): how much higher to raise the max_questions ceiling on
@@ -29,6 +32,13 @@ from viva.storage import QARecordRow
 # just large enough that a fast answerer doesn't trigger a replenishment
 # call on almost every single question.
 _REPLENISH_INCREMENT = 6
+
+# Upper bound on how many times compute_replenished_plan() raises the
+# ceiling looking for a non-duplicate item before giving up. build_coverage_
+# plan() always runs out of groundable items eventually (every pass is
+# finite), so this is a backstop against a pathological profile, never the
+# normal exit.
+_MAX_REPLENISH_ROUNDS = 25
 
 
 def rank_pending_items(
@@ -105,10 +115,35 @@ def rank_pending_items(
     return followups + sorted(non_followups, key=_priority)
 
 
+def _dedup_key(
+    category: str,
+    target_module: str | None,
+    target_file: str | None,
+    architecture_topic: str | None,
+    single_file_modules: frozenset[str],
+) -> tuple[str | None, ...]:
+    """What "the same question" means for replenishment (docs/system-
+    design/31-phase-26-followups-design.md §31.2).
+
+    Architecture questions are the same when the topic is. Per-module
+    questions are the same when category and target are. In a module with
+    exactly one source file, a file-level item and a module-level item
+    target the same code, so they share a key; in a module with several
+    files they do not, because a file-level question really does ask about
+    something narrower.
+    """
+    if category == "architecture":
+        return (category, architecture_topic)
+    if target_file and target_module in single_file_modules:
+        return (category, target_module, None)
+    return (category, target_module, target_file)
+
+
 def compute_replenished_plan(
     profile: ProjectProfile,
     config: Config,
     current_top_level_count: int,
+    persisted: Sequence[QARecordRow] | None = None,
 ) -> list[QuestionPlanItem] | None:
     """Phase 13 (docs/system-design/18-phase-13-architecture-tier-
     questions-design.md §18.5): called when the live loop's pending queue
@@ -117,32 +152,80 @@ def compute_replenished_plan(
     `build_coverage_plan()` is deterministic given `(profile,
     max_questions)`, so raising the ceiling and calling it again
     reproduces every already-persisted item identically, plus a genuinely
-    new tail. The caller re-saves the whole rebuilt plan via
+    new tail. The caller re-saves what this returns via
     `SessionStore.save_plan()`'s `INSERT OR IGNORE` (keyed on
-    `(session_id, question_id)`) -- anything whose `question_id` already
-    exists is silently skipped, no manual diffing needed here. (The
-    design doc's original write-up assumed a manual ID diff would be
-    necessary; `INSERT OR IGNORE` already covered it before that patch
-    existed.)
+    `(session_id, question_id)`).
 
-    Returns the new plan if it actually grew past `current_top_level_
-    count` (the caller loops back and re-fetches pending). Returns `None`
-    if the profile has genuinely run out of groundable modules/files/
-    topics -- `build_coverage_plan()` returned no more items than what's
-    already persisted even with a higher ceiling -- so the caller can
-    treat that as a true terminal `QUESTIONS_EXHAUSTED` rather than
-    retrying the same or a higher ceiling again in this session (which
-    would otherwise busy-loop on every empty-pending check for the rest
-    of the timer).
+    Without `persisted` (the original contract, kept for callers and tests
+    that predate Phase 26): returns the whole rebuilt plan if it grew past
+    `current_top_level_count`, else `None`.
+
+    With `persisted` (every qa_record already in the session, Phase 26,
+    §31.2): returns only the *new, non-duplicate* items to add, or `None`
+    when none remain. A new item is dropped when it is a near-duplicate of
+    one already asked (same category and same effective target, see
+    `_dedup_key`), or of an earlier item in this same batch. If a whole
+    window of the plan is near-duplicates, the ceiling is raised again, so
+    a fresh item sitting behind some duplicates is still found; `None` is
+    returned only when the planner itself runs out. That `None` is the
+    caller's cue to end the session as `QUESTIONS_EXHAUSTED` instead of
+    asking a small repo the same thing again.
 
     `current_top_level_count` is the caller's count of already-persisted
     top-level (non-follow-up) items -- this function has no store access
     of its own to derive it.
     """
-    replenished_config = dataclasses.replace(
-        config, max_questions=current_top_level_count + _REPLENISH_INCREMENT
+    if persisted is None:
+        replenished_config = dataclasses.replace(
+            config, max_questions=current_top_level_count + _REPLENISH_INCREMENT
+        )
+        new_plan = build_coverage_plan(profile, replenished_config)
+        if len(new_plan) <= current_top_level_count:
+            return None
+        return new_plan
+
+    source_files_per_module = Counter(
+        f.module for f in profile.sampled_files if not f.is_test
     )
-    new_plan = build_coverage_plan(profile, replenished_config)
-    if len(new_plan) <= current_top_level_count:
-        return None
-    return new_plan
+    single_file_modules = frozenset(
+        module for module, count in source_files_per_module.items() if count == 1
+    )
+
+    def key_of(
+        category: str,
+        target_module: str | None,
+        target_file: str | None,
+        architecture_topic: str | None,
+    ) -> tuple[str | None, ...]:
+        return _dedup_key(
+            category, target_module, target_file, architecture_topic, single_file_modules
+        )
+
+    persisted_ids = {r.question_id for r in persisted}
+    seen = {
+        key_of(r.category, r.target_module, r.target_file, r.architecture_topic)
+        for r in persisted
+        if r.status in (ASKED, ANSWERED)
+    }
+
+    ceiling = current_top_level_count
+    for _ in range(_MAX_REPLENISH_ROUNDS):
+        ceiling += _REPLENISH_INCREMENT
+        plan = build_coverage_plan(profile, dataclasses.replace(config, max_questions=ceiling))
+        fresh: list[QuestionPlanItem] = []
+        batch_seen = set(seen)
+        for item in plan:
+            if item.id in persisted_ids:
+                continue
+            key = key_of(item.category, item.target_module, item.target_file, item.architecture_topic)
+            if key in batch_seen:
+                continue
+            batch_seen.add(key)
+            fresh.append(item)
+        if fresh:
+            return fresh
+        if len(plan) < ceiling:
+            # The planner returned fewer items than it was allowed: it has
+            # nothing left to offer at any higher ceiling either.
+            return None
+    return None

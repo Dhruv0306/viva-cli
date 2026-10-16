@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -853,6 +854,12 @@ def test_select_next_item_eventually_asks_repeat_category_when_nothing_novel_lef
     assert selected.question_id == "q2"  # only option left -- must still be returned, not None
 
 
+# Phase 26 (docs/system-design/31-phase-26-followups-design.md §31.2):
+# replenishment now reads profile.sampled_files to tell single-file modules
+# apart, so a bare object() no longer stands in for the profile.
+_NO_SAMPLED_FILES_PROFILE = SimpleNamespace(sampled_files=[])
+
+
 def test_replenish_plan_extends_and_returns_true(tmp_path, monkeypatch):
     """Phase 13 (docs/system-design/18-phase-13-architecture-tier-
     questions-design.md §18.5): build_coverage_plan() returning a longer
@@ -876,7 +883,7 @@ def test_replenish_plan_extends_and_returns_true(tmp_path, monkeypatch):
         ],
     )
 
-    result = orch._replenish_plan("sess1", profile=object())
+    result = orch._replenish_plan("sess1", profile=_NO_SAMPLED_FILES_PROFILE)
 
     assert result is True
     pending_ids = {p.question_id for p in store.get_pending_plan_items("sess1")}
@@ -899,7 +906,7 @@ def test_replenish_plan_returns_false_when_nothing_new(tmp_path, monkeypatch):
 
     monkeypatch.setattr(planning_module, "build_coverage_plan", lambda *a, **kw: existing_plan)
 
-    result = orch._replenish_plan("sess1", profile=object())
+    result = orch._replenish_plan("sess1", profile=_NO_SAMPLED_FILES_PROFILE)
 
     assert result is False
 
@@ -922,7 +929,7 @@ def test_replenish_plan_does_not_duplicate_already_persisted_items(tmp_path, mon
         lambda *a, **kw: [q1, QuestionPlanItem(id="q2", category="implementation_detail", target_module="core")],
     )
 
-    orch._replenish_plan("sess1", profile=object())
+    orch._replenish_plan("sess1", profile=_NO_SAMPLED_FILES_PROFILE)
 
     records = store.get_qa_records("sess1")
     assert len([r for r in records if r.question_id == "q1"]) == 1
@@ -1749,7 +1756,7 @@ def test_replenish_plan_logs_when_the_plan_grows(tmp_path, monkeypatch, caplog):
     )
 
     with caplog.at_level("INFO", logger="viva.orchestrator"):
-        assert orch._replenish_plan("sess1", profile=object()) is True
+        assert orch._replenish_plan("sess1", profile=_NO_SAMPLED_FILES_PROFILE) is True
 
     assert "Replenished plan for session sess1: 1 -> 3 questions" in caplog.text
 
@@ -1766,9 +1773,36 @@ def test_replenish_plan_logs_when_nothing_new_is_found(tmp_path, monkeypatch, ca
     monkeypatch.setattr(planning_module, "build_coverage_plan", lambda *a, **kw: existing_plan)
 
     with caplog.at_level("INFO", logger="viva.orchestrator"):
-        assert orch._replenish_plan("sess1", profile=object()) is False
+        assert orch._replenish_plan("sess1", profile=_NO_SAMPLED_FILES_PROFILE) is False
 
     assert (
         "Plan replenishment found no new coverage for session sess1 "
-        "(1 question(s) already planned)"
+        "(1 question(s) already planned; only near-duplicates of asked "
+        "questions remain)"
     ) in caplog.text
+
+
+def test_replenish_plan_stops_when_only_near_duplicates_of_asked_questions_remain(tmp_path, monkeypatch):
+    """Phase 26 (docs/system-design/31-phase-26-followups-design.md §31.2):
+    on a very small repo the rebuilt plan's new tail is just the same
+    architecture topic again. Persisting it would ask the candidate the
+    same thing twice, so replenishment must report nothing new and let the
+    session end as QUESTIONS_EXHAUSTED."""
+    config = _config(tmp_path)
+    orch, store = _make_orchestrator(tmp_path, config, FakeSessionUI(answers=[]))
+    store.create_session("sess1", "https://github.com/o/r", None, None, 1800)
+    store.save_plan("sess1", [
+        QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview"),
+    ])
+    store.record_question_asked("sess1", "q1", "How is this laid out?", [])
+    store.record_answer("sess1", "q1", "like so")
+    monkeypatch.setattr(
+        planning_module, "build_coverage_plan",
+        lambda profile, cfg: [
+            QuestionPlanItem(id="q1", category="architecture", target_module=None, architecture_topic="overview"),
+            QuestionPlanItem(id="q2", category="architecture", target_module=None, architecture_topic="overview"),
+        ][: cfg.max_questions],
+    )
+
+    assert orch._replenish_plan("sess1", profile=_NO_SAMPLED_FILES_PROFILE) is False
+    assert {r.question_id for r in store.get_qa_records("sess1")} == {"q1"}

@@ -529,24 +529,26 @@ class Orchestrator:
         27-phase-22-container-resumption-and-planning-split-design.md
         §27.3/§27.4 and that function's own docstring for the full
         rationale (Phase 13, §18.5)."""
-        current_top_level = sum(
-            1 for r in self.store.get_qa_records(session_id) if r.is_followup_of is None
+        records = self.store.get_qa_records(session_id)
+        current_top_level = sum(1 for r in records if r.is_followup_of is None)
+        new_items = compute_replenished_plan(
+            profile, self.config, current_top_level, persisted=records
         )
-        new_plan = compute_replenished_plan(profile, self.config, current_top_level)
-        if new_plan is None:
+        if new_items is None:
             logger.info(
                 "Plan replenishment found no new coverage for session %s "
-                "(%d question(s) already planned)",
+                "(%d question(s) already planned; only near-duplicates of "
+                "asked questions remain)",
                 session_id,
                 current_top_level,
             )
             return False
-        self.store.save_plan(session_id, new_plan)
+        self.store.save_plan(session_id, new_items)
         logger.info(
             "Replenished plan for session %s: %d -> %d questions",
             session_id,
             current_top_level,
-            len(new_plan),
+            current_top_level + len(new_items),
         )
         return True
 
