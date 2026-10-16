@@ -141,3 +141,50 @@ jobs:
 
       - name: Run pytest
         run: pytest -q
+
+  docker:
+    name: docker (compose config + image build)
+    # Phase 24 (docs/system-design/29-phase-24-docker-ci-job-design.md).
+    # Independent of the pytest chain (no `needs:`), like `lint`, so a
+    # Docker regression surfaces immediately. Three Phase 22 bugs were
+    # only ever found by running Docker by hand; each step below is the
+    # automated version of one of those hand checks. Does NOT start the
+    # container -- a smoke test is a separate, later phase.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Copy .env.example to .env (what a user does first)
+        run: cp .env.example .env
+
+      - name: Check the resolved docker compose config
+        # The native OLLAMA_HOST=http://localhost:11434 is set in BOTH
+        # the .env copied above and the shell here: compose gives the
+        # shell priority over .env, and the container must get neither
+        # (§27.10). The JSON is piped straight into the checker and never
+        # printed, because `docker compose config` shows GITHUB_TOKEN in
+        # plain text. `shell: bash` turns on pipefail, so a failing
+        # `docker compose config` fails the step instead of being hidden
+        # by the pipe.
+        shell: bash
+        env:
+          OLLAMA_HOST: http://localhost:11434
+        run: docker compose config --format json | python3 scripts/check_compose_config.py
+
+      - name: Build the image
+        run: docker compose build
+
+      - name: Check the installed package inside the image
+        # Runs scripts/check_image_assets.py inside the freshly built
+        # image, against the checkout's own list of tree-sitter query
+        # files. Same bug class as release.yml's wheel check (§27.8), but
+        # for what the Dockerfile's `pip install .` actually produced.
+        shell: bash
+        run: |
+          IMAGE=$(docker compose config --images)
+          docker run --rm -i \
+            -v "$PWD/src/viva/analyzer/queries:/check/queries:ro" \
+            --entrypoint python "$IMAGE" - /check/queries \
+            < scripts/check_image_assets.py
