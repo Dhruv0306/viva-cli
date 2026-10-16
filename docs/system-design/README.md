@@ -264,5 +264,12 @@ history of what was tried and rejected along the way.
   plan replenishment so it can be observed instead of inferred. No new
   `Config` field.
 
+- **[29-phase-24-docker-ci-job-design.md](29-phase-24-docker-ci-job-design.md)**
+  -- the Phase 24 design: a `docker` CI job that checks the resolved
+  `docker compose config`, builds the image and verifies the installed
+  package inside it (static web files, tree-sitter query files, `git`),
+  guarding the bugs Phase 22 only found by running Docker by hand. Does not
+  start the container. No new `Config` field.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

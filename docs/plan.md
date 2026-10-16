@@ -852,11 +852,28 @@ Each phase is independently testable and produces a working, demoable slice.
   run there (not installed in that venv), only here and in CI. Details in
   `docs/system-design/28-phase-23-validation-followups-design.md` §28.6.
 
+## Phase 24 -- Docker CI Job
+- Design doc: `docs/system-design/29-phase-24-docker-ci-job-design.md`.
+- Phase 22's Docker bugs (`.env` interpolation, files dropped from the
+  installed package) were only found by running Docker by hand, because CI
+  never touched it. Adds a `docker` job to `tests.yml`: copy
+  `.env.example` to `.env`, check the resolved `docker compose config`
+  (`OLLAMA_HOST` inside the container, loopback-only port, `host-gateway`
+  mapping, volumes), build the image, then check the installed package
+  inside it (static web files, every `.scm` file, `git`).
+- The two checks are stdlib-only scripts under `scripts/` with unit tests,
+  so their logic needs no Docker. The compose JSON is never printed
+  (`GITHUB_TOKEN` appears in it in plain text).
+- No new `Config` field. Does not start the container; a smoke test is the
+  next phase.
+- **Exit criteria:** unit tests, full suite, `ruff` and `mypy` clean; the
+  job green on GitHub for the push that adds it.
+
 ## Backlog (not yet scheduled)
 - **Candidates from Phase 22/23's real runs**, none started:
-  - A Docker job in CI (build the image, check `docker compose config`
-    against a `.env` that sets `OLLAMA_HOST=http://localhost:11434`);
-    three Phase 22 bugs only showed up in manual Docker runs.
+  - A container smoke test in CI (start the container, call its health or
+    login endpoint with the token from its log, tear it down), as the
+    follow-up to Phase 24's build and image checks.
   - The §27.7 decision: leave the access token requirement for the
     container as documented, or add an explicit opt-in that skips it when
     the port is published on loopback only.
