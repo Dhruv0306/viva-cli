@@ -91,6 +91,12 @@ class WebSessionUI(SessionUI):
     def stage_completed(self, stage: str, detail: str) -> None:
         self._update(stage=STAGE_WORKING, detail=f"{stage} complete -- {detail}")
 
+    def stage_progress(self, stage: str, step: str, done: int, total: int) -> None:
+        # A single-step phase (total == 1) has no meaningful "0/1", so it
+        # shows the step name alone.
+        counts = f" {done}/{total}" if total > 1 else ""
+        self._update(stage=STAGE_WORKING, detail=f"{stage}: {step}{counts}...")
+
     def ask_question(self, question_text: str, category: str, question_number: int) -> None:
         self._frozen_remaining = None  # the clock resumes for real now
         self._update(

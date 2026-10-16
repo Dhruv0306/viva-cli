@@ -214,7 +214,9 @@ class Orchestrator:
 
         self.store.update_status(session_id, "ANALYZING")
         self.ui.stage_started("Analyzing codebase")
-        analysis_result = analyze_repo(ingest_result, self.config, self.llm_client)
+        analysis_result = analyze_repo(
+            ingest_result, self.config, self.llm_client, on_progress=self._report_analysis_progress
+        )
         self.ui.stage_completed("Analysis", f"{len(analysis_result.modules)} module(s) summarized")
 
         profile = ProjectProfile.build(ingest_result, analysis_result)
@@ -519,6 +521,13 @@ class Orchestrator:
         self.store.update_status(session_id, "COMPLETE")
 
         self.ui.session_complete(self._build_summary(session_id))
+
+    def _report_analysis_progress(self, step: str, done: int, total: int) -> None:
+        """Forwards analyzer progress to the UI (Phase 26, docs/system-
+        design/31-phase-26-followups-design.md §31.4). The analyzer wraps
+        its callback, so an error here cannot fail the analysis."""
+        logger.debug("Analysis progress: %s %d/%d", step, done, total)
+        self.ui.stage_progress("Analyzing codebase", step, done, total)
 
     def _replenish_plan(self, session_id: str, profile: ProjectProfile) -> bool:
         """Called when `_run_live_session`'s pending queue is empty but

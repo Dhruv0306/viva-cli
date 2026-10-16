@@ -200,3 +200,38 @@ def test_analyze_repo_py_medium_fixture_forces_hierarchical_reduce_with_real_con
     # call; batching means more than one architecture-level call, on top
     # of the 14 per-module reduce calls.
     assert llm.reduce_calls > 14 + 1
+
+
+def test_analyze_repo_reports_progress_for_every_file_and_module(tmp_path, mocker):
+    """Phase 26 (docs/system-design/31-phase-26-followups-design.md §31.4):
+    a long analysis must tell its caller it is moving."""
+    mocker.patch.object(ingest_pkg, "clone_repo", _stub_clone_from_fixture("py_small"))
+    ingest_result = ingest_repo("https://github.com/fixture/py-small", _config(), work_dir=tmp_path / "clone")
+    events: list[tuple[str, int, int]] = []
+
+    analyze_repo(
+        ingest_result, _config(max_reduce_context_tokens=100_000), _FakeLLMClient(),
+        on_progress=lambda step, done, total: events.append((step, done, total)),
+    )
+
+    files = [e for e in events if e[0] == "summarizing files"]
+    modules = [e for e in events if e[0] == "summarizing modules"]
+    assert [e[1] for e in files] == list(range(1, 12))  # 11 fixture files
+    assert {e[2] for e in files} == {11}
+    assert [e[1] for e in modules] == [1, 2, 3]  # "", "src", "tests"
+    assert events[-1] == ("writing the architecture summary", 0, 1)
+
+
+def test_analyze_repo_ignores_a_progress_callback_that_raises(tmp_path, mocker):
+    mocker.patch.object(ingest_pkg, "clone_repo", _stub_clone_from_fixture("py_small"))
+    ingest_result = ingest_repo("https://github.com/fixture/py-small", _config(), work_dir=tmp_path / "clone")
+
+    def broken(step, done, total):
+        raise RuntimeError("UI went away")
+
+    result = analyze_repo(
+        ingest_result, _config(max_reduce_context_tokens=100_000), _FakeLLMClient(),
+        on_progress=broken,
+    )
+
+    assert {m.module for m in result.modules} == {"", "src", "tests"}

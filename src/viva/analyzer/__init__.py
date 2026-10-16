@@ -24,6 +24,9 @@ internal implementation detail.
 """
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
+
 from viva.analyzer.entry_points import detect_entry_points
 from viva.analyzer.extract import analyze_file
 from viva.analyzer.models import AnalysisResult, AnalysisStats
@@ -33,13 +36,36 @@ from viva.config import Config
 from viva.ingest.models import IngestResult
 from viva.llm_client import LLMClient
 
-__all__ = ["analyze_repo"]
+__all__ = ["ProgressCallback", "analyze_repo"]
+
+logger = logging.getLogger(__name__)
+
+# (step, done, total): "summarizing files", 12, 40. Phase 26 (docs/system-
+# design/31-phase-26-followups-design.md §31.4) -- lets a caller show that
+# a long analysis is moving. The analyzer never depends on what the
+# callback does with it.
+ProgressCallback = Callable[[str, int, int], None]
+
+
+def _safe_progress(on_progress: ProgressCallback | None) -> ProgressCallback:
+    """Wrap `on_progress` so a faulty callback can never fail the analysis."""
+
+    def report(step: str, done: int, total: int) -> None:
+        if on_progress is None:
+            return
+        try:
+            on_progress(step, done, total)
+        except Exception:  # noqa: BLE001 - progress display must not break analysis
+            logger.debug("analysis progress callback raised; ignoring", exc_info=True)
+
+    return report
 
 
 def analyze_repo(
     ingest_result: IngestResult,
     config: Config,
     llm_client: LLMClient,
+    on_progress: ProgressCallback | None = None,
 ) -> AnalysisResult:
     """Run the full Analysis pipeline over an `IngestResult` (FR6-FR8).
 
@@ -49,6 +75,7 @@ def analyze_repo(
     `INDEXING`, which is Phase 4, so Analysis is safely before that).
     """
     root = ingest_result.local_path
+    report = _safe_progress(on_progress)
 
     file_analyses = []
     stats = AnalysisStats()
@@ -64,17 +91,19 @@ def analyze_repo(
         file_analyses.append(analysis)
         stats.record(analysis)
 
-    file_summaries = summarize_files(file_analyses, llm_client)
+    file_summaries = summarize_files(file_analyses, llm_client, on_progress=report)
 
     modules_by_name: dict[str, list] = {}
     for fs in file_summaries:
         modules_by_name.setdefault(fs.module, []).append(fs)
 
-    module_summaries = [
-        reduce_module(module, summaries, llm_client, config)
-        for module, summaries in sorted(modules_by_name.items())
-    ]
+    module_summaries = []
+    total_modules = len(modules_by_name)
+    for done, (module, summaries) in enumerate(sorted(modules_by_name.items()), start=1):
+        module_summaries.append(reduce_module(module, summaries, llm_client, config))
+        report("summarizing modules", done, total_modules)
 
+    report("writing the architecture summary", 0, 1)
     architecture_summary = build_architecture_summary(module_summaries, llm_client, config)
 
     entry_points = detect_entry_points(ingest_result.sampled_files, ingest_result.detected_stack)

@@ -224,3 +224,30 @@ def test_timer_property_exposes_the_timer_read_answer_was_given():
     ui.read_answer(timer)
 
     assert ui.timer is timer
+
+
+def test_stage_progress_shows_step_and_counts_while_working():
+    ui = WebSessionUI()
+
+    ui.stage_progress("Analyzing codebase", "summarizing files", 12, 40)
+
+    snapshot = ui.snapshot()
+    assert snapshot["stage"] == STAGE_WORKING
+    assert snapshot["detail"] == "Analyzing codebase: summarizing files 12/40..."
+
+
+def test_stage_progress_for_a_single_step_shows_no_counts():
+    ui = WebSessionUI()
+
+    ui.stage_progress("Analyzing codebase", "writing the architecture summary", 0, 1)
+
+    assert ui.snapshot()["detail"] == "Analyzing codebase: writing the architecture summary..."
+
+
+def test_stage_completed_replaces_the_progress_detail():
+    ui = WebSessionUI()
+    ui.stage_progress("Analyzing codebase", "summarizing files", 40, 40)
+
+    ui.stage_completed("Analysis", "5 module(s) summarized")
+
+    assert "summarizing files" not in ui.snapshot()["detail"]

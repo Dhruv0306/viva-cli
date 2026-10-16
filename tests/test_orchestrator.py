@@ -44,6 +44,9 @@ class FakeSessionUI:
     def stage_completed(self, stage, detail):
         self.events.append(("stage_completed", stage, detail))
 
+    def stage_progress(self, stage, step, done, total):
+        self.events.append(("stage_progress", stage, step, done, total))
+
     def ask_question(self, question_text, category, question_number):
         self.events.append(("ask", question_number, category))
 
@@ -1806,3 +1809,29 @@ def test_replenish_plan_stops_when_only_near_duplicates_of_asked_questions_remai
 
     assert orch._replenish_plan("sess1", profile=_NO_SAMPLED_FILES_PROFILE) is False
     assert {r.question_id for r in store.get_qa_records("sess1")} == {"q1"}
+
+
+def test_start_forwards_analyzer_progress_to_the_ui(tmp_path, monkeypatch):
+    """Phase 26 (docs/system-design/31-phase-26-followups-design.md §31.4):
+    the orchestrator hands the analyzer a callback that reaches
+    `ui.stage_progress` under the "Analyzing codebase" stage name."""
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+
+    def analyze_with_progress(ingest_result, cfg, llm, on_progress=None):
+        assert on_progress is not None
+        on_progress("summarizing files", 1, 2)
+        on_progress("summarizing files", 2, 2)
+        return _fake_analysis_result()
+
+    monkeypatch.setattr(orchestrator_module, "analyze_repo", analyze_with_progress)
+    ui = FakeSessionUI(answers=["answer one", "answer two"])
+    orch, _store = _make_orchestrator(tmp_path, config, ui)
+
+    orch.start("https://github.com/owner/repo", branch="main")
+
+    progress = [e for e in ui.events if e[0] == "stage_progress"]
+    assert progress == [
+        ("stage_progress", "Analyzing codebase", "summarizing files", 1, 2),
+        ("stage_progress", "Analyzing codebase", "summarizing files", 2, 2),
+    ]

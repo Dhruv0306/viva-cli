@@ -456,3 +456,14 @@ def test_read_answer_status_bar_returns_promptly_once_recording_finishes():
 
     # Should return on (at most) the first refresh tick, not linger.
     assert elapsed < 1.5
+
+
+def test_stage_progress_is_a_silent_no_op_on_the_terminal_ui():
+    """Phase 26 (docs/system-design/31-phase-26-followups-design.md §31.4):
+    the terminal UI already prints each stage, and per-file lines would
+    drown it, so the SessionUI default does nothing."""
+    ui, buffer = _ui_with_captured_rich_output()
+
+    ui.stage_progress("Analyzing codebase", "summarizing files", 3, 40)
+
+    assert buffer.getvalue() == ""

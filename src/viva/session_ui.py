@@ -65,6 +65,15 @@ class SessionUI(abc.ABC):
     @abc.abstractmethod
     def stage_completed(self, stage: str, detail: str) -> None: ...
 
+    def stage_progress(self, stage: str, step: str, done: int, total: int) -> None:
+        """Progress inside a long stage (Phase 26, docs/system-design/
+        31-phase-26-followups-design.md §31.4), e.g. `("Analyzing
+        codebase", "summarizing files", 12, 40)`. Deliberately not
+        abstract: a UI that has nothing useful to show (the terminal one,
+        which already prints the stage) inherits this no-op, and every
+        existing subclass keeps working unchanged."""
+        return None
+
     @abc.abstractmethod
     def ask_question(self, question_text: str, category: str, question_number: int) -> None: ...
 

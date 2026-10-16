@@ -6,6 +6,8 @@ doesn't call for.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from viva.analyzer.models import CodeUnit, FileAnalysis, FileSummary
 from viva.llm_client import LLMClient
 
@@ -14,8 +16,18 @@ _LINE_WINDOW_EXCERPT_MAX_WINDOWS = 2
 _BODY_EXCERPT_CHARS_IN_PROMPT = 300
 
 
-def summarize_files(file_analyses: list[FileAnalysis], llm_client: LLMClient) -> list[FileSummary]:
-    return [_summarize_one(fa, llm_client) for fa in file_analyses]
+def summarize_files(
+    file_analyses: list[FileAnalysis],
+    llm_client: LLMClient,
+    on_progress: Callable[[str, int, int], None] | None = None,
+) -> list[FileSummary]:
+    summaries = []
+    total = len(file_analyses)
+    for done, fa in enumerate(file_analyses, start=1):
+        summaries.append(_summarize_one(fa, llm_client))
+        if on_progress is not None:
+            on_progress("summarizing files", done, total)
+    return summaries
 
 
 def _summarize_one(fa: FileAnalysis, llm_client: LLMClient) -> FileSummary:
