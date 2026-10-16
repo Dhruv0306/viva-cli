@@ -8,6 +8,7 @@ checks are exercised against realistic data without needing Docker.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import io
 import json
@@ -199,3 +200,111 @@ def test_empty_source_queries_dir_does_not_pass_vacuously(tmp_path: Path) -> Non
 def test_real_source_tree_has_query_files_for_the_check_to_compare() -> None:
     queries = Path(__file__).resolve().parent.parent / "src" / "viva" / "analyzer" / "queries"
     assert list(queries.glob("*.scm")), "the CI image check compares against these files"
+
+
+# -- scripts/smoke_container.py (Phase 25) ---------------------------------
+
+smoke = _load("smoke_container")
+
+
+def test_extract_token_from_a_real_startup_log() -> None:
+    log = (
+        "Starting viva room on http://0.0.0.0:8000\n"
+        "Binding to a non-loopback address -- an access token is required for every \n"
+        "/api/* request.\n"
+        "Token: ZBPa48LcL6HsDrehvgBETtwL74GCgmXg\n"
+        "Append ?token=ZBPa48LcL6HsDrehvgBETtwL74GCgmXg to the URL, or send it as the \n"
+    )
+    assert smoke.extract_token(log) == "ZBPa48LcL6HsDrehvgBETtwL74GCgmXg"
+
+
+def test_extract_token_returns_none_without_a_token_line() -> None:
+    assert smoke.extract_token("INFO: Uvicorn running on http://0.0.0.0:8000\n") is None
+
+
+def test_redact_masks_the_token_everywhere() -> None:
+    text = "Token: abc123\nAppend ?token=abc123 to the URL\nstray abc123"
+    redacted = smoke.redact(text, "abc123")
+    assert "abc123" not in redacted
+    assert "Token: ***" in redacted
+
+
+def test_check_log_flags_tracebacks_and_permission_errors() -> None:
+    assert smoke.check_log("INFO: fine\n") == []
+    assert len(smoke.check_log("Traceback (most recent call last):\n")) == 1
+    assert any("PermissionError" in p for p in smoke.check_log("PermissionError: [Errno 13] x"))
+
+
+@contextlib.contextmanager
+def _running_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bind_host: str):
+    """A real viva web app on a real socket, with no Ollama anywhere.
+
+    `bind_host` is what viva is told it is bound to (a non-loopback value
+    makes it require a token, as in the container); the socket itself
+    always listens on 127.0.0.1.
+    """
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+
+    from viva.config import Config
+    from viva.web.app import create_app
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_MODEL", "gemma4:e4b")
+    monkeypatch.setenv("SESSION_DB_PATH", str(tmp_path / "viva.db"))
+    monkeypatch.setenv("VECTOR_DB_PATH", str(tmp_path / "chroma"))
+    app = create_app(Config.load(), host=bind_host)
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert server.started
+    try:
+        yield f"http://127.0.0.1:{port}", app.state.viva_token
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
+@pytest.fixture
+def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    with _running_app(tmp_path, monkeypatch, "0.0.0.0") as running:
+        yield running
+
+
+def test_http_checks_pass_against_the_real_app(served) -> None:
+    base_url, token = served
+    assert smoke.run_http_checks(base_url, token) == []
+
+
+def test_http_checks_fail_when_the_token_is_wrong(served) -> None:
+    base_url, token = served
+    problems = smoke.run_http_checks(base_url, "not-the-real-token")
+    assert any("did not embed the token" in p for p in problems)
+    assert any("with the token returned 401" in p for p in problems)
+    assert all("not-the-real-token" not in p for p in problems)
+    assert all(token not in p for p in problems)
+
+
+def test_parse_server_users_ignores_blank_lines() -> None:
+    assert smoke.parse_server_users("viva\n\n") == ["viva"]
+    assert smoke.parse_server_users("") == []
+    assert smoke.parse_server_users("root\nviva\n") == ["root", "viva"]
+
+
+def test_http_checks_notice_a_server_that_does_not_require_a_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A loopback bind has no token; if the container ever did that, /api/*
+    would be open to anything that can reach the port, and the check must fail."""
+    with _running_app(tmp_path, monkeypatch, "127.0.0.1") as (base_url, _):
+        problems = smoke.run_http_checks(base_url, "some-token")
+    assert any("without a token returned 200, expected 401" in p for p in problems)
