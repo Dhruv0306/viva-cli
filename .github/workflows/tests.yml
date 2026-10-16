@@ -143,7 +143,7 @@ jobs:
         run: pytest -q
 
   docker:
-    name: docker (compose config + image build)
+    name: docker (compose config, image build, smoke test)
     # Phase 24 (docs/system-design/29-phase-24-docker-ci-job-design.md).
     # Independent of the pytest chain (no `needs:`), like `lint`, so a
     # Docker regression surfaces immediately. Three Phase 22 bugs were

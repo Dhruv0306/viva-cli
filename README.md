@@ -306,7 +306,7 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-Phases 0-23 are implemented, currently at **v0.5.1** (see [`CHANGELOG.md`](CHANGELOG.md)):
+Phases 0-25 are implemented, currently at **v0.5.1** (Phases 24 and 25 are CI-only and unreleased) (see [`CHANGELOG.md`](CHANGELOG.md)):
 
 - **Phase 0 — walking skeleton.** `viva demo` (still runnable, see below) proved out the two riskiest assumptions before anything else got built: local-model structured-output reliability, and a timer that excludes LLM latency.
 - **Phase 3 — analyze.** Tree-sitter AST extraction and map-reduce Project Profile generation, with a hierarchical-reduce fallback for repos with many modules. [`08-phase-3-analyzer-design.md`](docs/system-design/08-phase-3-analyzer-design.md)
@@ -329,6 +329,8 @@ Phases 0-23 are implemented, currently at **v0.5.1** (see [`CHANGELOG.md`](CHANG
 - **Phase 21 — containerized setup.** `docker compose up` runs `viva serve` in a container with data kept in `./data`, the port published only on the host's loopback, and a persistent volume for the tree-sitter grammar cache. Shelved after its first build, resumed and confirmed on real Docker in Phase 22. [`26-...`](docs/system-design/26-phase-21-containerized-setup-design.md)
 - **Phase 22 — container resumption & planning split.** Validated the container end to end on real Docker and Ollama, which surfaced and fixed five real bugs (published port scope, tree-sitter query files missing from the built wheel, the native `OLLAMA_HOST` leaking into the container, a bind-all `OLLAMA_HOST` breaking the Windows CLI, and `viva doctor` rejecting bare model names). Also moved the question-ordering and replenishment logic out of `Orchestrator` into `viva/planning.py`, with no behavior change. [`27-...`](docs/system-design/27-phase-22-container-resumption-and-planning-split-design.md)
 - **Phase 23 — validation follow-ups.** Three small fixes from Phase 22's real runs: ingest skips vendored `JRE`/`jre`/`JDK`/`jdk` directories, the report drops "None."-style non-findings from strengths and weaknesses, and plan replenishment is now logged at INFO. [`28-...`](docs/system-design/28-phase-23-validation-followups-design.md)
+- **Phase 24: Docker job in CI.** A `docker` job in `tests.yml` checks the resolved `docker compose config` (with the native `OLLAMA_HOST` set), builds the image and checks the installed package inside it (static web files, tree-sitter query files, `git`). [`29-...`](docs/system-design/29-phase-24-docker-ci-job-design.md)
+- **Phase 25: container smoke test.** The same job starts the built container, reads the access token from its log and checks the web server (token enforcement, static files, `/api/sessions`), that it runs as the non-root user and can write `./data`. No Ollama involved. [`30-...`](docs/system-design/30-phase-25-container-smoke-test-design.md)
 
 This throwaway `viva demo` harness (from the original walking skeleton,
 docs/plan.md Phase 0) still exercises the two riskiest assumptions
