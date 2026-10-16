@@ -901,6 +901,8 @@ Each phase is independently testable and produces a working, demoable slice.
 - **Exit criteria:** unit tests that fail before and pass after for each
   item; full suite, `ruff` and `mypy` clean; then the planned full run,
   which is the only check of model wording and of the browser behavior.
+- **Status:** implemented and unit-tested; the full run is the remaining
+  validation.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against

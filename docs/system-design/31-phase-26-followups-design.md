@@ -101,9 +101,14 @@ add an opt-in that skips it.**
    download links still carry it in the query string, since an anchor
    cannot set a header; that is the one remaining use of a URL token.
 4. `VIVA_ACCESS_TOKEN` (optional): use a fixed token instead of a random
-   one per start. It must be at least 16 characters; shorter is a startup
-   error. It is never printed, and blank or unset means generate as
-   before. It is read in `cli.py` and passed to `create_app(token=...)`
+   one per start. It must be at least 16 characters and contain only
+   letters, digits and `_ - . ~` (it is embedded in an inline script and
+   accepted from a URL, so nothing that could close the string or the tag
+   is allowed); anything else is a startup error that never echoes the
+   value. It is never printed, and blank or unset means generate as
+   before. Setting it turns auth on even for a loopback bind, because
+   setting a token is an explicit request for it and ignoring it quietly
+   would be the less safe reading. It is read in `cli.py` and passed to `create_app(token=...)`
    (as `host` already is), so there is no new `Config` field. `docker-
    compose.yml` passes it through and `.env.example` documents it.
 
@@ -193,3 +198,30 @@ change, all pass after). Full suite, `ruff` and `mypy` clean. No new
   run: weaknesses should read as what the candidate missed, no report line
   should contain "N/A", and `needs_review` should not jump on answers whose
   citations were fine.
+
+## 31.8 Implementation notes
+
+Four patches' worth of behavior, each with tests that fail against the
+code before it (replenishment 11, progress 7; the citation, token and
+header tests fail or cannot import against the old code).
+
+- **Middleware order matters.** The security-header middleware is
+  registered after the token middleware, because Starlette runs the most
+  recently added one outermost. Registered first, the 401 the token
+  middleware returns without calling the app skipped the headers; a test
+  caught it.
+- **Citation validation is strict on purpose.** A verdict whose citation is
+  not in the retrieved context is now `needs_review`, which can flag more
+  verdicts than before. That is the intended FR22 behavior, and §31.7 names
+  it as the thing to watch.
+- **Replenishment** reads `profile.sampled_files`, so five existing
+  orchestrator tests now pass a profile stand-in with that attribute, and
+  one log assertion changed to the new message.
+- **The browser script** is tested under Node against stubs
+  (`tests/test_token_init_js.py`), skipped when `node` is absent.
+- `scripts/summarize_retrieval_log.py` has a test that feeds it the line
+  `retrieval.py` really logs, so the regex cannot drift unnoticed.
+
+Not changed: `MAX_RETRIEVAL_DISTANCE` (the summarizer needs the full run's
+logs first), and no `Config` field was added.
+

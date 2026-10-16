@@ -9,10 +9,36 @@ for general use."
 
 ## [Unreleased]
 
-Phases 24 and 25: Docker in CI. See
-[`docs/system-design/29-phase-24-docker-ci-job-design.md`](docs/system-design/29-phase-24-docker-ci-job-design.md)
+Phases 24 to 26: Docker in CI, then four follow-ups. See
+[`docs/system-design/29-phase-24-docker-ci-job-design.md`](docs/system-design/29-phase-24-docker-ci-job-design.md),
+[`docs/system-design/30-phase-25-container-smoke-test-design.md`](docs/system-design/30-phase-25-container-smoke-test-design.md)
 and
-[`docs/system-design/30-phase-25-container-smoke-test-design.md`](docs/system-design/30-phase-25-container-smoke-test-design.md).
+[`docs/system-design/31-phase-26-followups-design.md`](docs/system-design/31-phase-26-followups-design.md).
+
+### Security
+
+- The container's access token requirement is kept (no skip-token opt-in) and
+  hardened: `GET /` now compares the token in constant time like `/api/*`;
+  every response carries `Referrer-Policy: no-referrer`, `nosniff` and
+  `X-Frame-Options: DENY`, and `/` and `/api/*` are `Cache-Control: no-store`;
+  the page removes `?token=` from the address bar and keeps the token in
+  `sessionStorage` for the tab.
+
+### Changed
+
+- Plan replenishment stops, and the session ends as `QUESTIONS_EXHAUSTED`,
+  when the only new items are near-duplicates of questions already asked
+  (same category and effective target) instead of asking a small repo the
+  same thing again.
+- Evaluator citations are validated: `N/A`-style text, or a citation naming a
+  file the model was not shown, counts as no citation, so an affected
+  partial or incorrect verdict becomes `needs_review` and an uncited
+  missed/did-wrong entry is dropped. Reports no longer print
+  `(N/A (Not present in the policy file))`, including for sessions already
+  stored. The evaluator prompts ask for feedback written about the
+  candidate's answer.
+- The web UI shows per-file and per-module progress during the analysis
+  stage.
 
 ### Fixed
 
@@ -23,6 +49,11 @@ and
 
 ### Added
 
+- `VIVA_ACCESS_TOKEN`: an optional fixed access token (at least 16 URL-safe
+  characters, never printed; also turns auth on for a loopback bind).
+- `scripts/summarize_retrieval_log.py`: per-category retrieval distance
+  summary from the session log, for the Phase 16 `MAX_RETRIEVAL_DISTANCE`
+  follow-up.
 - A `docker` job in `.github/workflows/tests.yml`: it checks the resolved
   `docker compose config` (with the native `OLLAMA_HOST=http://localhost:11434`
   set, the situation that broke the first container run), builds the image,

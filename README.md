@@ -246,6 +246,15 @@ query parameter (`?token=<token>`) or an `X-Viva-Token` header. A
 request without it gets `401`. See
 [`docs/system-design/21-phase-15-serve-authentication-design.md`](docs/system-design/21-phase-15-serve-authentication-design.md).
 
+To use a fixed token instead of a random one per start (handy with Docker,
+where the token otherwise has to be read from the container log), set
+`VIVA_ACCESS_TOKEN` in `.env`: at least 16 characters, letters, digits and
+`_ - . ~` only. It is never printed, and setting it turns the requirement on
+even for the default loopback bind. Generate one with
+`python -c "import secrets; print(secrets.token_urlsafe(24))"`. The page
+removes `?token=` from the address bar once loaded, so the token is not left
+in browser history.
+
 Speak your answers instead of typing, and have questions read aloud,
 in either the CLI or viva room (see
 [`docs/system-design/16-phase-11-voice-io-design.md`](docs/system-design/16-phase-11-voice-io-design.md)
@@ -306,7 +315,7 @@ viva questiongen https://github.com/<owner>/<repo> [--branch main]
 
 Early build stage — see [`docs/plan.md`](docs/plan.md) for the phased build plan, starting from a Phase 0 walking skeleton through to polish. Not yet ready for general use.
 
-Phases 0-25 are implemented, currently at **v0.5.1** (Phases 24 and 25 are CI-only and unreleased) (see [`CHANGELOG.md`](CHANGELOG.md)):
+Phases 0-26 are implemented, currently at **v0.5.1** (Phases 24 to 26 are unreleased) (see [`CHANGELOG.md`](CHANGELOG.md)):
 
 - **Phase 0 — walking skeleton.** `viva demo` (still runnable, see below) proved out the two riskiest assumptions before anything else got built: local-model structured-output reliability, and a timer that excludes LLM latency.
 - **Phase 3 — analyze.** Tree-sitter AST extraction and map-reduce Project Profile generation, with a hierarchical-reduce fallback for repos with many modules. [`08-phase-3-analyzer-design.md`](docs/system-design/08-phase-3-analyzer-design.md)
@@ -331,6 +340,7 @@ Phases 0-25 are implemented, currently at **v0.5.1** (Phases 24 and 25 are CI-on
 - **Phase 23 — validation follow-ups.** Three small fixes from Phase 22's real runs: ingest skips vendored `JRE`/`jre`/`JDK`/`jdk` directories, the report drops "None."-style non-findings from strengths and weaknesses, and plan replenishment is now logged at INFO. [`28-...`](docs/system-design/28-phase-23-validation-followups-design.md)
 - **Phase 24: Docker job in CI.** A `docker` job in `tests.yml` checks the resolved `docker compose config` (with the native `OLLAMA_HOST` set), builds the image and checks the installed package inside it (static web files, tree-sitter query files, `git`). [`29-...`](docs/system-design/29-phase-24-docker-ci-job-design.md)
 - **Phase 25: container smoke test.** The same job starts the built container, reads the access token from its log and checks the web server (token enforcement, static files, `/api/sessions`), that it runs as the non-root user and can write `./data`. No Ollama involved. [`30-...`](docs/system-design/30-phase-25-container-smoke-test-design.md)
+- **Phase 26: follow-ups before the full run.** The container token requirement is kept and hardened (constant-time compare, security headers, token removed from the address bar, optional fixed `VIVA_ACCESS_TOKEN`); plan replenishment stops when only near-duplicates of asked questions remain; the web UI shows per-file progress during analysis; evaluator citations are validated against the retrieved context; and a retrieval-log summarizer supports the Phase 16 distance follow-up. [`31-...`](docs/system-design/31-phase-26-followups-design.md)
 
 This throwaway `viva demo` harness (from the original walking skeleton,
 docs/plan.md Phase 0) still exercises the two riskiest assumptions
