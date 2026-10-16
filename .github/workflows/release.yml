@@ -111,6 +111,11 @@ jobs:
             echo "Add a \"## [$VERSION]\" heading to CHANGELOG.md before tagging." >&2
             exit 1
           fi
+          # CHANGELOG.md links to docs with relative paths, which resolve
+          # on the repo page but not on a GitHub Release page. Rewrite the
+          # known repo-relative prefixes to absolute links at this tag.
+          # Links that are already absolute are untouched.
+          sed -i -E "s#\]\((docs/|src/|scripts/|\.github/|README\.md|CHANGELOG\.md)#](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/\1#g" release-notes.md
 
       - name: Create GitHub release
         if: steps.existing.outputs.exists == 'false'

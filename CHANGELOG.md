@@ -14,6 +14,13 @@ Phases 24 and 25: Docker in CI. See
 and
 [`docs/system-design/30-phase-25-container-smoke-test-design.md`](docs/system-design/30-phase-25-container-smoke-test-design.md).
 
+### Fixed
+
+- Release notes no longer carry broken relative links: `release.yml` rewrites
+  repo-relative links in the extracted CHANGELOG section (`docs/`, `src/`,
+  `scripts/`, `.github/`, `README.md`, `CHANGELOG.md`) to absolute links at the
+  release tag.
+
 ### Added
 
 - A `docker` job in `.github/workflows/tests.yml`: it checks the resolved

@@ -899,8 +899,6 @@ Each phase is independently testable and produces a working, demoable slice.
     citations like `(N/A (Not present in the policy file))`. Model output,
     not report assembly; pytest cannot judge it.
   - No progress detail in the web UI during a long analysis step.
-  - Release notes link to docs with relative paths, which do not resolve
-    on a GitHub release page.
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
   the categories/cases no data exists for yet.** The default set in
   Patch B (docs/system-design/22-phase-16-grading-integrity-
