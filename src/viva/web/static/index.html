@@ -27,6 +27,32 @@
        string on the default loopback bind (no auth active); a real
        token only when `viva serve --host` is bound non-locally. -->
   <script>window.__VIVA_TOKEN__ = "{{VIVA_TOKEN}}";</script>
+  <!-- docs/system-design/31-phase-26-followups-design.md §31.3. Keeps the
+       access token out of the address bar and browser history: the token
+       from ?token= is saved for this tab and the parameter removed; on a
+       reload (no ?token=, so none embedded) the saved one is used. Two
+       separate try blocks so a failing sessionStorage never stops the URL
+       being cleaned. -->
+  <script id="token-init">
+    (function () {
+      var KEY = "viva_token";
+      try {
+        if (window.__VIVA_TOKEN__) {
+          window.sessionStorage.setItem(KEY, window.__VIVA_TOKEN__);
+        } else {
+          var saved = window.sessionStorage.getItem(KEY);
+          if (saved) { window.__VIVA_TOKEN__ = saved; }
+        }
+      } catch (e) { /* storage unavailable: the token still works for this load */ }
+      try {
+        var url = new URL(window.location.href);
+        if (url.searchParams.has("token")) {
+          url.searchParams.delete("token");
+          window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+        }
+      } catch (e) { /* history unavailable: leave the URL as it is */ }
+    })();
+  </script>
 </head>
 <body>
   <header class="topbar">
