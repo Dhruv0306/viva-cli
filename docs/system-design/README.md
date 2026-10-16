@@ -271,5 +271,11 @@ history of what was tried and rejected along the way.
   guarding the bugs Phase 22 only found by running Docker by hand. Does not
   start the container. No new `Config` field.
 
+- **[30-phase-25-container-smoke-test-design.md](30-phase-25-container-smoke-test-design.md)**
+  -- the Phase 25 design: the `docker` CI job starts the built container,
+  reads the access token from its log and checks the web server (HTTP
+  status and token behavior), the process owner and the data directory,
+  with no Ollama involved. No new `Config` field.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

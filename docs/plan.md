@@ -868,14 +868,27 @@ Each phase is independently testable and produces a working, demoable slice.
   next phase.
 - **Exit criteria:** unit tests, full suite, `ruff` and `mypy` clean; the
   job green on GitHub for the push that adds it.
-- **Status:** implemented and unit-tested; the job's first run on GitHub is
-  the remaining validation (no Docker daemon in the authoring sandbox).
+- **Verified, 2026-10-16:** the job ran green on GitHub on its first run.
+
+## Phase 25 -- Container Smoke Test
+- Design doc: `docs/system-design/30-phase-25-container-smoke-test-design.md`.
+- Phase 24's `docker` job builds the image but never starts it. Adds the
+  steps that do: `scripts/smoke_container.py` runs `docker compose up -d
+  --no-build`, reads the access token from the log, and checks `GET /`
+  (the token is not embedded without it), `/static/app.js`, `/api/sessions`
+  (401 without or with a wrong token, 200 and `[]` with it), that the
+  Python process runs as `viva`, that `/app/data/viva.db` is writable by
+  that user, and that the log has no traceback or permission error. Then
+  `docker compose down -v`.
+- No Ollama, no session and no grammar download involved. The token is
+  masked in everything the script prints. No new `Config` field, no change
+  to application code.
+- **Exit criteria:** unit tests (the HTTP checks run against a real
+  in-process app), full suite, `ruff` and `mypy` clean; the `docker` job
+  green on GitHub with the smoke steps.
 
 ## Backlog (not yet scheduled)
 - **Candidates from Phase 22/23's real runs**, none started:
-  - A container smoke test in CI (start the container, call its health or
-    login endpoint with the token from its log, tear it down), as the
-    follow-up to Phase 24's build and image checks.
   - The §27.7 decision: leave the access token requirement for the
     container as documented, or add an explicit opt-in that skips it when
     the port is published on loopback only.

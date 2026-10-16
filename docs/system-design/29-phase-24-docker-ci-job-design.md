@@ -121,10 +121,7 @@ unqualified port publish and a missing `extra_hosts`; the image checker
 passes on a real non-editable install and fails, listing every static file,
 on one built without `[tool.setuptools.package-data]`.
 
-**Not verified here:** the sandbox has no Docker daemon, so `docker compose
-build`, `docker compose config --images` against the real project name, and
-`docker run -i --entrypoint python ... -` have not been run. The first run
-of the job on GitHub is their real test, and a failure there is a new patch
-on top, not a rebase. This section gets a results entry once that run is
-seen.
-
+**Real-run result (2026-10-16):** the `docker` job ran green on GitHub for
+the push that added it, so `docker compose build`, `docker compose config
+--images` and `docker run -i --entrypoint python ... -` all worked as
+written, on the first run. (Reported by Dhruv from the Actions tab.)
