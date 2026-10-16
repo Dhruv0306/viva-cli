@@ -87,3 +87,26 @@ log. Then:
   `ubuntu-latest`.
 - Checking `host.docker.internal` actually reaches an Ollama (the config
   check already asserts the mapping exists).
+
+## 30.5 Implementation notes
+
+8 new tests in `tests/test_ci_scripts.py` (24 in that file now): token
+extraction (2), redaction, log scanning, owner-output parsing, and three
+that run the HTTP checks against a real viva app on a real socket (pass,
+wrong token, loopback bind with no token). Full suite 736 passed, 1
+skipped in the authoring sandbox; `ruff` and `mypy` clean. The two server
+tests share one `_running_app` helper.
+
+The process-owner probe (`SERVER_USERS_SH`) was run natively in the
+sandbox against a live `viva serve`: it finds the Python processes and
+reports their owner, so the `/proc` parsing works. Inside the image the
+result should be exactly `viva`.
+
+**Not verified here:** the sandbox has no Docker daemon, so these have not
+run: `docker compose up -d --no-build`, `docker compose ps --status
+running -q`, `docker compose exec` (including `--user viva`), and the probe
+inside the real image (it assumes `sh`, `tr`, `grep` and `stat` exist
+there, which they do in Debian slim). The first run of the job with these
+steps is their real test; a failure is a new patch on top, not a rebase.
+This section gets a results entry once that run is seen.
+

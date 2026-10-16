@@ -9,8 +9,10 @@ for general use."
 
 ## [Unreleased]
 
-Phase 24: a Docker job in CI. See
-[`docs/system-design/29-phase-24-docker-ci-job-design.md`](docs/system-design/29-phase-24-docker-ci-job-design.md).
+Phases 24 and 25: Docker in CI. See
+[`docs/system-design/29-phase-24-docker-ci-job-design.md`](docs/system-design/29-phase-24-docker-ci-job-design.md)
+and
+[`docs/system-design/30-phase-25-container-smoke-test-design.md`](docs/system-design/30-phase-25-container-smoke-test-design.md).
 
 ### Added
 
@@ -18,10 +20,17 @@ Phase 24: a Docker job in CI. See
   `docker compose config` (with the native `OLLAMA_HOST=http://localhost:11434`
   set, the situation that broke the first container run), builds the image,
   and checks inside it that the static web files, every tree-sitter query
-  file and `git` are present in the installed package. It does not start
-  the container.
+  file and `git` are present in the installed package.
 - `scripts/check_compose_config.py` and `scripts/check_image_assets.py`, the
   two checks the job runs, with unit tests that need no Docker.
+- Phase 25: a container smoke test as the last steps of that job
+  (`scripts/smoke_container.py`). It starts the built image, reads the
+  access token from the container log, and checks `GET /`, the static
+  files, that `/api/sessions` answers 401 without a token and 200 with one,
+  that the server runs as the non-root `viva` user, that `/app/data/viva.db`
+  is writable by it, and that the log has no traceback. No Ollama is
+  involved, and the token is masked in everything the script prints. See
+  [`docs/system-design/30-phase-25-container-smoke-test-design.md`](docs/system-design/30-phase-25-container-smoke-test-design.md).
 
 ## [0.5.1] - 2026-10-15
 
