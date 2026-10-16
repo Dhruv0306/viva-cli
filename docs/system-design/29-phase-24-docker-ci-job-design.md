@@ -105,3 +105,26 @@ waiting for the pytest chain. Four steps:
 - Publishing the image anywhere.
 - Layer caching. A cold build is a few minutes; revisit if it becomes a
   problem.
+
+## 29.5 Implementation notes
+
+16 new tests in `tests/test_ci_scripts.py` (9 for the compose checker, 7
+for the image checker). Full suite 728 passed, 1 skipped in the authoring
+sandbox; `ruff` and `mypy` clean; coverage 95.43% against the 90% floor
+(`scripts/` is outside the `src/viva` coverage measurement). `ruff check .`
+does lint `scripts/`; `mypy` is only run on `src/viva`, as before.
+
+Checked against real tools, as listed in §29.3: compose v5.6.0's
+`config --format json` (no daemon needed) accepts the repo's compose file
+and rejects reproductions of the old `OLLAMA_HOST` interpolation, the
+unqualified port publish and a missing `extra_hosts`; the image checker
+passes on a real non-editable install and fails, listing every static file,
+on one built without `[tool.setuptools.package-data]`.
+
+**Not verified here:** the sandbox has no Docker daemon, so `docker compose
+build`, `docker compose config --images` against the real project name, and
+`docker run -i --entrypoint python ... -` have not been run. The first run
+of the job on GitHub is their real test, and a failure there is a new patch
+on top, not a rebase. This section gets a results entry once that run is
+seen.
+

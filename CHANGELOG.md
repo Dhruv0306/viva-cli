@@ -9,6 +9,20 @@ for general use."
 
 ## [Unreleased]
 
+Phase 24: a Docker job in CI. See
+[`docs/system-design/29-phase-24-docker-ci-job-design.md`](docs/system-design/29-phase-24-docker-ci-job-design.md).
+
+### Added
+
+- A `docker` job in `.github/workflows/tests.yml`: it checks the resolved
+  `docker compose config` (with the native `OLLAMA_HOST=http://localhost:11434`
+  set, the situation that broke the first container run), builds the image,
+  and checks inside it that the static web files, every tree-sitter query
+  file and `git` are present in the installed package. It does not start
+  the container.
+- `scripts/check_compose_config.py` and `scripts/check_image_assets.py`, the
+  two checks the job runs, with unit tests that need no Docker.
+
 ## [0.5.1] - 2026-10-15
 
 Phase 23: three small fixes from Phase 22's real runs. See

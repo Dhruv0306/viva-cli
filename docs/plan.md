@@ -868,6 +868,8 @@ Each phase is independently testable and produces a working, demoable slice.
   next phase.
 - **Exit criteria:** unit tests, full suite, `ruff` and `mypy` clean; the
   job green on GitHub for the push that adds it.
+- **Status:** implemented and unit-tested; the job's first run on GitHub is
+  the remaining validation (no Docker daemon in the authoring sandbox).
 
 ## Backlog (not yet scheduled)
 - **Candidates from Phase 22/23's real runs**, none started:
