@@ -388,3 +388,51 @@ def test_summarizer_reads_the_real_log_line_format():
         retrieval.logger.removeHandler(handler)
         retrieval.logger.setLevel(previous)
     assert summarize.parse(records)["error_handling"].retrievals == 1
+
+
+# -- scripts/question_similarity.py (Phase 27) -------------------------------
+
+qsim = _load("question_similarity")
+
+
+def _fake_embed(texts):
+    # q_a and q_b point the same way, q_c is orthogonal.
+    table = {"first about retries": [1.0, 0.0], "same about retries": [1.0, 0.1], "unrelated storage": [0.0, 1.0]}
+    return [table[t] for t in texts]
+
+
+def test_pairwise_sorts_by_cosine_and_includes_word_overlap():
+    rows = qsim.pairwise(
+        {"a": "first about retries", "b": "same about retries", "c": "unrelated storage"}, _fake_embed
+    )
+
+    assert [(r[0], r[1]) for r in rows] == [("a", "b"), ("b", "c"), ("a", "c")]
+    assert rows[0][2] > 0.99          # cosine of near-parallel vectors
+    assert 0.0 < rows[0][3] < 1.0     # word overlap of the two retries questions
+    assert rows[-1][2] == 0.0         # orthogonal
+
+
+def test_cosine_of_a_zero_vector_is_zero():
+    assert qsim.cosine([0.0, 0.0], [1.0, 1.0]) == 0.0
+
+
+def test_render_marks_the_layer_that_flags_each_pair():
+    rows = [("a", "b", 0.95, 0.9), ("b", "c", 0.92, 0.2), ("a", "c", 0.5, 0.1)]
+
+    text = qsim.render(rows, threshold=0.90)
+    by_pair = {line.split()[0] + line.split()[1] + line.split()[2]: line for line in text.splitlines() if line.startswith(("a /", "b /"))}
+
+    assert by_pair["a/b"].rstrip().endswith("embedding, word overlap")
+    assert by_pair["b/c"].rstrip().endswith("embedding")
+    assert not by_pair["b/c"].rstrip().endswith("word overlap")
+    assert by_pair["a/c"].rstrip().endswith("-")
+
+
+def test_render_with_no_pairs_says_so():
+    assert "nothing to compare" in qsim.render([], threshold=0.9)
+
+
+def test_render_limits_the_listing_and_says_how_many_were_hidden():
+    rows = [(f"a{i}", f"b{i}", 0.5, 0.0) for i in range(30)]
+
+    assert "5 lower pairs not shown" in qsim.render(rows, threshold=0.9, limit=25)
