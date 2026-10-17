@@ -355,3 +355,34 @@ def test_replenish_stops_when_the_planner_runs_out_of_items(monkeypatch):
         _profile(), _config(), current_top_level_count=1, persisted=persisted
     ) is None
     assert len(calls) == 1  # fewer items than the ceiling allowed: no point raising it
+
+
+def test_the_reason_for_no_new_coverage_is_logged_when_only_duplicates_remain(monkeypatch, caplog):
+    full = [
+        _item("q1", "architecture", topic="overview"),
+        _item("q2", "architecture", topic="overview"),
+    ]
+    _scripted_planner(monkeypatch, full)
+    persisted = [_asked(_row("q1", "architecture", architecture_topic="overview"))]
+
+    with caplog.at_level("INFO", logger="viva.planning"):
+        assert compute_replenished_plan(
+            _profile(), _config(), current_top_level_count=1, persisted=persisted
+        ) is None
+
+    assert "only near-duplicates of asked questions remain" in caplog.text
+    assert "planner has no further items" not in caplog.text
+
+
+def test_the_reason_for_no_new_coverage_is_logged_when_the_planner_ran_out(monkeypatch, caplog):
+    full = [_item("q1", "architecture", topic="overview")]
+    _scripted_planner(monkeypatch, full)
+    persisted = [_asked(_row("q1", "architecture", architecture_topic="overview"))]
+
+    with caplog.at_level("INFO", logger="viva.planning"):
+        assert compute_replenished_plan(
+            _profile(), _config(), current_top_level_count=1, persisted=persisted
+        ) is None
+
+    assert "planner has no further items" in caplog.text
+    assert "near-duplicates" not in caplog.text

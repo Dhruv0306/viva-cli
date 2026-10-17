@@ -581,8 +581,7 @@ class Orchestrator:
         if new_items is None:
             logger.info(
                 "Plan replenishment found no new coverage for session %s "
-                "(%d question(s) already planned; only near-duplicates of "
-                "asked questions remain)",
+                "(%d question(s) already planned)",
                 session_id,
                 current_top_level,
             )

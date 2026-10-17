@@ -14,6 +14,7 @@ stays in `orchestrator.py`. See §27.2 for the full scoping rationale.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections import Counter
 from collections.abc import Sequence
 
@@ -31,6 +32,8 @@ from viva.storage.session_store import ANSWERED, ASKED
 # times as the loop keeps draining -- not meant to be tuned precisely,
 # just large enough that a fast answerer doesn't trigger a replenishment
 # call on almost every single question.
+logger = logging.getLogger(__name__)
+
 _REPLENISH_INCREMENT = 6
 
 # Upper bound on how many times compute_replenished_plan() raises the
@@ -209,6 +212,7 @@ def compute_replenished_plan(
     }
 
     ceiling = current_top_level_count
+    dropped_as_duplicates = 0
     for _ in range(_MAX_REPLENISH_ROUNDS):
         ceiling += _REPLENISH_INCREMENT
         plan = build_coverage_plan(profile, dataclasses.replace(config, max_questions=ceiling))
@@ -219,6 +223,7 @@ def compute_replenished_plan(
                 continue
             key = key_of(item.category, item.target_module, item.target_file, item.architecture_topic)
             if key in batch_seen:
+                dropped_as_duplicates += 1
                 continue
             batch_seen.add(key)
             fresh.append(item)
@@ -227,5 +232,22 @@ def compute_replenished_plan(
         if len(plan) < ceiling:
             # The planner returned fewer items than it was allowed: it has
             # nothing left to offer at any higher ceiling either.
+            _log_no_new_coverage(dropped_as_duplicates)
             return None
+    _log_no_new_coverage(dropped_as_duplicates)
     return None
+
+
+def _log_no_new_coverage(dropped_as_duplicates: int) -> None:
+    """Says WHY replenishment found nothing, which the caller cannot tell
+    (Phase 27, docs/system-design/32-phase-27-duplicate-questions-design.md
+    §32.7): `None` means either that the planner ran out of items, or that
+    everything it still had repeats a question already asked."""
+    if dropped_as_duplicates:
+        logger.info(
+            "Replenishment: only near-duplicates of asked questions remain "
+            "(%d candidate item(s) dropped as duplicates)",
+            dropped_as_duplicates,
+        )
+    else:
+        logger.info("Replenishment: the planner has no further items to offer")

@@ -1780,8 +1780,7 @@ def test_replenish_plan_logs_when_nothing_new_is_found(tmp_path, monkeypatch, ca
 
     assert (
         "Plan replenishment found no new coverage for session sess1 "
-        "(1 question(s) already planned; only near-duplicates of asked "
-        "questions remain)"
+        "(1 question(s) already planned)"
     ) in caplog.text
 
 
