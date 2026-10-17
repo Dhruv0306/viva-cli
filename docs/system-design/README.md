@@ -283,5 +283,11 @@ history of what was tried and rejected along the way.
   progress during analysis, and evaluator citation validation with a
   retrieval-log summarizer. No new `Config` field.
 
+- **[32-phase-27-duplicate-questions-design.md](32-phase-27-duplicate-questions-design.md)**
+  -- the Phase 27 design: what the Phase 26 full run showed about repeated
+  questions and graded non-answers, a word-overlap layer and a skip policy
+  for duplicates, a similarity calibration script, a deterministic
+  non-answer check, and report and log fixes. No new `Config` field.
+
 See also: `../requirements.md` (functional/non-functional requirements)
 and `../plan.md` (phased build plan).

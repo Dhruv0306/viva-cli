@@ -904,6 +904,22 @@ Each phase is independently testable and produces a working, demoable slice.
 - **Status:** implemented and unit-tested; the full run is the remaining
   validation.
 
+## Phase 27 -- Duplicate Questions and Non-Answers
+- Design doc: `docs/system-design/32-phase-27-duplicate-questions-design.md`.
+- From Phase 26's full run: the same question still reaches the candidate
+  several times, and a non-answer (`x`) is graded `incorrect` sometimes and
+  `not_attempted` others, which also triggers follow-ups. (1) A word-overlap
+  layer under the existing embedding duplicate check; (2) a round of only
+  duplicates is skipped, not asked, once 3 questions have been asked, with a
+  new `skipped_duplicate_question` status; (3) `scripts/question_similarity.py`
+  to calibrate the embedding threshold from real data; (4) a deterministic
+  non-answer check that skips the LLM calls and the follow-up; (5) report
+  fixes (point length, repeated citation) and an accurate replenishment log.
+- No new `Config` field.
+- **Exit criteria:** unit tests that fail before and pass after for each
+  item; full suite, `ruff` and `mypy` clean; then another real run, which is
+  the only check of the embedding layer and of model behavior.
+
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against
   the categories/cases no data exists for yet.** The default set in

@@ -162,3 +162,14 @@ when only near-duplicates remain is recorded in the plan's backlog.
 **Not run locally:** `ruff` and `mypy` were not installed in the Windows
 venv, so they were run only in the authoring environment and in CI.
 
+## 28.7 Docker (2026-10-17)
+
+The JRE/JDK filter was confirmed again on the native CLI on 2026-10-17
+(a repository with a vendored JRE had it ignored). The Docker image runs
+the same code and was not exercised separately for this fix; that was a
+deliberate call, since the filter is plain Python with no container
+dependency, not a Docker run that happened.
+
+Phase 27 (design doc 32) records what the same day's runs showed about
+repeated questions, which this doc's earlier observation about replenished
+questions had left open.
