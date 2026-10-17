@@ -29,6 +29,7 @@ import threading
 from viva.classification import ClassificationProvider
 from viva.indexer.store import VectorStore
 from viva.llm_client import LLMClient
+from viva.nonanswer import NON_ANSWER_IMPROVEMENT, NON_ANSWER_SUMMARY, is_non_answer
 from viva.schemas import Classification, ClassificationResult, EvaluationRecord
 from viva.storage import SessionStore
 
@@ -121,6 +122,14 @@ class Evaluator(ClassificationProvider):
             return None
 
         ground_truth_context = self._ground_truth_context(record.grounding_chunk_ids)
+
+        # Phase 27 (docs/system-design/32-phase-27-duplicate-questions-
+        # design.md §32.5): a non-answer is graded `not_attempted` here, in
+        # code, the same way every time. No model call, no feedback call,
+        # and no follow-up (those need `partial` or `incorrect`).
+        if is_non_answer(answer_text, ground_truth_context):
+            return self._record_non_answer(question_id)
+
         call_result = self._llm_client.classify_answer(
             question=record.question_text,
             ground_truth_context=ground_truth_context,
@@ -143,6 +152,23 @@ class Evaluator(ClassificationProvider):
         )
         self._enqueue(question_id)
         return classification.classification
+
+    def _record_non_answer(self, question_id: str) -> Classification:
+        record = EvaluationRecord(
+            classification="not_attempted",
+            summary=NON_ANSWER_SUMMARY,
+            cited_file=None,
+            improvement=NON_ANSWER_IMPROVEMENT,
+            needs_review=False,
+        )
+        payload = record.model_dump_json()
+        # Classified, then complete, in the usual order, so a crash between
+        # the two leaves the same recoverable state as any other answer.
+        self._store.set_eval_classified(self._session_id, question_id, payload)
+        self._store.set_eval_complete(
+            self._session_id, question_id, payload, needs_review=False
+        )
+        return "not_attempted"
 
     # -- background worker ---------------------------------------------------
 

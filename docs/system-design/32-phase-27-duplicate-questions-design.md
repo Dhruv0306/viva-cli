@@ -93,14 +93,17 @@ says where duplicates and non-duplicates actually fall.
 ## 32.5 A non-answer is graded the same way every time
 
 `viva/nonanswer.py`: `is_non_answer(answer, context)` is true for an empty
-or punctuation-only answer, a run of one repeated character (`xxx`,
-`....`), a standard placeholder ("idk", "I don't know", "no idea", "skip",
-"pass", "n/a"), and an answer of one or two letters that does not appear as
-a whole word in the grounding context. The last rule is the reason it is not
-simply "short answers": `i` is a correct answer to "what is the loop
-variable" and appears in the code, so it goes to the model; `x` does not
-appear, so it does not. Answers containing digits, symbols inside the word
-(`O(n)`) or three or more letters always go to the model.
+or punctuation-only answer, a run of one repeated letter (`xx`, `xxx`), a
+standard placeholder ("idk", "I don't know", "no idea", "skip", "pass",
+"n/a"), and a single letter that does not appear as a whole word in the
+grounding context. The last rule is the reason it is not simply "short
+answers": `i` is a correct answer to "what is the loop variable" and
+appears in the code, so it goes to the model; `x` does not appear, so it
+does not. Two-letter words ("no", "ok", "id"), answers containing digits,
+symbols inside the word (`O(n)`) and anything of three or more letters
+always go to the model, as does a placeholder that is itself a word in the
+code (`pass` in a Python `except` block). A first version also rejected
+two-letter answers; its own test showed that would reject "no".
 
 `Evaluator.classify()` checks it first. A non-answer is recorded as
 `not_attempted` with a fixed summary and a fixed improvement line, and the

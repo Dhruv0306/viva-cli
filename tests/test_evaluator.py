@@ -369,3 +369,52 @@ def test_requeue_unfinished_ignores_terminal_records(session_store, vector_store
     evaluator.flush(timeout=2.0)
 
     assert llm_client.feedback_calls == []
+
+
+# -- Phase 27: non-answers (docs/system-design/32-phase-27-duplicate-
+# questions-design.md §32.5) --------------------------------------------------
+
+def test_a_non_answer_is_not_attempted_without_any_model_call(session_store, vector_store, collection):
+    _seed_answered_question(session_store)
+    llm_client = _FakeLLMClient()
+    evaluator = Evaluator(session_store, vector_store, llm_client)
+    evaluator.bind_session("sess1", collection)
+
+    result = evaluator.classify("q1", "x")
+
+    assert result == "not_attempted"
+    assert llm_client.classify_calls == []
+    assert llm_client.feedback_calls == []
+    evaluator.flush(timeout=2.0)
+    assert llm_client.feedback_calls == []  # nothing was enqueued either
+
+
+def test_a_non_answer_record_is_complete_and_has_no_invented_weaknesses(session_store, vector_store, collection):
+    _seed_answered_question(session_store)
+    evaluator = Evaluator(session_store, vector_store, _FakeLLMClient())
+    evaluator.bind_session("sess1", collection)
+
+    evaluator.classify("q1", "idk")
+
+    record = session_store.get_qa_record("sess1", "q1")
+    assert record.eval_status == "complete"
+    persisted = json.loads(record.eval_json)
+    assert persisted["classification"] == "not_attempted"
+    assert persisted["summary"] == "No substantive answer was given."
+    assert persisted["missed"] == [] and persisted["did_wrong"] == [] and persisted["did_well"] == []
+    assert persisted["needs_review"] is False
+    evaluator.flush(timeout=2.0)
+
+
+def test_a_one_letter_answer_that_is_in_the_code_still_reaches_the_model(session_store, vector_store, tmp_path):
+    name = collection_name("owner/repo", "abc123")
+    vector_store.upsert_chunks(name, [_chunk("c1", "for (int i = 0; i < n; i++) {}")], [[1.0, 0.0]])
+    _seed_answered_question(session_store)
+    llm_client = _FakeLLMClient()
+    evaluator = Evaluator(session_store, vector_store, llm_client)
+    evaluator.bind_session("sess1", name)
+
+    evaluator.classify("q1", "i")
+
+    assert len(llm_client.classify_calls) == 1
+    evaluator.flush(timeout=2.0)
