@@ -21,6 +21,12 @@ from pydantic import BaseModel, Field
 
 Classification = Literal["correct", "partial", "incorrect", "not_attempted"]
 
+# Length cap on one feedback point. The schema is handed to Ollama for
+# schema-constrained decoding, which closes the string at this length, so a
+# longer point is cut mid-word (observed at exactly 300 characters, Phase
+# 27, docs/system-design/32-phase-27-duplicate-questions-design.md §32.6).
+MAX_POINT_LENGTH = 300
+
 
 class ClassificationResult(BaseModel):
     """Call #1: the fast verdict (docs/system-design/
@@ -60,7 +66,7 @@ class MissedPoint(BaseModel):
     uncited entries) happens at the application layer in
     `viva.evaluator`, not here."""
 
-    point: str = Field(..., min_length=1, max_length=300)
+    point: str = Field(..., min_length=1, max_length=MAX_POINT_LENGTH)
     cited_file: str | None = None
 
 

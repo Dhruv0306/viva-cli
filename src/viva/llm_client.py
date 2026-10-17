@@ -187,6 +187,10 @@ said nothing at all is a description of the code, not feedback -- do not \
 write it. `cited_file` must name a file shown in the headers of \
 [GROUND_TRUTH_CODE_CONTEXT]; never write "N/A", "none" or a sentence in it.
 
+Keep every `did_well`, `missed` and `did_wrong` entry under 200 \
+characters, and do not repeat the file path in the entry: it belongs in \
+`cited_file`.
+
 `improvement` is one or two sentences of forward-looking, actionable \
 advice -- not a repeat of `missed`/`did_wrong`, but what to go read or \
 think about next.

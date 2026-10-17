@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, UTC
 
 from viva.citations import normalize_citation
-from viva.schemas import EvaluationRecord
+from viva.schemas import MAX_POINT_LENGTH, EvaluationRecord
 from viva.storage.session_store import (
     ANSWERED,
     ASKED,
@@ -144,7 +144,21 @@ def _format_point(point: str, cited_file: str | None) -> str:
     # style text in cited_file; show those points without a citation
     # rather than as "(N/A (Not present in the policy file))".
     citation = normalize_citation(cited_file)
-    return f"{point} ({citation})" if citation else point
+
+    # Phase 27 (docs/system-design/32-phase-27-duplicate-questions-design.md
+    # §32.6). A point cut at the schema cap ends mid-word; say so instead of
+    # presenting the fragment as a finished sentence.
+    if len(point) >= MAX_POINT_LENGTH:
+        point = point.rstrip() + "\u2026"
+
+    if not citation:
+        return point
+    # The model often writes the path into the point as well; repeating it
+    # in brackets adds nothing.
+    path = re.sub(r":\d+(?:-\d+)?$", "", citation)
+    if path and path in point:
+        return point
+    return f"{point} ({citation})"
 
 
 class ReportBuilder:

@@ -613,3 +613,19 @@ def test_feedback_prompt_asks_for_gaps_phrased_about_the_answer():
     assert "statement about the candidate's ANSWER" in FEEDBACK_SYSTEM_PROMPT
     assert 'never write "N/A"' in FEEDBACK_SYSTEM_PROMPT
     assert 'never write "N/A"' in CLASSIFICATION_SYSTEM_PROMPT
+
+
+def test_feedback_prompt_asks_for_short_points_without_the_path_in_them():
+    assert "under 200 characters" in FEEDBACK_SYSTEM_PROMPT
+    assert "do not repeat the file path in the entry" in FEEDBACK_SYSTEM_PROMPT
+
+
+def test_the_point_cap_is_the_schema_cap():
+    from pydantic import ValidationError
+
+    from viva.schemas import MAX_POINT_LENGTH, MissedPoint
+
+    assert MAX_POINT_LENGTH == 300
+    MissedPoint(point="x" * MAX_POINT_LENGTH)
+    with pytest.raises(ValidationError):
+        MissedPoint(point="x" * (MAX_POINT_LENGTH + 1))

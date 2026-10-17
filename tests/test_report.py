@@ -539,3 +539,56 @@ def test_weakness_with_an_na_style_citation_is_shown_without_a_citation():
     assert "Did not mention retries." in report.weaknesses
     assert all("N/A" not in w for w in report.weaknesses)
     assert "Said it was synchronous. (src/viva/evaluator.py:42)" in report.weaknesses
+
+
+# -- Phase 27: report points (docs/system-design/32-phase-27-duplicate-
+# questions-design.md §32.6) ------------------------------------------------
+
+def test_a_citation_the_point_already_contains_is_not_appended_again():
+    path = "throttle4j-spring/src/main/java/Throttle4jProperties.java:9-70"
+    session = _session()
+    qa_records = [
+        _qa("q1", "rag", "answered", _record(
+            "incorrect",
+            did_wrong=[MissedPoint(point=f"The answer invents fields, but the code in `{path}` only has `enabled`.", cited_file=path)],
+        )),
+    ]
+
+    report = ReportBuilder().build(session, qa_records)
+
+    assert len(report.weaknesses) == 1
+    assert report.weaknesses[0].count("Throttle4jProperties.java") == 1
+
+
+def test_a_citation_is_still_appended_when_the_point_does_not_contain_it():
+    session = _session()
+    qa_records = [
+        _qa("q1", "rag", "answered", _record(
+            "partial", missed=[MissedPoint(point="Did not mention retries.", cited_file="src/retry.py:12-30")],
+        )),
+    ]
+
+    report = ReportBuilder().build(session, qa_records)
+
+    assert report.weaknesses == ["Did not mention retries. (src/retry.py:12-30)"]
+
+
+def test_a_point_cut_at_the_schema_cap_is_shown_with_an_ellipsis():
+    cut = "x" * 299 + "T"  # exactly MAX_POINT_LENGTH, ends mid-word
+    session = _session()
+    qa_records = [
+        _qa("q1", "rag", "answered", _record("partial", missed=[MissedPoint(point=cut, cited_file="a.py:1")])),
+    ]
+
+    report = ReportBuilder().build(session, qa_records)
+
+    assert report.weaknesses[0].startswith(cut + "\u2026")
+
+
+def test_a_point_under_the_cap_gets_no_ellipsis():
+    session = _session()
+    qa_records = [
+        _qa("q1", "rag", "answered", _record("partial", missed=[MissedPoint(point="Short point.", cited_file="a.py:1")])),
+    ]
+
+    assert ReportBuilder().build(session, qa_records).weaknesses == ["Short point. (a.py:1)"]
