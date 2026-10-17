@@ -28,6 +28,7 @@ from viva.storage.session_store import (
     ASKED,
     PENDING,
     QARecordRow,
+    SKIPPED_DUPLICATE_QUESTION,
     SKIPPED_DUPLICATE_TARGET,
     SKIPPED_NO_GROUNDING,
     SKIPPED_TIME_COLLAPSE,
@@ -51,6 +52,7 @@ _UNANSWERED_REASON_TEXT = {
     ASKED: "asked but not yet answered (partial report)",
     SKIPPED_TIME_COLLAPSE: "skipped (time budget collapse)",
     SKIPPED_DUPLICATE_TARGET: "skipped (duplicate target module)",
+    SKIPPED_DUPLICATE_QUESTION: "skipped (duplicate of an earlier question)",
     SKIPPED_NO_GROUNDING: "skipped (no grounding found)",
 }
 

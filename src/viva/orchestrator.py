@@ -30,6 +30,7 @@ from viva.ingest import ingest_repo
 from viva.ingest.clone import CloneError, validate_repo_url
 from viva.llm_client import LLMClient, OllamaClient
 from viva.planning import compute_replenished_plan, rank_pending_items
+from viva.similarity import is_lexical_duplicate
 from viva.profile import ProjectProfile
 from viva.questiongen import build_coverage_plan, generate_question
 from viva.questiongen.models import QuestionPlanItem
@@ -40,6 +41,7 @@ from viva.storage.session_store import (
     ASKED,
     EVAL_CLASSIFIED,
     EVAL_FEEDBACK_PENDING,
+    SKIPPED_DUPLICATE_QUESTION,
     SKIPPED_DUPLICATE_TARGET,
     SKIPPED_NO_GROUNDING,
     SKIPPED_TIME_COLLAPSE,
@@ -78,6 +80,14 @@ def is_resumable(status: str) -> bool:
 # extra LLM/embedding cost (all excluded from the user's clock) small
 # rather than unbounded on a repo where duplication is pervasive.
 _MAX_DEDUP_CANDIDATES = 3
+
+# Phase 27 (docs/system-design/32-phase-27-duplicate-questions-design.md
+# §32.3). Once this many questions have really been asked, a round in
+# which every candidate is a duplicate skips them instead of asking one
+# anyway. Before it, asking the duplicate stays the rule: a similarity
+# threshold that is too eager must never leave a session with a couple of
+# questions (the lesson of §11.9).
+_MIN_QUESTIONS_BEFORE_SKIPPING_DUPLICATES = 3
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -400,6 +410,8 @@ class Orchestrator:
             question_text = ""
             grounding_chunk_ids: list[str] = []
             fallback: tuple[QARecordRow, str, list[str], list[float]] | None = None
+            duplicate_candidates: list[QARecordRow] = []
+            asked_texts = self._already_asked_question_texts(session_id)
 
             for candidate in ranked[:_MAX_DEDUP_CANDIDATES]:
                 if candidate.question_text:
@@ -424,7 +436,7 @@ class Orchestrator:
                     generated = generate_question(
                         plan_item, profile, self.config, self.vector_store,
                         collection_name, self.embedding_client, self.llm_client,
-                        avoid_questions=self._already_asked_question_texts(session_id),
+                        avoid_questions=asked_texts,
                     )
                 if generated is None:
                     self.store.mark_item_status(session_id, candidate.question_id, SKIPPED_NO_GROUNDING)
@@ -432,7 +444,12 @@ class Orchestrator:
 
                 with timer.excluding():
                     candidate_vec = self._embed_text(generated.question_text)
-                    is_duplicate = self._is_semantic_duplicate(candidate_vec)
+                    # Two layers (Phase 27 §32.2): word overlap, which needs
+                    # no model and catches a near-verbatim rephrase, then
+                    # the embedding check for paraphrases.
+                    is_duplicate = is_lexical_duplicate(
+                        generated.question_text, asked_texts
+                    ) or self._is_semantic_duplicate(candidate_vec)
 
                 if not is_duplicate:
                     selected_item = candidate
@@ -449,12 +466,30 @@ class Orchestrator:
                 # docs/system-design/11-phase-6-session-loop-design.md
                 # §11.9).
                 fallback = (candidate, generated.question_text, generated.grounding_chunk_ids, candidate_vec)
+                duplicate_candidates.append(candidate)
 
             if selected_item is None:
                 if fallback is None:
                     # every tried candidate was ungrounded -- nothing to
                     # ask this round; loop back and re-fetch pending
                     # (now smaller, since those got marked skipped)
+                    continue
+                if self._asked_count(session_id) >= _MIN_QUESTIONS_BEFORE_SKIPPING_DUPLICATES:
+                    # Phase 27 §32.3: enough has been asked, and everything
+                    # left this round repeats it. Skip those items (visible
+                    # in the report, never silently dropped) and loop; once
+                    # nothing new is left the session ends through the
+                    # usual replenish / QUESTIONS_EXHAUSTED path.
+                    for duplicate in duplicate_candidates:
+                        self.store.mark_item_status(
+                            session_id, duplicate.question_id, SKIPPED_DUPLICATE_QUESTION
+                        )
+                    logger.info(
+                        "Skipped %d candidate question(s) for session %s: each duplicates an "
+                        "earlier question",
+                        len(duplicate_candidates),
+                        session_id,
+                    )
                     continue
                 selected_item, question_text, grounding_chunk_ids, fallback_vec = fallback
                 self._question_embeddings[selected_item.question_id] = fallback_vec
@@ -666,6 +701,13 @@ class Orchestrator:
             if r.status in (ASKED, ANSWERED) and (r.target_file or r.target_module)
         }
 
+    def _asked_count(self, session_id: str) -> int:
+        """Questions that were really put to the candidate (asked or
+        answered), as opposed to skipped or still pending."""
+        return sum(
+            1 for r in self.store.get_qa_records(session_id) if r.status in (ASKED, ANSWERED)
+        )
+
     def _already_asked_question_texts(self, session_id: str) -> list[str]:
         """FR15's primary defense (docs/system-design/
         11-phase-6-session-loop-design.md §11.12): the actual text of
@@ -733,7 +775,12 @@ class Orchestrator:
     def _build_summary(self, session_id: str) -> SessionSummary:
         records = self.store.get_qa_records(session_id)
         session = self.store.get_session(session_id)
-        skipped_statuses = {SKIPPED_NO_GROUNDING, SKIPPED_TIME_COLLAPSE, SKIPPED_DUPLICATE_TARGET}
+        skipped_statuses = {
+            SKIPPED_NO_GROUNDING,
+            SKIPPED_TIME_COLLAPSE,
+            SKIPPED_DUPLICATE_TARGET,
+            SKIPPED_DUPLICATE_QUESTION,
+        }
         return SessionSummary(
             session_id=session_id,
             status=session.status if session else "UNKNOWN",

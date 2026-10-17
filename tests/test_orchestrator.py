@@ -1835,3 +1835,124 @@ def test_start_forwards_analyzer_progress_to_the_ui(tmp_path, monkeypatch):
         ("stage_progress", "Analyzing codebase", "summarizing files", 1, 2),
         ("stage_progress", "Analyzing codebase", "summarizing files", 2, 2),
     ]
+
+
+# -- Phase 27: duplicate questions (docs/system-design/32-phase-27-duplicate-
+# questions-design.md §32.2, §32.3) ---------------------------------------------
+
+_RETURN_VALUE_Q = "How does the `main` function use the return value from `sum1ToN(i)` to format the output string?"
+_RETURN_VALUE_REPHRASED = "How does the `main` function utilize the return value from `sum1ToN(i)` to format the output string?"
+
+
+class _DistinctEmbeddingClient:
+    """Every distinct text gets its own one-hot vector, so any two
+    different texts have cosine similarity 0 and the embedding layer never
+    calls anything a duplicate: only the word-overlap layer can."""
+
+    def __init__(self) -> None:
+        self._index: dict[str, int] = {}
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        vectors = []
+        for text in texts:
+            position = self._index.setdefault(text, len(self._index))
+            vectors.append([1.0 if i == position else 0.0 for i in range(64)])
+        return vectors
+
+
+def _run_scripted_session(tmp_path, monkeypatch, texts_by_id: dict[str, str], answers: int):
+    config = _config(tmp_path)
+    _patch_pipeline(monkeypatch)
+    plan = [
+        QuestionPlanItem(id=qid, category="architecture", target_module=None, target_file=f"F{n}.java")
+        for n, qid in enumerate(texts_by_id)
+    ]
+    monkeypatch.setattr(orchestrator_module, "build_coverage_plan", lambda *a, **kw: list(plan))
+    monkeypatch.setattr(
+        orchestrator_module, "generate_question",
+        lambda plan_item, *a, **kw: GeneratedQuestion(
+            plan_item=plan_item, question_text=texts_by_id[plan_item.id], grounding_chunk_ids=["c1"]
+        ),
+    )
+    ui = FakeSessionUI(answers=[f"a{n}" for n in range(answers)])
+    store = SessionStore(str(tmp_path / "viva.db"))
+    orch = Orchestrator(
+        config=config, session_store=store, ui=ui, llm_client=object(),
+        embedding_client=_DistinctEmbeddingClient(), vector_store=object(),
+        classification_provider=NullClassificationProvider(),
+    )
+    session_id = orch.start("https://github.com/owner/repo")
+    return store, session_id, ui
+
+
+def test_a_round_of_only_duplicates_is_skipped_once_enough_has_been_asked(tmp_path, monkeypatch):
+    store, session_id, _ui = _run_scripted_session(
+        tmp_path, monkeypatch,
+        {
+            "q1": "What is the purpose of the retry loop in the HTTP client?",
+            "q2": "Which database holds the persisted sessions and why?",
+            "q3": "Why is the configuration loaded from environment variables?",
+            "q4": _RETURN_VALUE_Q,
+            "q5": _RETURN_VALUE_REPHRASED,
+            "q6": "How does the `main` function use the return value from `sum1ToN(i)` to format the output string?",
+        },
+        answers=4,
+    )
+    records = {r.question_id: r for r in store.get_qa_records(session_id)}
+
+    assert records["q4"].status == "answered"
+    assert records["q5"].status == "skipped_duplicate_question"
+    assert records["q6"].status == "skipped_duplicate_question"
+    assert sum(1 for r in records.values() if r.status == "answered") == 4
+    # The session ends instead of asking the two rephrases (the stored
+    # status is overwritten with COMPLETE at the end, so the skipped
+    # records above are what shows it did not just run out of answers).
+    assert store.get_session(session_id).status == "COMPLETE"
+
+
+def test_duplicates_are_still_asked_while_fewer_than_three_questions_have_been_asked(tmp_path, monkeypatch):
+    """The floor (§32.3): an over-eager similarity must never leave a
+    session with a couple of questions."""
+    store, session_id, _ui = _run_scripted_session(
+        tmp_path, monkeypatch,
+        {"q1": _RETURN_VALUE_Q, "q2": _RETURN_VALUE_REPHRASED},
+        answers=2,
+    )
+    records = {r.question_id: r for r in store.get_qa_records(session_id)}
+
+    assert records["q1"].status == "answered"
+    assert records["q2"].status == "answered"
+
+
+def test_word_overlap_prefers_a_novel_question_over_a_rephrase(tmp_path, monkeypatch):
+    """With the embedding layer unable to see any duplicate, the order
+    shows the word-overlap layer working: the rephrase is deferred behind
+    a genuinely different question."""
+    store, session_id, ui = _run_scripted_session(
+        tmp_path, monkeypatch,
+        {
+            "q1": _RETURN_VALUE_Q,
+            "q2": _RETURN_VALUE_REPHRASED,
+            "q3": "Why does the loop stop at eleven and not ten?",
+        },
+        answers=3,
+    )
+    asked_ids = [r.question_id for r in sorted(store.get_qa_records(session_id), key=lambda r: r.asked_at or "")]
+
+    assert asked_ids == ["q1", "q3", "q2"]
+
+
+def test_skipped_duplicate_questions_count_as_skipped_in_the_summary(tmp_path, monkeypatch):
+    store, session_id, ui = _run_scripted_session(
+        tmp_path, monkeypatch,
+        {
+            "q1": "What is the purpose of the retry loop in the HTTP client?",
+            "q2": "Which database holds the persisted sessions and why?",
+            "q3": "Why is the configuration loaded from environment variables?",
+            "q4": _RETURN_VALUE_Q,
+            "q5": _RETURN_VALUE_REPHRASED,
+        },
+        answers=4,
+    )
+
+    assert ui.summary.questions_skipped == 1
