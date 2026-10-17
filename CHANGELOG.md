@@ -9,11 +9,13 @@ for general use."
 
 ## [Unreleased]
 
-Phases 24 to 26: Docker in CI, then four follow-ups. See
+Phases 24 to 27: Docker in CI, four follow-ups, then duplicate questions and non-answers. See
 [`docs/system-design/29-phase-24-docker-ci-job-design.md`](docs/system-design/29-phase-24-docker-ci-job-design.md),
 [`docs/system-design/30-phase-25-container-smoke-test-design.md`](docs/system-design/30-phase-25-container-smoke-test-design.md)
 and
-[`docs/system-design/31-phase-26-followups-design.md`](docs/system-design/31-phase-26-followups-design.md).
+[`docs/system-design/31-phase-26-followups-design.md`](docs/system-design/31-phase-26-followups-design.md)
+and
+[`docs/system-design/32-phase-27-duplicate-questions-design.md`](docs/system-design/32-phase-27-duplicate-questions-design.md).
 
 ### Security
 
@@ -26,6 +28,21 @@ and
 
 ### Changed
 
+- A round of questions that are all duplicates of earlier ones is skipped
+  (new status `skipped_duplicate_question`, shown in the report) instead of
+  asked, once three questions have been asked; before that the old
+  ask-anyway fallback stays. A word-overlap check now runs before the
+  embedding check, so a near-verbatim rephrase is caught even when the
+  embedding threshold is off.
+- An answer that attempts nothing (empty, `x`, `xx`, `idk`, `I don't know`,
+  a single letter that is not in the code) is graded `not_attempted` in
+  code: no model calls, no follow-up, and no invented weakness. Before, the
+  model graded `x` as `incorrect` for some questions, which queued follow-ups.
+- Report points are no longer printed with their citation twice, and a point
+  cut at the 300-character cap ends with an ellipsis; the feedback prompt
+  asks for entries under 200 characters without the path in them.
+- The replenishment log says whether the planner ran out or only duplicates
+  remained.
 - Plan replenishment stops, and the session ends as `QUESTIONS_EXHAUSTED`,
   when the only new items are near-duplicates of questions already asked
   (same category and effective target) instead of asking a small repo the
@@ -49,6 +66,9 @@ and
 
 ### Added
 
+- `scripts/question_similarity.py`: prints the pairwise embedding and
+  word-overlap similarity of one session's asked questions, to calibrate
+  `QUESTION_SIMILARITY_THRESHOLD` (still 0.90) from real data.
 - `VIVA_ACCESS_TOKEN`: an optional fixed access token (at least 16 URL-safe
   characters, never printed; also turns auth on for a loopback bind).
 - `scripts/summarize_retrieval_log.py`: per-category retrieval distance

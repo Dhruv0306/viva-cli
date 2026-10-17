@@ -919,6 +919,9 @@ Each phase is independently testable and produces a working, demoable slice.
 - **Exit criteria:** unit tests that fail before and pass after for each
   item; full suite, `ruff` and `mypy` clean; then another real run, which is
   the only check of the embedding layer and of model behavior.
+- **Status:** implemented and unit-tested; another real run, plus
+  `scripts/question_similarity.py` on the `test-c` session, is the remaining
+  validation.
 
 ## Backlog (not yet scheduled)
 - **Phase 16 follow-up — validate `MAX_RETRIEVAL_DISTANCE=0.85` against

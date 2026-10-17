@@ -156,3 +156,28 @@ new `Config` field.
 - **Model behavior.** Whether the prompt change stops long points from
   hitting the cap, and whether grading of real (non-trivial) wrong answers
   is consistent, need another run.
+
+## 32.10 Implementation notes
+
+Tests that fail against the code before them: the skip policy and the
+lexical layer (3 orchestrator tests), the non-answer check (2 evaluator
+tests), the report fixes (2 report tests), the log reasons (2 planning
+tests). Full suite 894 passed, 1 skipped in the authoring sandbox; `ruff`
+and `mypy` clean. No new `Config` field.
+
+- **Two measurements were redone.** The first word-overlap threshold (0.5)
+  came from a stopword list that happened to drop this repository's own
+  words; redone with a generic list the margin was 0.06, so the threshold is
+  0.6 (§32.2). A first non-answer rule also rejected two-letter answers; its
+  own test (`no`) showed that was wrong (§32.5).
+- **The floor of 3.** `_MIN_QUESTIONS_BEFORE_SKIPPING_DUPLICATES` is a
+  module constant, not a setting. Changing it is a one-line decision once
+  there is data on how often the embedding layer over-fires.
+- **Stored status.** A session that ends because everything left was a
+  duplicate is stored as `COMPLETE` like any other (the end-of-session
+  overwrite described in the handoff), so the skipped records and the log
+  are what show why it ended.
+- `scripts/question_similarity.py` has not been run against a real
+  database or Ollama here; its sorting, flags and rendering are unit tested
+  with fake vectors.
+
